@@ -3,6 +3,8 @@
 #include "gui/FilterSidebar.h"
 #include "gui/TorrentModel.h"
 
+#include <algorithm>
+
 #include <QHeaderView>
 #include <QJsonDocument>
 #include <QListWidget>
@@ -120,6 +122,59 @@ private slots:
         QCOMPARE(newHeader->sectionResizeMode(0), QHeaderView::Interactive);
         QVERIFY2(newHeader->sectionSize(0) >= 320,
                  "Legacy Windows layout should receive a usable Name width.");
+    }
+
+    void nameSortingMatchesNativeCaseInsensitiveNaturalOrdering()
+    {
+        ServerPane pane;
+        pane.applySync(payload(R"JSON({
+          "full_update":true,
+          "torrents":{
+            "a":{"name":"Album 10","state":"uploading","progress":1},
+            "b":{"name":"album 2","state":"uploading","progress":1},
+            "c":{"name":"Apple","state":"uploading","progress":1},
+            "d":{"name":"banana","state":"uploading","progress":1},
+            "e":{"name":"BANJO","state":"uploading","progress":1},
+            "f":{"name":"Track 10","state":"uploading","progress":1},
+            "g":{"name":"track 2","state":"uploading","progress":1},
+            "h":{"name":"(2008) Time Flies","state":"uploading","progress":1},
+            "i":{"name":"[2010] Concert","state":"uploading","progress":1},
+            "j":{"name":"Album 02","state":"uploading","progress":1},
+            "k":{"name":"Track 999999999999999999999","state":"uploading","progress":1}
+          }
+        })JSON"));
+        pane.table()->sortByColumn(0, Qt::AscendingOrder);
+        QStringList names;
+        for (int i = 0; i < pane.proxy()->rowCount(); ++i)
+            names.append(pane.proxy()->index(i, 0).data(Qt::UserRole).toString());
+        // ( and [ must appear contiguously, without any alphabetic
+        // names between them, irrespective of host platform locale.
+        QCOMPARE(names.size(), 11);
+        QVERIFY(names.at(0).startsWith(QLatin1Char('('))
+             || names.at(0).startsWith(QLatin1Char('[')));
+        QVERIFY(names.at(1).startsWith(QLatin1Char('('))
+             || names.at(1).startsWith(QLatin1Char('[')));
+        QCOMPARE(names.mid(2), (QStringList{
+            QStringLiteral("album 2"), QStringLiteral("Album 02"),
+            QStringLiteral("Album 10"),
+            QStringLiteral("Apple"), QStringLiteral("banana"),
+            QStringLiteral("BANJO"), QStringLiteral("track 2"),
+            QStringLiteral("Track 10"),
+            QStringLiteral("Track 999999999999999999999")
+        }));
+
+        pane.table()->sortByColumn(0, Qt::DescendingOrder);
+        QStringList reversed;
+        for (int i = 0; i < pane.proxy()->rowCount(); ++i)
+            reversed.append(pane.proxy()->index(i, 0).data(Qt::UserRole).toString());
+        QStringList expected = names;
+        std::reverse(expected.begin(), expected.end());
+        QCOMPARE(reversed, expected);
+
+        // Only Name gets natural text sorting; other columns keep numeric
+        // Qt::UserRole comparisons, not lexicographic formatted strings.
+        pane.table()->sortByColumn(1, Qt::AscendingOrder);
+        QCOMPARE(pane.proxy()->sortColumn(), 1);
     }
 
     void combineStatusCategoryTagTrackerAndSearch();
