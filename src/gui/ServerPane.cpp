@@ -8,6 +8,7 @@
 #include "gui/upstream/transferlistdelegate.h"
 
 #include <QAbstractItemView>
+#include <QApplication>
 #include <QAction>
 #include <QCryptographicHash>
 #include <QJsonArray>
@@ -137,7 +138,7 @@ ServerPane::ServerPane(QWidget *parent) : QWidget(parent)
     // QCommonStyle::CE_HeaderLabel from synthesizing bold, without styling
     // or replacing the native header.
     m_table->horizontalHeader()->setHighlightSections(false);
-    QFont headerFont = m_table->font();
+    QFont headerFont = QApplication::font();
     headerFont.setWeight(QFont::Normal);
     m_table->horizontalHeader()->setFont(headerFont);
     // Stretch disables user resizing. On Windows it also squeezed Name to
@@ -375,10 +376,11 @@ void ServerPane::refreshFontMetrics()
 {
     m_sidebar->refreshFontMetrics();
 
-    // A widget's explicit QFont normally freezes its inherited point size.
-    // Re-resolve from the current table font whenever the application's
-    // View -> Font Size control changes it, preserving live font scaling.
-    QFont headerFont = m_table->font();
+    // The header's explicit weight must not freeze its inherited size.
+    // The application adjusts the global Qt font via View -> Font Size;
+    // re-resolve from QApplication rather than the cached table font, which
+    // can still report the previous size during live style propagation.
+    QFont headerFont = QApplication::font();
     headerFont.setWeight(QFont::Normal);
     m_table->horizontalHeader()->setFont(headerFont);
 
