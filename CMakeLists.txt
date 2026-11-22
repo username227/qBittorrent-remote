@@ -174,6 +174,17 @@ if(BUILD_TESTING)
     # Unexpected modal dialogs must not stall CI indefinitely.
     set_tests_properties(native_add_torrent_and_path_mapping PROPERTIES TIMEOUT 75)
 
+    # Native click-through coverage for Status, Categories, Tags and
+    # Trackers; keep the Add Torrent workflows merged from PR #10.
+    add_executable(test_sidebar_filter_workflow
+        tests/test_sidebar_filter_workflow.cpp
+    )
+    target_link_libraries(test_sidebar_filter_workflow PRIVATE
+        qbittorrent_remote_gui
+        Qt6::Test
+    )
+    add_test(NAME combined_sidebar_filter_workflow COMMAND test_sidebar_filter_workflow)
+
     add_executable(test_connection_workflow
         tests/test_connection_workflow.cpp
     )
@@ -202,7 +213,7 @@ if(BUILD_TESTING)
     set_tests_properties(certificate_trust_workflow PROPERTIES TIMEOUT 90)
 
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        set_tests_properties(window_open_and_quit server_profile_management native_preferences_and_remote_paths native_add_torrent_and_path_mapping remote_connection_workflow certificate_trust_workflow PROPERTIES
+        set_tests_properties(window_open_and_quit server_profile_management native_preferences_and_remote_paths native_add_torrent_and_path_mapping combined_sidebar_filter_workflow remote_connection_workflow certificate_trust_workflow PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         )
     endif()

@@ -9,6 +9,7 @@
 #include <QAbstractItemView>
 #include <QAction>
 #include <QCryptographicHash>
+#include <QJsonArray>
 #include <QSettings>
 #include <QTreeWidget>
 #include <QTableWidget>
@@ -24,6 +25,51 @@
 #include <QSplitterHandle>
 #include <QTableView>
 #include <QVBoxLayout>
+
+// One composable proxy per remote server. Filtering never mutates the remote
+// torrent model, so changing selections does not affect the other servers.
+namespace
+{
+class TorrentFilterProxyModel final : public QSortFilterProxyModel
+{
+public:
+    explicit TorrentFilterProxyModel(FilterSidebar *sidebar, QObject *parent)
+        : QSortFilterProxyModel(parent), m_sidebar(sidebar) {}
+
+    void setSearch(const QString &text)
+    {
+        if (m_search == text) return;
+        m_search = text;
+        invalidateFilter();
+    }
+    void setSearchField(int column)
+    {
+        if (m_column == column) return;
+        m_column = column;
+        invalidateFilter();
+    }
+    void refresh() { invalidateFilter(); }
+
+protected:
+    bool filterAcceptsRow(int row, const QModelIndex &parent) const override
+    {
+        const auto *model = qobject_cast<const TorrentModel *>(sourceModel());
+        if (!model || parent.isValid()) return false;
+        const QString hash = model->hashForRow(row);
+        if (hash.isEmpty() || !m_sidebar->matches(hash, model->torrents().value(hash)))
+            return false;
+        if (m_search.isEmpty())
+            return true;
+        const int field = m_column == 1 ? 25 : m_column == 2 ? 32 : 0;
+        return model->data(model->index(row, field), Qt::UserRole).toString()
+            .contains(m_search, Qt::CaseInsensitive);
+    }
+private:
+    FilterSidebar *m_sidebar;
+    QString m_search;
+    int m_column = 0;
+};
+} // namespace
 
 ServerPane::ServerPane(QWidget *parent) : QWidget(parent)
 {
@@ -49,11 +95,12 @@ ServerPane::ServerPane(QWidget *parent) : QWidget(parent)
     m_table = new QTableView(vertical);
     m_table->setObjectName(QStringLiteral("torrentList"));
     m_model = new TorrentModel(m_table);
-    m_proxy = new QSortFilterProxyModel(m_table);
+    auto *combined = new TorrentFilterProxyModel(m_sidebar, m_table);
+    m_proxy = combined;
     m_proxy->setSourceModel(m_model);
     m_proxy->setSortRole(Qt::UserRole);
-    m_proxy->setFilterCaseSensitivity(Qt::CaseInsensitive);
-    m_proxy->setFilterKeyColumn(0);
+    connect(m_sidebar, &FilterSidebar::filtersChanged, combined,
+            [combined]() { combined->refresh(); });
     m_table->setModel(m_proxy);
     m_table->setItemDelegate(new TransferListDelegate(m_table));
     m_table->setAlternatingRowColors(true);
@@ -181,8 +228,37 @@ void ServerPane::applySync(const QJsonObject &payload)
     for (auto it = changes.constBegin(); it != changes.constEnd(); ++it)
         m_serverState.insert(it.key(), it.value());
 
+    // /sync/maindata sends incremental changes for categories, tags and
+    // tracker-to-hash memberships, not complete lists on every request.
+    if (payload.value(QStringLiteral("full_update")).toBool())
+    {
+        m_categories.clear();
+        m_tags.clear();
+        m_trackers.clear();
+    }
+    const QJsonObject categories = payload.value(QStringLiteral("categories")).toObject();
+    for (auto it = categories.constBegin(); it != categories.constEnd(); ++it)
+        m_categories.insert(it.key());
+    for (const QJsonValue &value : payload.value(QStringLiteral("categories_removed")).toArray())
+        m_categories.remove(value.toString());
+    for (const QJsonValue &value : payload.value(QStringLiteral("tags")).toArray())
+        m_tags.insert(value.toString());
+    for (const QJsonValue &value : payload.value(QStringLiteral("tags_removed")).toArray())
+        m_tags.remove(value.toString());
+    const QJsonObject trackers = payload.value(QStringLiteral("trackers")).toObject();
+    for (auto it = trackers.constBegin(); it != trackers.constEnd(); ++it)
+    {
+        QSet<QString> hashes;
+        for (const QJsonValue &hash : it.value().toArray())
+            hashes.insert(hash.toString());
+        m_trackers.insert(it.key(), hashes);
+    }
+    for (const QJsonValue &value : payload.value(QStringLiteral("trackers_removed")).toArray())
+        m_trackers.remove(value.toString());
+
     m_model->applySync(payload);
-    m_sidebar->updateCounts(m_model->torrents());
+    m_sidebar->updateCounts(m_model->torrents(), m_categories, m_tags, m_trackers);
+    static_cast<TorrentFilterProxyModel *>(m_proxy)->refresh();
     m_details->appendRates(
         m_serverState.value(QStringLiteral("dl_info_speed")).toDouble(),
         m_serverState.value(QStringLiteral("up_info_speed")).toDouble());
@@ -219,13 +295,13 @@ QString ServerPane::rateText() const
 void ServerPane::setSearchTerm(const QString &text)
 {
     m_search = text;
-    m_proxy->setFilterFixedString(text);
+    static_cast<TorrentFilterProxyModel *>(m_proxy)->setSearch(text);
 }
 
 void ServerPane::setSearchColumn(int index)
 {
     m_searchColumn = index;
-    m_proxy->setFilterKeyColumn(index == 1 ? 25 : index == 2 ? 32 : 0);
+    static_cast<TorrentFilterProxyModel *>(m_proxy)->setSearchField(index);
 }
 
 void ServerPane::updateSelectedTorrent()

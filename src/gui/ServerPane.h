@@ -3,6 +3,8 @@
 
 #include <QJsonObject>
 #include <QJsonValue>
+#include <QHash>
+#include <QSet>
 #include <QTimer>
 #include <QWidget>
 
@@ -54,6 +56,9 @@ private:
     TorrentModel *m_model = nullptr;
     QSortFilterProxyModel *m_proxy = nullptr;
     QJsonObject m_serverState;
+    QSet<QString> m_categories;
+    QSet<QString> m_tags;
+    QHash<QString, QSet<QString>> m_trackers;
     QString m_search;
     int m_searchColumn = 0;
     QString m_selectedHash;
