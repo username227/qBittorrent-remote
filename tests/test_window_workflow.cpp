@@ -4,49 +4,88 @@
 #include <QAction>
 #include <QMenu>
 #include <QMenuBar>
+#include <QToolBar>
 #include <QtTest/QtTest>
 
-// Functional smoke test: exercise the actual Qt window and the user's
-// File > Quit workflow. Do not assert internal algorithms or sample API inputs.
+namespace
+{
+QString label(QAction *action)
+{
+    QString text = action->text();
+    text.remove(QLatin1Char('&'));
+    return text;
+}
+
+// Locate menu items as a user sees them, without invoking internal methods.
+QAction *menuAction(MainWindow &window, const QString &menuName, const QString &actionName)
+{
+    for (QAction *top : window.menuBar()->actions())
+    {
+        if (label(top) != menuName || !top->menu())
+            continue;
+
+        for (QAction *child : top->menu()->actions())
+        {
+            if (label(child) == actionName)
+                return child;
+        }
+    }
+    return nullptr;
+}
+} // namespace
+
 class WindowWorkflowTest final : public QObject
 {
     Q_OBJECT
 
 private slots:
-    void opensAndQuitsThroughTheMenu()
+    void opensAndExitsThroughTheMenu()
     {
         MainWindow window;
         window.show();
-
         QTRY_VERIFY(window.isVisible());
 
-        // Discover the displayed Quit action rather than invoking a method
-        // on MainWindow directly. This tests the menu action's real behavior.
-        QAction *quitAction = nullptr;
-        for (QAction *menuAction : window.menuBar()->actions())
-        {
-            QMenu *menu = menuAction->menu();
-            if (!menu)
-                continue;
-
-            for (QAction *action : menu->actions())
-            {
-                QString text = action->text();
-                text.remove(QLatin1Char('&'));
-                if (text == QStringLiteral("Quit"))
-                {
-                    quitAction = action;
-                    break;
-                }
-            }
-            if (quitAction)
-                break;
-        }
-
-        QVERIFY2(quitAction, "The application must offer a Quit menu action.");
-        quitAction->trigger();
+        QAction *exit = menuAction(window, QStringLiteral("File"), QStringLiteral("Exit"));
+        QVERIFY2(exit && exit->isEnabled(), "File > Exit must be available.");
+        exit->trigger();
 
         QTRY_VERIFY(!window.isVisible());
+    }
+
+    void userCanHideAndRestoreFiltersSidebar()
+    {
+        MainWindow window;
+        window.show();
+        QTRY_VERIFY(window.isVisible());
+
+        QAction *toggle = menuAction(window, QStringLiteral("View"), QStringLiteral("Filters Sidebar"));
+        QWidget *sidebar = window.findChild<QWidget *>(QStringLiteral("filterSidebar"));
+        QVERIFY2(toggle && sidebar, "View must offer a working Filters Sidebar toggle.");
+        QTRY_VERIFY(sidebar->isVisible());
+
+        toggle->trigger();
+        QTRY_VERIFY(!sidebar->isVisible());
+
+        toggle->trigger();
+        QTRY_VERIFY(sidebar->isVisible());
+    }
+
+    void userCanHideAndRestoreToolbar()
+    {
+        MainWindow window;
+        window.show();
+        QTRY_VERIFY(window.isVisible());
+
+        QAction *toggle = menuAction(window, QStringLiteral("View"), QStringLiteral("Top Toolbar"));
+        QToolBar *toolbar = window.findChild<QToolBar *>();
+        QVERIFY2(toggle && toolbar, "The toolbar must be available from View.");
+        QTRY_VERIFY(toolbar->isVisible());
+
+        toggle->trigger();
+        QTRY_VERIFY(!toolbar->isVisible());
+
+        toggle->trigger();
+        QTRY_VERIFY(toolbar->isVisible());
     }
 };
 

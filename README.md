@@ -3,9 +3,8 @@
 An independent, cross-platform Qt 6 desktop application for controlling
 remote qBittorrent instances through their Web API.
 
-**Current status:** early development. The first milestone is a native window
-and server-address foundation; the bootstrap does **not** connect to a server
-yet. No local torrent engine or libtorrent dependency is included.
+**Current status:** native GUI preview, without remote connectivity or
+torrent management. No local torrent engine or libtorrent dependency.
 
 ## Build and test
 
@@ -22,6 +21,7 @@ Requirements:
 cmake --preset dev
 cmake --build --preset dev
 ctest --preset dev
+./build/dev/qbittorrent-remote
 ```
 
 A release configuration is also available:
@@ -33,7 +33,7 @@ ctest --preset release
 ```
 
 Or configure manually with any supported CMake generator. Standard
-`BUILD_TESTING=OFF` disables the test targets; tests default to enabled.
+`BUILD_TESTING=OFF` disables test targets; tests default to enabled.
 
 ### Testing policy
 
@@ -43,20 +43,39 @@ connecting to a server, or completing a torrent-management operation). They
 must not be written around individual code blocks, internal implementation
 details, or fixed example inputs merely to exercise a parser or function.
 
-Qt Test may be used to drive GUI interactions, but is invoked exclusively
-through CTest. The initial functional smoke test opens the real application
-window and uses the File > Quit action. Linux runs this test with Qt's
-offscreen platform so a graphical session is not required.
+Qt Test may drive GUI interactions but is invoked exclusively through CTest.
+
+## Native interface
+
+The main window uses qBittorrent's **original Qt Designer** `mainwindow.ui`,
+its collapsible filter-header widget and adapted properties-tab bar, together
+with the complete original icon resources, country flags and reference dialog
+layouts (attribution in `src/gui/upstream/README.md`). The torrent list,
+filter models and central content remain independent Qt Widgets; the local
+torrent engine is never imported.
+
+Only working interface actions are enabled. Torrent-mutating controls and
+filtering remain disabled until the remote API implementation exists.
+
+**Future multiple-instance behavior:** saved profiles and active sessions are
+distinct; there is no arbitrary connection limit. When remote connectivity
+exists, zero active connections will show a connection screen, one active
+connection will use the regular interface without server tabs, and two or more
+active connections will show dynamic tabs. No premature welcome screen or
+placeholder server tabs are included in this GUI milestone.
+
+The remote API implementation will be developed in stages, aiming for full
+parity with server-exposed features. See [the Web API parity plan](docs/web-api-parity.md).
 
 ## Repository and architecture
 
 - `master`: independent application.
-- `upstream-source`: untouched qBittorrent source reference.
+- `upstream-source`: original qBittorrent reference.
 - `feature/*`: reviewable development work.
 
-Our code is built independently; individual upstream GUI resources will be
-selectively imported and attributed as needed. We do not merge the complete
-upstream application into `master`.
+Our code is built independently; individual upstream GUI resources are
+selectively imported and attributed, without merging the complete upstream
+application.
 
 - `src/api/`: remote server URL and (future) Web API client.
 - `src/gui/`: native Qt Widgets interface.
