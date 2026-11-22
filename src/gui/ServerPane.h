@@ -36,6 +36,7 @@ public:
     void displayTorrentDetails(const QString &hash, int tab, const QJsonValue &data);
     void displayTorrentDetailsError(const QString &hash, int tab, const QString &reason);
     void refreshSelectedDetails();
+    void refreshFontMetrics();
 
 signals:
     void torrentDetailsRequested(const QString &hash, int tab);

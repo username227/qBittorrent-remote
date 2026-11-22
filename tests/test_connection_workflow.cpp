@@ -14,6 +14,7 @@
 #include <QCheckBox>
 #include <QButtonGroup>
 #include <QFile>
+#include <QFontInfo>
 #include <QHash>
 #include <QHostAddress>
 #include <QLineEdit>
@@ -381,6 +382,78 @@ private:
     }
 
 private slots:
+    void globalFontSizeKeepsTorrentListAsFloorAndPersists()
+    {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("profiles.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        const QFont original = QApplication::font();
+        int initialSize = -1;
+
+        {
+            MainWindow window(nullptr, &settings, &vault);
+            window.show();
+            QTRY_VERIFY(window.isVisible());
+
+            auto *increase = window.findChild<QAction *>(QStringLiteral("fontSizeIncrease"));
+            auto *decrease = window.findChild<QAction *>(QStringLiteral("fontSizeDecrease"));
+            auto *reset = window.findChild<QAction *>(QStringLiteral("fontSizeReset"));
+            auto *table = window.findChild<QTableView *>(QStringLiteral("torrentList"));
+            auto *trackers = window.findChild<QTreeWidget *>(QStringLiteral("torrentTrackers"));
+            auto *content = window.findChild<QTreeWidget *>(QStringLiteral("torrentContent"));
+            auto *filterList = window.findChild<QListWidget *>(QStringLiteral("filterList"));
+            QVERIFY(increase && decrease && reset);
+            QVERIFY(table && trackers && content && filterList);
+            initialSize = window.fontPointSize();
+            QVERIFY(initialSize > 0);
+            QCOMPARE(QApplication::font(), original);
+            QVERIFY(increase->shortcuts().contains(QKeySequence(Qt::CTRL | Qt::Key_Plus)));
+            QVERIFY(increase->shortcuts().contains(QKeySequence(Qt::CTRL | Qt::Key_Equal)));
+            QCOMPARE(decrease->shortcut(), QKeySequence(Qt::CTRL | Qt::Key_Minus));
+            QCOMPARE(reset->shortcut(), QKeySequence(Qt::CTRL | Qt::Key_0));
+
+            QVERIFY(!decrease->isEnabled());
+            QVERIFY(!reset->isEnabled());
+            increase->trigger();
+            QCOMPARE(window.fontPointSize(), initialSize + 1);
+            QCOMPARE(QApplication::font().pointSize(), initialSize + 1);
+            QCOMPARE(table->font().pointSize(), initialSize + 1);
+            QCOMPARE(trackers->font().pointSize(), initialSize + 1);
+            QCOMPARE(content->font().pointSize(), initialSize + 1);
+            QCOMPARE(filterList->font().pointSize(), initialSize + 1);
+            QVERIFY(filterList->height() >=
+                    filterList->count() * filterList->fontMetrics().height());
+
+            settings.sync();
+            QCOMPARE(settings.value(QStringLiteral("Appearance/FontPointSize")).toInt(),
+                     initialSize + 1);
+
+            decrease->trigger();
+            QCOMPARE(window.fontPointSize(), initialSize);
+            QVERIFY(!decrease->isEnabled());
+            decrease->trigger(); // cannot shrink below the torrent-list baseline
+            QCOMPARE(window.fontPointSize(), initialSize);
+            increase->trigger();
+        }
+        {
+            MainWindow second(nullptr, &settings, &vault);
+            second.show();
+            QTRY_VERIFY(second.isVisible());
+            QCOMPARE(second.fontPointSize(), initialSize + 1);
+            QCOMPARE(second.findChild<QTableView *>(QStringLiteral("torrentList"))
+                         ->font().pointSize(), initialSize + 1);
+            auto *reset = second.findChild<QAction *>(QStringLiteral("fontSizeReset"));
+            QVERIFY(reset);
+            reset->trigger();
+            QCOMPARE(second.fontPointSize(), initialSize);
+            QCOMPARE(QApplication::font(), original);
+            settings.sync();
+            QVERIFY(!settings.contains(QStringLiteral("Appearance/FontPointSize")));
+        }
+        QApplication::setFont(original);
+    }
+
     void userCanConnectAndDisconnect()
     {
         DemoQbittorrentServer server(true);

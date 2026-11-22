@@ -41,6 +41,7 @@ class TransferListDelegate final : public QStyledItemDelegate
 
 public:
     explicit TransferListDelegate(QObject *parent = nullptr);
+    void invalidateCachedRowHeight() noexcept { m_nameColHeight = -1; }
 
     QSize sizeHint(const QStyleOptionViewItem &option, const QModelIndex &index) const override;
     void paint(QPainter *painter, const QStyleOptionViewItem &option,

@@ -10,6 +10,13 @@
 #include "ui_mainwindow.h"
 
 #include <QDialog>
+#include <QApplication>
+#include <QFont>
+#include <QFontInfo>
+#include <QGuiApplication>
+#include <QScreen>
+#include <QKeySequence>
+#include <QMenu>
 #include <QCheckBox>
 #include <QFileDialog>
 #include <QFile>
@@ -46,6 +53,32 @@ QIcon upstreamIcon(const char *name)
     return QIcon(QStringLiteral(":/icons/") + QString::fromLatin1(name) + QStringLiteral(".svg"));
 }
 
+// Capture the original system Qt font once, before an application-level
+// preference can overwrite QApplication::font(). Both the initial floor
+// and Reset always refer to this original torrent-list baseline.
+const QFont &originalSystemFont()
+{
+    static const QFont font = QApplication::font();
+    return font;
+}
+
+int defaultFontPointSize()
+{
+    const QFontInfo info(originalSystemFont());
+    if (info.pointSize() > 0)
+        return info.pointSize();
+
+    // Qt styles may specify fonts in physical pixels rather than points.
+    // Round *up* to prevent a new point-size preference from reducing
+    // the perceived baseline on any desktop DPI setting.
+    const QScreen *screen = QGuiApplication::primaryScreen();
+    const qreal dpi = screen ? screen->logicalDotsPerInchY() : 96.0;
+    return qMax(1, qCeil(info.pixelSize() * 72.0 / dpi));
+}
+
+constexpr int maxFontSize = 28;
+constexpr auto fontSettingsKey = "Appearance/FontPointSize";
+
 } // namespace
 
 MainWindow::MainWindow(QWidget *parent, QSettings *settings,
@@ -58,6 +91,14 @@ MainWindow::MainWindow(QWidget *parent, QSettings *settings,
     // Required when SVG resources live in a linked static library.
     Q_INIT_RESOURCE(qbittorrent_icons);
 
+    // Preserve the existing torrent-list font as the smallest permitted
+    // point size. All widgets share the Qt application font, never a
+    // per-table stylesheet or a smaller imitation of upstream's text.
+    m_baseFontPointSize = defaultFontPointSize();
+    const int configured = m_settings->value(
+        QLatin1String(fontSettingsKey), m_baseFontPointSize).toInt();
+    applyFontPointSize(configured);
+
     // Actual, unchanged upstream Qt Designer layout: menus, actions,
     // original toolbar and status bar, not a visual imitation.
     m_ui->setupUi(this);
@@ -67,6 +108,7 @@ MainWindow::MainWindow(QWidget *parent, QSettings *settings,
 
     setupMainArea();
     setupActions();
+    updateFontActionStates();
 
     m_ui->statusBar->showMessage(tr("Not connected to a server"));
     m_ratesLabel = new QLabel(tr("D: —    U: —"), m_ui->statusBar);
@@ -222,6 +264,32 @@ void MainWindow::setupActions()
     m_ui->menuView->addAction(m_ui->actionTopToolBar);
     m_ui->menuView->addAction(m_ui->actionShowStatusbar);
     m_ui->menuView->addAction(m_ui->actionShowFiltersSidebar);
+    m_ui->menuView->addSeparator();
+
+    // Local usability enhancement, absent from upstream qBittorrent.
+    // Native Qt fonts retain the active desktop theme and DPI scaling.
+    QMenu *fontMenu = m_ui->menuView->addMenu(tr("Font Size"));
+    fontMenu->setObjectName(QStringLiteral("fontSizeMenu"));
+    m_increaseFontAction = fontMenu->addAction(tr("Increase Font Size"));
+    m_increaseFontAction->setObjectName(QStringLiteral("fontSizeIncrease"));
+    m_increaseFontAction->setShortcuts({
+        QKeySequence(Qt::CTRL | Qt::Key_Plus),
+        QKeySequence(Qt::CTRL | Qt::Key_Equal)
+    });
+    m_decreaseFontAction = fontMenu->addAction(tr("Decrease Font Size"));
+    m_decreaseFontAction->setObjectName(QStringLiteral("fontSizeDecrease"));
+    m_decreaseFontAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Minus));
+    fontMenu->addSeparator();
+    m_resetFontAction = fontMenu->addAction(tr("Reset Font Size"));
+    m_resetFontAction->setObjectName(QStringLiteral("fontSizeReset"));
+    m_resetFontAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_0));
+
+    connect(m_increaseFontAction, &QAction::triggered, this,
+            [this]() { applyFontPointSize(m_fontPointSize + 1); });
+    connect(m_decreaseFontAction, &QAction::triggered, this,
+            [this]() { applyFontPointSize(m_fontPointSize - 1); });
+    connect(m_resetFontAction, &QAction::triggered, this,
+            [this]() { applyFontPointSize(m_baseFontPointSize); });
 
     m_ui->menuOptions->clear();
     m_ui->menuOptions->addAction(m_ui->actionCreateTorrent);
@@ -701,4 +769,49 @@ void MainWindow::disconnectCurrentServer()
 {
     if (auto connection = activeConnection())
         removeConnection(connection);
+}
+
+void MainWindow::applyFontPointSize(int points)
+{
+    const int ceiling = qMax(m_baseFontPointSize, maxFontSize);
+    m_fontPointSize = qBound(m_baseFontPointSize, points, ceiling);
+
+    QFont font = originalSystemFont();
+    if (m_fontPointSize != m_baseFontPointSize)
+        font.setPointSize(m_fontPointSize);
+    // At the minimum, use the exact original font, including its pixel-size
+    // specification if that is how the Qt theme defined it.
+
+    // QApplication's font is inherited by Qt widgets (including menus,
+    // dialogs and dynamically constructed per-server panes). Keep the
+    // original font family, weight, style and desktop theme untouched.
+    QApplication::setFont(font);
+    setFont(font);
+
+    if (m_settings)
+    {
+        if (m_fontPointSize == m_baseFontPointSize)
+            m_settings->remove(QLatin1String(fontSettingsKey));
+        else
+            m_settings->setValue(QLatin1String(fontSettingsKey), m_fontPointSize);
+    }
+
+    // The sidebar's fixed-height lists and the upstream cached name-column
+    // delegate require layout invalidation after a global font change.
+    if (m_views)
+        for (auto *pane : findChildren<ServerPane *>())
+            pane->refreshFontMetrics();
+
+    updateFontActionStates();
+}
+
+void MainWindow::updateFontActionStates()
+{
+    if (m_increaseFontAction)
+        m_increaseFontAction->setEnabled(
+            m_fontPointSize < qMax(m_baseFontPointSize, maxFontSize));
+    if (m_decreaseFontAction)
+        m_decreaseFontAction->setEnabled(m_fontPointSize > m_baseFontPointSize);
+    if (m_resetFontAction)
+        m_resetFontAction->setEnabled(m_fontPointSize != m_baseFontPointSize);
 }

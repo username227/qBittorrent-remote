@@ -10,5 +10,6 @@ class FilterSidebar final : public QScrollArea
 {
 public:
     explicit FilterSidebar(QWidget *parent = nullptr);
+    void refreshFontMetrics();
     void updateCounts(const QHash<QString, QJsonObject> &torrents);
 };

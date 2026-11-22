@@ -128,6 +128,20 @@ FilterSidebar::FilterSidebar(QWidget *parent)
     setWidget(container);
 }
 
+void FilterSidebar::refreshFontMetrics()
+{
+    // Qt automatically updates the item fonts, but these upstream-style
+    // lists deliberately have a fixed height that was calculated earlier.
+    // Re-evaluate their extent at the new font size so no row is clipped.
+    for (QListWidget *list : findChildren<QListWidget *>(QStringLiteral("filterList")))
+    {
+        const int height = qMax(list->fontMetrics().height() + 4,
+                                list->iconSize().height() + 4);
+        list->doItemsLayout();
+        list->setFixedHeight(height * list->count() + 2 * list->frameWidth());
+    }
+}
+
 void FilterSidebar::updateCounts(const QHash<QString, QJsonObject> &torrents)
 {
     const QList<QListWidget *> lists = findChildren<QListWidget *>(QStringLiteral("filterList"));

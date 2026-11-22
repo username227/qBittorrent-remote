@@ -10,6 +10,7 @@
 #include <QAction>
 #include <QHeaderView>
 #include <QItemSelectionModel>
+#include <QFontMetrics>
 #include <QHBoxLayout>
 #include <QJsonObject>
 #include <QLocale>
@@ -250,4 +251,22 @@ void ServerPane::displayTorrentDetailsError(const QString &hash, int tab,
                                             const QString &reason)
 {
     m_details->displayError(hash, tab, reason);
+}
+
+void ServerPane::refreshFontMetrics()
+{
+    m_sidebar->refreshFontMetrics();
+
+    // The original upstream delegate caches the name-column sizeHint for
+    // fast scrolling; that cache must be invalidated for font changes.
+    if (auto *delegate = qobject_cast<TransferListDelegate *>(m_table->itemDelegate()))
+        delegate->invalidateCachedRowHeight();
+
+    // Native QTableView row sections otherwise retain their old height on
+    // some Qt platform themes, clipping the enlarged text.
+    const int suggested = qMax(m_table->fontMetrics().height() + 8,
+                                m_table->iconSize().height() + 4);
+    m_table->verticalHeader()->setDefaultSectionSize(suggested);
+    m_table->doItemsLayout();
+    m_table->viewport()->update();
 }
