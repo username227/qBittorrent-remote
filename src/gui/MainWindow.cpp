@@ -19,6 +19,8 @@
 #include <QLineEdit>
 #include <QMenu>
 #include <QMessageBox>
+#include <QPushButton>
+#include <QSslCertificate>
 #include <QSizePolicy>
 #include <QSplitter>
 #include <QStandardItemModel>
@@ -304,6 +306,75 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
 
     m_session = new Remote::RemoteSession(this);
     auto *session = m_session;
+
+    // Inspect the actual server certificate before permitting TLS errors.
+    // This callback runs synchronously from QNetworkReply::sslErrors.
+    Remote::ProfileStore trustStore(*m_settings);
+    session->setCertificateTrust(
+        trustStore.trustedCertificateFingerprint(profile),
+        [this, profile](const Remote::CertificateChallenge &challenge) {
+            const bool changed = !challenge.previousFingerprint.isEmpty();
+            QMessageBox prompt(this);
+            prompt.setObjectName(QStringLiteral("certificateTrustDialog"));
+            prompt.setWindowTitle(changed
+                ? tr("Server Certificate Changed")
+                : tr("Trust Server Certificate"));
+            prompt.setIcon(QMessageBox::Warning);
+            prompt.setTextFormat(Qt::PlainText);
+            prompt.setText(changed
+                ? tr("The saved server presents a different HTTPS certificate.")
+                : tr("This server's HTTPS certificate is not trusted by the system."));
+
+            const QSslCertificate &certificate = challenge.certificate;
+            const QString subject = certificate.subjectInfo(
+                QSslCertificate::CommonName).join(QStringLiteral(", "));
+            const QString issuer = certificate.issuerInfo(
+                QSslCertificate::CommonName).join(QStringLiteral(", "));
+            QString description = tr(
+                "Server: %1\n"
+                "Subject: %2\n"
+                "Issuer: %3\n"
+                "Valid from: %4\n"
+                "Valid until: %5\n\n"
+                "Presented SHA-256 fingerprint:\n%6")
+                .arg(challenge.endpoint,
+                     subject,
+                     issuer,
+                     certificate.effectiveDate().toString(Qt::ISODate),
+                     certificate.expiryDate().toString(Qt::ISODate),
+                     challenge.presentedFingerprint.toUpper());
+
+            if (changed)
+                description += tr("\n\nPreviously trusted SHA-256 fingerprint:\n%1")
+                    .arg(challenge.previousFingerprint.toUpper());
+
+            if (!challenge.verificationErrors.isEmpty())
+                description += tr("\n\nVerification issues:\n%1")
+                    .arg(challenge.verificationErrors.join(QLatin1Char('\n')));
+
+            description += tr(
+                "\n\nOnly approve if you've verified this fingerprint "
+                "against the certificate installed on your server.");
+            prompt.setInformativeText(description);
+            prompt.setDetailedText(certificate.toText());
+            auto *rejectButton = prompt.addButton(tr("Reject"), QMessageBox::RejectRole);
+            auto *trustButton = prompt.addButton(
+                tr("Trust This Certificate"), QMessageBox::AcceptRole);
+            prompt.setDefaultButton(qobject_cast<QPushButton *>(rejectButton));
+            prompt.exec();
+            if (prompt.clickedButton() != trustButton)
+                return false;
+
+            Remote::ProfileStore store(*m_settings);
+            if (!store.trustCertificate(profile, challenge.presentedFingerprint))
+            {
+                QMessageBox::warning(this, tr("Cannot Save Certificate Trust"),
+                    tr("Certificate trust could not be saved. Connection remains blocked."));
+                return false;
+            }
+            return true;
+        });
+
     m_currentServerName = profile.name;
     m_disconnectAction->setEnabled(true);
     m_ui->statusBar->showMessage(tr("Connecting to %1...").arg(profile.name));

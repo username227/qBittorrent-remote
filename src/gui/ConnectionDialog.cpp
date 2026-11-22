@@ -64,8 +64,8 @@ ConnectionDialog::ConnectionDialog(QSettings &settings, QWidget *parent)
     layout->addLayout(form);
     auto *note = new QLabel(
         tr("Passwords are used for this connection only and are never saved. "
-           "HTTPS certificates must validate; custom certificate trust will "
-           "be available in a separate security milestone."), this);
+           "Untrusted HTTPS certificates require your explicit approval; "
+           "the trusted SHA-256 fingerprint is saved for this server only."), this);
     note->setWordWrap(true);
     layout->addWidget(note);
 

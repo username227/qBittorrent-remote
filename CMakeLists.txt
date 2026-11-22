@@ -104,8 +104,20 @@ if(BUILD_TESTING)
     )
     add_test(NAME remote_connection_workflow COMMAND test_connection_workflow)
 
+    # Tests start local TLS endpoints with ephemeral certificates and drive
+    # real certificate-decision GUI workflows; no production server involved.
+    add_executable(test_tls_trust_workflow
+        tests/test_tls_trust_workflow.cpp
+    )
+    target_link_libraries(test_tls_trust_workflow PRIVATE
+        qbittorrent_remote_gui
+        Qt6::Test
+        Qt6::Network
+    )
+    add_test(NAME certificate_trust_workflow COMMAND test_tls_trust_workflow)
+
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        set_tests_properties(window_open_and_quit server_profile_management remote_connection_workflow PROPERTIES
+        set_tests_properties(window_open_and_quit server_profile_management remote_connection_workflow certificate_trust_workflow PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         )
     endif()

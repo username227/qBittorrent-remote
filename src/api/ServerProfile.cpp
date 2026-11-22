@@ -2,7 +2,28 @@
 #include "api/ServerProfile.h"
 #include "api/ServerAddress.h"
 
+#include <QCryptographicHash>
+#include <QRegularExpression>
 #include <QUuid>
+
+namespace
+{
+QString trustKey(const QString &id)
+{
+    return QString::fromLatin1(
+        QCryptographicHash::hash(id.toUtf8(), QCryptographicHash::Sha256).toHex());
+}
+QString canonicalAddress(const Remote::ServerProfile &profile)
+{
+    const auto address = Remote::ServerAddress::parse(profile.url);
+    return address ? address->baseUrl().toString(QUrl::FullyEncoded) : QString();
+}
+bool validFingerprint(const QString &s)
+{
+    static const QRegularExpression pattern(QStringLiteral("^[0-9a-f]{64}$"));
+    return pattern.match(s).hasMatch();
+}
+}
 
 namespace Remote
 {
@@ -60,10 +81,12 @@ bool ProfileStore::save(ServerProfile &profile)
 
     QList<ServerProfile> items = profiles();
     bool updated = false;
+    bool addressChanged = false;
     for (ServerProfile &item : items)
     {
         if (item.id == profile.id)
         {
+            addressChanged = canonicalAddress(item) != canonicalAddress(profile);
             item = profile;
             updated = true;
             break;
@@ -71,7 +94,18 @@ bool ProfileStore::save(ServerProfile &profile)
     }
     if (!updated)
         items.append(profile);
-    return write(items);
+    if (!write(items))
+        return false;
+
+    // A profile redirected to a new server must never reuse the original
+    // fingerprint, even if it is subsequently edited back to the old URL.
+    if (addressChanged)
+    {
+        m_settings.remove(QStringLiteral("certificateTrust/") + trustKey(profile.id));
+        m_settings.sync();
+        return m_settings.status() == QSettings::NoError;
+    }
+    return true;
 }
 
 bool ProfileStore::remove(const QString &id)
@@ -82,10 +116,59 @@ bool ProfileStore::remove(const QString &id)
         if (items.at(i).id == id)
         {
             items.removeAt(i);
-            return write(items);
+            if (!write(items))
+                return false;
+            m_settings.remove(QStringLiteral("certificateTrust/") + trustKey(id));
+            m_settings.sync();
+            return m_settings.status() == QSettings::NoError;
         }
     }
     return false;
+}
+
+
+QString ProfileStore::trustedCertificateFingerprint(const ServerProfile &profile) const
+{
+    const auto address = ServerAddress::parse(profile.url);
+    if (profile.id.isEmpty() || !address
+        || address->baseUrl().scheme() != QStringLiteral("https"))
+        return {};
+
+    const QString prefix = QStringLiteral("certificateTrust/") + trustKey(profile.id);
+    if (m_settings.value(prefix + QStringLiteral("/url")).toString()
+        != canonicalAddress(profile))
+        return {};
+
+    const QString sha256 = m_settings.value(prefix + QStringLiteral("/sha256")).toString();
+    return validFingerprint(sha256) ? sha256 : QString();
+}
+
+bool ProfileStore::trustCertificate(const ServerProfile &profile, const QString &sha256)
+{
+    const auto address = ServerAddress::parse(profile.url);
+    if (profile.id.isEmpty() || !address
+        || address->baseUrl().scheme() != QStringLiteral("https")
+        || !validFingerprint(sha256))
+        return false;
+
+    bool matchesSavedProfile = false;
+    for (const ServerProfile &item : profiles())
+    {
+        if (item.id == profile.id
+            && canonicalAddress(item) == canonicalAddress(profile))
+        {
+            matchesSavedProfile = true;
+            break;
+        }
+    }
+    if (!matchesSavedProfile)
+        return false;
+
+    const QString prefix = QStringLiteral("certificateTrust/") + trustKey(profile.id);
+    m_settings.setValue(prefix + QStringLiteral("/url"), canonicalAddress(profile));
+    m_settings.setValue(prefix + QStringLiteral("/sha256"), sha256);
+    m_settings.sync();
+    return m_settings.status() == QSettings::NoError;
 }
 
 } // namespace Remote

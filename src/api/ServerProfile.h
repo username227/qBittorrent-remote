@@ -27,6 +27,11 @@ public:
     bool save(ServerProfile &profile);
     bool remove(const QString &id);
 
+    // Trust is scoped to both the saved profile ID and its exact normalized
+    // URL. Changes to the server endpoint never inherit the previous pin.
+    QString trustedCertificateFingerprint(const ServerProfile &profile) const;
+    bool trustCertificate(const ServerProfile &profile, const QString &sha256);
+
 private:
     bool write(const QList<ServerProfile> &profiles);
 

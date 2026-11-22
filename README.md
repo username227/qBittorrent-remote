@@ -72,10 +72,22 @@ connection and attempts a nonblocking Web API logout.
 
 Authentication uses an independent Qt Network cookie jar per session,
 an explicit same-origin Referer, no automatic redirects, bounded request
-timeouts and standard HTTPS certificate verification. Self-signed HTTPS
-certificate trust/pinning is **not yet implemented**: an untrusted
-certificate fails securely. HTTP itself is not encrypted unless protected
-by a separate trusted tunnel (such as an existing VPN).
+timeouts and standard HTTPS certificate verification. When a server uses a
+valid self-signed certificate or private CA, the user may **explicitly
+inspect and trust the SHA-256 certificate fingerprint for that saved
+profile**. The trust prompt includes the address, subject, issuer, validity
+dates and verification errors. On a changed certificate, both the old and
+new fingerprints are displayed and approval is requested again. A modern
+certificate with a Subject Alternative Name (SAN) must identify the
+requested server address. For an IP-based connection, a legacy private
+certificate with **no SAN at all** may instead use an exact matching IP
+Common Name, with explicit fingerprint approval and pinning. A conflicting
+SAN never falls back to Common Name. Other hostname mismatches, certificate
+expiry and unrelated TLS errors cannot be overridden. Trust is invalidated
+on profile URL change or removal.
+
+HTTP itself is not encrypted unless protected by a separate trusted tunnel
+(such as an existing VPN).
 
 This initial milestone exposes **one selected visible connection**.
 Unrestricted multiple concurrent sessions with dynamic tabs are the next
@@ -85,6 +97,11 @@ torrents, server tabs or welcome screen have been added.
 CTest includes a disposable local simulated qBittorrent Web API server
 to exercise real login, server/version verification, authentication
 failure and disconnect without any live NAS or passwords.
+An additional CTest workflow spins up temporary HTTPS servers and exercises
+the actual certificate approval UI, remembered trust, certificate changes
+and hostname mismatch rejection. Test-only certificates are generated at
+runtime and **no TLS private key is committed**. The test needs the
+`openssl` command-line utility available on `PATH`.
 
 **Future multiple-instance behavior:** saved profiles and active sessions are
 distinct; there is no arbitrary connection limit. When remote connectivity
