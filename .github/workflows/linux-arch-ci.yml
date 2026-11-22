@@ -1,0 +1,34 @@
+name: Linux Arch CMake and CTest
+
+on:
+  push:
+    branches:
+      - master
+      - 'feature/**'
+  pull_request:
+    branches:
+      - master
+      - 'feature/**'
+
+permissions:
+  contents: read
+
+jobs:
+  arch-build-and-test:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    timeout-minutes: 25
+    steps:
+      - name: Install Arch development dependencies
+        run: |
+          pacman -Syu --noconfirm --needed git cmake ninja gcc pkgconf qt6-base qt6-svg openssl
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Configure and compile native Linux app
+        run: |
+          cmake --preset dev
+          cmake --build --preset dev
+      - name: Exercise functional Qt workflows through CTest
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: ctest --preset dev --output-on-failure

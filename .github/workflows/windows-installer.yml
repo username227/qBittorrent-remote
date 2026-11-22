@@ -3,10 +3,11 @@ name: Windows UCRT64 installer and CTest
 on:
   push:
     branches:
-      - feature/windows-build-packaging
+      - 'feature/**'
   pull_request:
     branches:
-      - feature/remote-connection-foundation
+      - master
+      - 'feature/**'
   workflow_dispatch:
 
 permissions:

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/MainWindow.h"
 #include "gui/FilterSidebar.h"
+#include "gui/TorrentModel.h"
 #include "gui/ConnectionDialog.h"
 #include "api/RemoteSession.h"
 #include "gui/upstream/hidabletabwidget.h"
@@ -9,6 +10,8 @@
 #include "ui_mainwindow.h"
 
 #include <QAbstractItemView>
+#include <QJsonObject>
+#include <QLocale>
 #include <QDialog>
 #include <QAction>
 #include <QComboBox>
@@ -24,7 +27,7 @@
 #include <QSslCertificate>
 #include <QSizePolicy>
 #include <QSplitter>
-#include <QStandardItemModel>
+#include <QSortFilterProxyModel>
 #include <QStatusBar>
 #include <QStackedWidget>
 #include <QTableView>
@@ -63,8 +66,8 @@ MainWindow::MainWindow(QWidget *parent, QSettings *settings,
     setupActions();
 
     m_ui->statusBar->showMessage(tr("Not connected to a server"));
-    auto *rates = new QLabel(tr("D: —    U: —"), m_ui->statusBar);
-    m_ui->statusBar->addPermanentWidget(rates);
+    m_ratesLabel = new QLabel(tr("D: —    U: —"), m_ui->statusBar);
+    m_ui->statusBar->addPermanentWidget(m_ratesLabel);
 }
 
 MainWindow::~MainWindow() = default;
@@ -86,19 +89,13 @@ void MainWindow::setupMainArea()
 
     auto *torrentTable = new QTableView(vertical);
     torrentTable->setObjectName(QStringLiteral("torrentList"));
-    auto *emptyModel = new QStandardItemModel(torrentTable);
-    // Expose all remote-compatible column labels; show default columns.
-    emptyModel->setHorizontalHeaderLabels({
-        tr("Name"), tr("Size"), tr("Progress"), tr("Status"), tr("Seeds"),
-        tr("Peers"), tr("Down Speed"), tr("Up Speed"), tr("ETA"), tr("Ratio"),
-        tr("Category"), tr("Tags"), tr("Availability"), tr("Added On"), tr("Completed On"),
-        tr("Created On"), tr("Tracker"), tr("Down Limit"), tr("Up Limit"), tr("Downloaded"),
-        tr("Uploaded"), tr("Session Downloaded"), tr("Session Uploaded"), tr("Remaining"), tr("Time Active"),
-        tr("Save Path"), tr("Incomplete Save Path"), tr("Completed"), tr("Ratio Limit"), tr("Last Seen Complete"),
-        tr("Last Activity"), tr("Total Size"), tr("Info Hash v1"), tr("Info Hash v2"), tr("Reannounce In"),
-        tr("Private"), tr("Popularity"), tr("Queue Position")
-    });
-    torrentTable->setModel(emptyModel);
+    m_torrentModel = new TorrentModel(torrentTable);
+    m_torrentProxy = new QSortFilterProxyModel(torrentTable);
+    m_torrentProxy->setSourceModel(m_torrentModel);
+    m_torrentProxy->setSortRole(Qt::UserRole);
+    m_torrentProxy->setFilterCaseSensitivity(Qt::CaseInsensitive);
+    m_torrentProxy->setFilterKeyColumn(0);
+    torrentTable->setModel(m_torrentProxy);
     torrentTable->setAlternatingRowColors(true);
     torrentTable->setShowGrid(false);
     torrentTable->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -108,19 +105,19 @@ void MainWindow::setupMainArea()
     torrentTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
     torrentTable->verticalHeader()->hide();
 
-    for (int column = 13; column < emptyModel->columnCount(); ++column)
+    for (int column = 13; column < m_torrentModel->columnCount(); ++column)
         torrentTable->hideColumn(column);
 
     auto *header = torrentTable->horizontalHeader();
     header->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(header, &QWidget::customContextMenuRequested, torrentTable,
-        [torrentTable, header, emptyModel](const QPoint &position)
+        [torrentTable, header, this](const QPoint &position)
         {
             QMenu menu(header);
-            for (int column = 0; column < emptyModel->columnCount(); ++column)
+            for (int column = 0; column < m_torrentModel->columnCount(); ++column)
             {
                 QAction *action = menu.addAction(
-                    emptyModel->headerData(column, Qt::Horizontal).toString());
+                    m_torrentModel->headerData(column, Qt::Horizontal).toString());
                 action->setCheckable(true);
                 action->setChecked(!torrentTable->isColumnHidden(column));
                 if (column == 0)
@@ -178,17 +175,24 @@ void MainWindow::setupMainArea()
     filterLayout->setContentsMargins(0, 0, 0, 0);
     filterLayout->addStretch();
 
-    auto *searchEdit = new QLineEdit(filterPanel);
-    searchEdit->setPlaceholderText(tr("Filter torrents..."));
-    searchEdit->setFixedWidth(200);
-    searchEdit->setEnabled(false);
-    filterLayout->addWidget(searchEdit);
+    m_searchEdit = new QLineEdit(filterPanel);
+    m_searchEdit->setObjectName(QStringLiteral("torrentSearch"));
+    m_searchEdit->setPlaceholderText(tr("Filter torrents..."));
+    m_searchEdit->setFixedWidth(200);
+    m_searchEdit->setEnabled(false);
+    filterLayout->addWidget(m_searchEdit);
 
     filterLayout->addWidget(new QLabel(tr("Filter by:"), filterPanel));
-    auto *filterBy = new QComboBox(filterPanel);
-    filterBy->addItems({tr("Name"), tr("Save Path"), tr("Info Hash")});
-    filterBy->setEnabled(false);
-    filterLayout->addWidget(filterBy);
+    m_searchBy = new QComboBox(filterPanel);
+    m_searchBy->addItems({tr("Name"), tr("Save Path"), tr("Info Hash v1")});
+    m_searchBy->setEnabled(false);
+    filterLayout->addWidget(m_searchBy);
+    connect(m_searchEdit, &QLineEdit::textChanged, m_torrentProxy,
+            &QSortFilterProxyModel::setFilterFixedString);
+    connect(m_searchBy, &QComboBox::currentIndexChanged, this,
+            [this](int index) {
+                m_torrentProxy->setFilterKeyColumn(index == 1 ? 25 : index == 2 ? 32 : 0);
+            });
 
     // The original lock action is the final toolbar action.
     filterPanel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
@@ -295,7 +299,7 @@ void MainWindow::setupActions()
     {
         QMessageBox::about(this, tr("About qBittorrent Remote"),
             tr("A native Qt desktop client for remote qBittorrent servers.\n"
-               "Server connections are supported; torrent synchronization is coming next."));
+               "Live torrent synchronization uses each connected server's Web API."));
     });
 }
 
@@ -309,6 +313,12 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
 
     m_session = new Remote::RemoteSession(this);
     auto *session = m_session;
+    m_torrentModel->clear();
+    m_filterSidebar->updateCounts(m_torrentModel->torrents());
+    m_serverState = {};
+    m_ratesLabel->setText(tr("D: —    U: —"));
+    m_searchEdit->setEnabled(false);
+    m_searchBy->setEnabled(false);
 
     // Inspect the actual server certificate before permitting TLS errors.
     // This callback runs synchronously from QNetworkReply::sslErrors.
@@ -391,6 +401,8 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
                 tr("Connected to %1 — qBittorrent %2 (Web API %3).")
                     .arg(m_currentServerName, version, apiVersion));
             setWindowTitle(tr("qBittorrent Remote — %1").arg(m_currentServerName));
+            m_searchEdit->setEnabled(true);
+            m_searchBy->setEnabled(true);
 
             if (!m_vault->available())
                 return;
@@ -412,6 +424,11 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
                 });
             }
         });
+    connect(session, &Remote::RemoteSession::mainDataUpdated, this,
+        [this, session](const QJsonObject &payload) {
+            if (m_session == session)
+                applyServerUpdate(payload);
+        });
     connect(session, &Remote::RemoteSession::failed, this,
         [this, session](const QString &reason) {
             if (m_session != session)
@@ -419,6 +436,8 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
             m_ui->statusBar->showMessage(
                 tr("Connection to %1 failed: %2").arg(m_currentServerName, reason));
             m_disconnectAction->setEnabled(false);
+            m_searchEdit->setEnabled(false);
+            m_searchBy->setEnabled(false);
         });
     if (profile.rememberPassword && password.isEmpty() && m_vault->available())
     {
@@ -449,12 +468,48 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
         session->connectToServer(profile, password);
 }
 
+void MainWindow::applyServerUpdate(const QJsonObject &payload)
+{
+    if (payload.value(QStringLiteral("full_update")).toBool())
+        m_serverState = {};
+
+    const QJsonObject changes = payload.value(QStringLiteral("server_state")).toObject();
+    for (auto it = changes.constBegin(); it != changes.constEnd(); ++it)
+        m_serverState.insert(it.key(), it.value());
+
+    m_torrentModel->applySync(payload);
+    m_filterSidebar->updateCounts(m_torrentModel->torrents());
+
+    const double down = m_serverState.value(QStringLiteral("dl_info_speed")).toDouble(-1);
+    const double up = m_serverState.value(QStringLiteral("up_info_speed")).toDouble(-1);
+    const auto rate = [](double bytes) {
+        if (bytes < 0)
+            return QStringLiteral("—");
+        const char *units[] = {"B/s", "KiB/s", "MiB/s", "GiB/s"};
+        int unit = 0;
+        while (bytes >= 1024 && unit < 3)
+        {
+            bytes /= 1024;
+            ++unit;
+        }
+        return QLocale().toString(bytes, 'f', unit == 0 ? 0 : 1)
+            + QLatin1Char(' ') + QString::fromLatin1(units[unit]);
+    };
+    m_ratesLabel->setText(tr("D: %1    U: %2").arg(rate(down), rate(up)));
+}
+
 void MainWindow::disconnectCurrentServer()
 {
     if (!m_session)
         return;
     m_session->disconnectFromServer();
     m_session = nullptr;
+    m_torrentModel->clear();
+    m_filterSidebar->updateCounts(m_torrentModel->torrents());
+    m_serverState = {};
+    m_ratesLabel->setText(tr("D: —    U: —"));
+    m_searchEdit->setEnabled(false);
+    m_searchBy->setEnabled(false);
     m_currentServerName.clear();
     m_disconnectAction->setEnabled(false);
     setWindowTitle(tr("qBittorrent Remote"));

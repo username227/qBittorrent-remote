@@ -3,12 +3,18 @@
 
 #include <QMainWindow>
 #include <QSettings>
+#include <QJsonObject>
 #include "api/CredentialVault.h"
 
 #include <memory>
 
 class FilterSidebar;
 class QAction;
+class QLabel;
+class QLineEdit;
+class QComboBox;
+class QSortFilterProxyModel;
+class TorrentModel;
 namespace Remote
 {
 class RemoteSession;
@@ -34,9 +40,16 @@ private:
     void setupActions();
     void connectToProfile(const Remote::ServerProfile &profile, const QString &password);
     void disconnectCurrentServer();
+    void applyServerUpdate(const QJsonObject &payload);
 
     std::unique_ptr<Ui::MainWindow> m_ui;
     FilterSidebar *m_filterSidebar = nullptr;
+    TorrentModel *m_torrentModel = nullptr;
+    QSortFilterProxyModel *m_torrentProxy = nullptr;
+    QLabel *m_ratesLabel = nullptr;
+    QLineEdit *m_searchEdit = nullptr;
+    QComboBox *m_searchBy = nullptr;
+    QJsonObject m_serverState;
     QSettings m_defaultSettings;
     QSettings *m_settings = nullptr;
     Remote::CredentialVault m_defaultVault;

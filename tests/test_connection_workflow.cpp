@@ -15,6 +15,10 @@
 #include <QPushButton>
 #include <QSettings>
 #include <QStatusBar>
+#include <QTableView>
+#include <QAbstractItemModel>
+#include <QListWidget>
+#include <QLabel>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QTemporaryDir>
@@ -87,6 +91,19 @@ public:
                         {
                             response = "2.11.3";
                         }
+                        else if (path.startsWith("/api/v2/sync/maindata?rid=") && hasCookie)
+                        {
+                            const QUrlQuery query(QString::fromLatin1(path.mid(path.indexOf('?') + 1)));
+                            const int rid = query.queryItemValue(QStringLiteral("rid")).toInt();
+                            if (!m_demoTorrents)
+                                response = R"({"rid":1,"full_update":true,"torrents":{},"server_state":{"dl_info_speed":0,"up_info_speed":0}})";
+                            else if (rid == 0)
+                                response = R"({"rid":1,"full_update":true,"torrents":{"0123456789abcdef0123456789abcdef01234567":{"name":"Demo Linux ISO","size":1048576,"progress":0.25,"state":"downloading","dlspeed":2048,"upspeed":1024,"category":"linux"}},"server_state":{"dl_info_speed":2048,"up_info_speed":1024}})";
+                            else if (rid == 1)
+                                response = R"({"rid":2,"full_update":false,"torrents":{"0123456789abcdef0123456789abcdef01234567":{"name":"Updated Linux ISO","progress":0.5,"dlspeed":4096}},"server_state":{"dl_info_speed":4096}})";
+                            else
+                                response = R"({"rid":3,"full_update":false,"torrents_removed":["0123456789abcdef0123456789abcdef01234567"],"server_state":{"dl_info_speed":0,"up_info_speed":0}})";
+                        }
                         else if (path == "/api/v2/auth/logout" && hasCookie)
                         {
                             ++m_logouts;
@@ -116,12 +133,14 @@ public:
     bool start() { return m_server.listen(QHostAddress::LocalHost, 0); }
     QString url() const { return QStringLiteral("http://127.0.0.1:%1").arg(m_server.serverPort()); }
     int logouts() const noexcept { return m_logouts; }
+    void enableTorrentSyncDemo() { m_demoTorrents = true; }
 
 private:
     QTcpServer m_server;
     bool m_acceptPassword;
     bool m_acceptBlank;
     int m_logouts = 0;
+    bool m_demoTorrents = false;
 };
 
 
@@ -363,6 +382,41 @@ private slots:
         QCOMPARE(vault.reads, 0);
         QCOMPARE(vault.writes, 0);
         QCOMPARE(vault.erases, 0);
+    }
+
+    void liveTorrentRowsFollowFullUpdatesPatchesAndRemovals()
+    {
+        DemoQbittorrentServer server(true);
+        server.enableTorrentSyncDemo();
+        QVERIFY(server.start());
+
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("profiles.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        QTRY_VERIFY(window.isVisible());
+
+        openConnectDialog(window, server.url());
+        auto *table = window.findChild<QTableView *>(QStringLiteral("torrentList"));
+        QVERIFY2(table && table->model(), "The native torrent table must exist.");
+
+        QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 1, 6000);
+        QCOMPARE(table->model()->index(0, 0).data().toString(), QStringLiteral("Demo Linux ISO"));
+        QVERIFY(window.statusBar()->findChildren<QLabel *>().size() > 0);
+
+        auto *search = window.findChild<QLineEdit *>(QStringLiteral("torrentSearch"));
+        QVERIFY2(search && search->isEnabled(), "Live torrent search should be enabled.");
+        search->setText(QStringLiteral("does-not-exist"));
+        QTRY_COMPARE(table->model()->rowCount(), 0);
+        search->clear();
+        QTRY_COMPARE(table->model()->rowCount(), 1);
+
+        QTRY_COMPARE_WITH_TIMEOUT(table->model()->index(0, 0).data().toString(),
+                                  QStringLiteral("Updated Linux ISO"), 6000);
+        QCOMPARE(table->model()->index(0, 2).data().toString().endsWith(QLatin1Char('%')), true);
+        QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 0, 9000);
     }
 
     void userSeesAuthenticationFailure()

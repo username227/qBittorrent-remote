@@ -1,0 +1,285 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#include "gui/TorrentModel.h"
+
+#include <QDateTime>
+#include <QIcon>
+#include <QJsonArray>
+#include <QJsonValue>
+#include <QLocale>
+
+namespace
+{
+const QStringList &columnNames()
+{
+    static const QStringList names {
+        QStringLiteral("Name"), QStringLiteral("Size"), QStringLiteral("Progress"),
+        QStringLiteral("Status"), QStringLiteral("Seeds"), QStringLiteral("Peers"),
+        QStringLiteral("Down Speed"), QStringLiteral("Up Speed"), QStringLiteral("ETA"),
+        QStringLiteral("Ratio"), QStringLiteral("Category"), QStringLiteral("Tags"),
+        QStringLiteral("Availability"), QStringLiteral("Added On"),
+        QStringLiteral("Completed On"), QStringLiteral("Created On"),
+        QStringLiteral("Tracker"), QStringLiteral("Down Limit"), QStringLiteral("Up Limit"),
+        QStringLiteral("Downloaded"), QStringLiteral("Uploaded"),
+        QStringLiteral("Session Downloaded"), QStringLiteral("Session Uploaded"),
+        QStringLiteral("Remaining"), QStringLiteral("Time Active"), QStringLiteral("Save Path"),
+        QStringLiteral("Incomplete Save Path"), QStringLiteral("Completed"),
+        QStringLiteral("Ratio Limit"), QStringLiteral("Last Seen Complete"),
+        QStringLiteral("Last Activity"), QStringLiteral("Total Size"),
+        QStringLiteral("Info Hash v1"), QStringLiteral("Info Hash v2"),
+        QStringLiteral("Reannounce In"), QStringLiteral("Private"),
+        QStringLiteral("Popularity"), QStringLiteral("Queue Position")
+    };
+    return names;
+}
+
+const QStringList &fieldKeys()
+{
+    static const QStringList keys {
+        QStringLiteral("name"), QStringLiteral("size"), QStringLiteral("progress"),
+        QStringLiteral("state"), QStringLiteral("num_seeds"), QStringLiteral("num_leechs"),
+        QStringLiteral("dlspeed"), QStringLiteral("upspeed"), QStringLiteral("eta"),
+        QStringLiteral("ratio"), QStringLiteral("category"), QStringLiteral("tags"),
+        QStringLiteral("availability"), QStringLiteral("added_on"),
+        QStringLiteral("completion_on"), QStringLiteral("created_on"),
+        QStringLiteral("tracker"), QStringLiteral("dl_limit"), QStringLiteral("up_limit"),
+        QStringLiteral("downloaded"), QStringLiteral("uploaded"),
+        QStringLiteral("downloaded_session"), QStringLiteral("uploaded_session"),
+        QStringLiteral("amount_left"), QStringLiteral("time_active"), QStringLiteral("save_path"),
+        QStringLiteral("download_path"), QStringLiteral("completed"),
+        QStringLiteral("ratio_limit"), QStringLiteral("seen_complete"),
+        QStringLiteral("last_activity"), QStringLiteral("total_size"),
+        QStringLiteral("infohash_v1"), QStringLiteral("infohash_v2"),
+        QStringLiteral("reannounce"), QStringLiteral("is_private"),
+        QStringLiteral("popularity"), QStringLiteral("priority")
+    };
+    return keys;
+}
+
+QString bytesText(double bytes)
+{
+    if (bytes < 0)
+        return QStringLiteral("—");
+    static const char *units[] = {"B", "KiB", "MiB", "GiB", "TiB", "PiB"};
+    int index = 0;
+    while (bytes >= 1024 && index < 5)
+    {
+        bytes /= 1024;
+        ++index;
+    }
+    return QLocale().toString(bytes, 'f', index == 0 ? 0 : 1)
+        + QLatin1Char(' ') + QString::fromLatin1(units[index]);
+}
+
+QString durationText(qint64 seconds)
+{
+    if (seconds < 0 || seconds >= 8640000)
+        return QStringLiteral("∞");
+    const qint64 days = seconds / 86400;
+    const qint64 hours = (seconds % 86400) / 3600;
+    const qint64 minutes = (seconds % 3600) / 60;
+    const qint64 secs = seconds % 60;
+    if (days)
+        return QStringLiteral("%1d %2h").arg(days).arg(hours);
+    if (hours)
+        return QStringLiteral("%1h %2m").arg(hours).arg(minutes);
+    return QStringLiteral("%1m %2s").arg(minutes).arg(secs);
+}
+
+QString stateText(const QString &state)
+{
+    static const QHash<QString, QString> friendly {
+        {QStringLiteral("downloading"), QStringLiteral("Downloading")},
+        {QStringLiteral("metaDL"), QStringLiteral("Downloading metadata")},
+        {QStringLiteral("forcedDL"), QStringLiteral("Forced downloading")},
+        {QStringLiteral("stalledDL"), QStringLiteral("Stalled downloading")},
+        {QStringLiteral("uploading"), QStringLiteral("Seeding")},
+        {QStringLiteral("forcedUP"), QStringLiteral("Forced seeding")},
+        {QStringLiteral("stalledUP"), QStringLiteral("Stalled seeding")},
+        {QStringLiteral("pausedDL"), QStringLiteral("Paused")},
+        {QStringLiteral("pausedUP"), QStringLiteral("Paused")},
+        {QStringLiteral("stoppedDL"), QStringLiteral("Stopped")},
+        {QStringLiteral("stoppedUP"), QStringLiteral("Stopped")},
+        {QStringLiteral("queuedDL"), QStringLiteral("Queued")},
+        {QStringLiteral("queuedUP"), QStringLiteral("Queued")},
+        {QStringLiteral("checkingDL"), QStringLiteral("Checking")},
+        {QStringLiteral("checkingUP"), QStringLiteral("Checking")},
+        {QStringLiteral("checkingResumeData"), QStringLiteral("Checking")},
+        {QStringLiteral("moving"), QStringLiteral("Moving")},
+        {QStringLiteral("error"), QStringLiteral("Errored")},
+        {QStringLiteral("missingFiles"), QStringLiteral("Missing files")}
+    };
+    return friendly.value(state, state);
+}
+
+QString stateIcon(const QString &state)
+{
+    if (state == QLatin1String("downloading") || state == QLatin1String("forcedDL"))
+        return QStringLiteral("downloading");
+    if (state == QLatin1String("uploading") || state == QLatin1String("forcedUP"))
+        return QStringLiteral("upload");
+    if (state.startsWith(QLatin1String("stalled")))
+        return QStringLiteral("filter-stalled");
+    if (state.startsWith(QLatin1String("paused")) || state.startsWith(QLatin1String("stopped")))
+        return QStringLiteral("stopped");
+    if (state == QLatin1String("error") || state == QLatin1String("missingFiles"))
+        return QStringLiteral("error");
+    return QStringLiteral("filter-all");
+}
+
+bool byteColumn(int col)
+{
+    return col == 1 || col == 19 || col == 20 || col == 21 || col == 22
+        || col == 23 || col == 27 || col == 31;
+}
+bool speedColumn(int col) { return col == 6 || col == 7 || col == 17 || col == 18; }
+bool timeColumn(int col) { return col == 13 || col == 14 || col == 15 || col == 29 || col == 30; }
+bool durationColumn(int col) { return col == 8 || col == 24 || col == 34; }
+}
+
+TorrentModel::TorrentModel(QObject *parent) : QAbstractTableModel(parent) {}
+
+int TorrentModel::rowCount(const QModelIndex &parent) const
+{
+    return parent.isValid() ? 0 : m_hashes.size();
+}
+
+int TorrentModel::columnCount(const QModelIndex &parent) const
+{
+    return parent.isValid() ? 0 : columnNames().size();
+}
+
+QVariant TorrentModel::headerData(int section, Qt::Orientation orientation, int role) const
+{
+    if (role != Qt::DisplayRole || orientation != Qt::Horizontal
+        || section < 0 || section >= columnNames().size())
+        return {};
+    return columnNames().at(section);
+}
+
+QVariant TorrentModel::data(const QModelIndex &index, int role) const
+{
+    if (!index.isValid() || index.row() < 0 || index.row() >= m_hashes.size()
+        || index.column() < 0 || index.column() >= fieldKeys().size())
+        return {};
+
+    const QJsonObject record = m_torrents.value(m_hashes.at(index.row()));
+    const int col = index.column();
+    const QJsonValue value = record.value(fieldKeys().at(col));
+
+    if (role == Qt::DecorationRole && col == 0)
+        return QIcon(QStringLiteral(":/icons/") + stateIcon(record.value(QStringLiteral("state")).toString())
+                     + QStringLiteral(".svg"));
+    if (role == Qt::TextAlignmentRole && col != 0 && col != 3 && col != 10 && col != 11
+        && col != 16 && col != 25 && col != 26 && col != 32 && col != 33)
+        return static_cast<int>(Qt::AlignVCenter | Qt::AlignRight);
+    if (role == Qt::UserRole)
+        return value.isUndefined() ? QVariant() : value.toVariant();
+
+    if (role != Qt::DisplayRole && role != Qt::ToolTipRole)
+        return {};
+    if (value.isUndefined() || value.isNull())
+        return QStringLiteral("—");
+    if (col == 3)
+        return stateText(value.toString());
+    if (value.isBool())
+        return value.toBool() ? QStringLiteral("Yes") : QStringLiteral("No");
+    if (value.isString())
+        return value.toString();
+    if (!value.isDouble())
+        return QStringLiteral("—");
+
+    const double number = value.toDouble();
+    if (col == 2 || col == 12)
+        return QLocale().toString(number * 100.0, 'f', 1) + QLatin1Char('%');
+    if (byteColumn(col))
+        return bytesText(number);
+    if (speedColumn(col))
+        return number < 0 ? QStringLiteral("∞") : bytesText(number) + QStringLiteral("/s");
+    if (durationColumn(col))
+        return durationText(static_cast<qint64>(number));
+    if (timeColumn(col))
+        return number <= 0 ? QStringLiteral("—")
+            : QLocale().toString(QDateTime::fromSecsSinceEpoch(static_cast<qint64>(number)),
+                                 QLocale::ShortFormat);
+    if (col == 9 || col == 28)
+        return number < 0 ? QStringLiteral("∞") : QLocale().toString(number, 'f', 2);
+    return QLocale().toString(static_cast<qint64>(number));
+}
+
+void TorrentModel::applySync(const QJsonObject &payload)
+{
+    const QJsonObject patches = payload.value(QStringLiteral("torrents")).toObject();
+
+    if (payload.value(QStringLiteral("full_update")).toBool())
+    {
+        beginResetModel();
+        m_hashes.clear();
+        m_torrents.clear();
+        for (auto it = patches.constBegin(); it != patches.constEnd(); ++it)
+        {
+            if (!it.value().isObject())
+                continue;
+            m_hashes.append(it.key());
+            m_torrents.insert(it.key(), it.value().toObject());
+        }
+        endResetModel();
+        return;
+    }
+
+    const QJsonArray removed = payload.value(QStringLiteral("torrents_removed")).toArray();
+    for (const QJsonValue &value : removed)
+    {
+        const QString hash = value.toString();
+        const int row = m_hashes.indexOf(hash);
+        if (row < 0)
+            continue;
+        beginRemoveRows({}, row, row);
+        m_hashes.removeAt(row);
+        m_torrents.remove(hash);
+        endRemoveRows();
+    }
+
+    for (auto it = patches.constBegin(); it != patches.constEnd(); ++it)
+    {
+        if (!it.value().isObject())
+            continue;
+        const QString hash = it.key();
+        const int row = m_hashes.indexOf(hash);
+        QJsonObject record = row < 0 ? QJsonObject() : m_torrents.value(hash);
+        const QJsonObject changes = it.value().toObject();
+        for (auto change = changes.constBegin(); change != changes.constEnd(); ++change)
+            record.insert(change.key(), change.value());
+
+        m_torrents.insert(hash, record);
+        if (row < 0)
+        {
+            const int next = m_hashes.size();
+            beginInsertRows({}, next, next);
+            m_hashes.append(hash);
+            endInsertRows();
+        }
+        else
+        {
+            emit dataChanged(index(row, 0), index(row, columnCount() - 1),
+                             {Qt::DisplayRole, Qt::UserRole, Qt::DecorationRole});
+        }
+    }
+}
+
+void TorrentModel::clear()
+{
+    beginResetModel();
+    m_hashes.clear();
+    m_torrents.clear();
+    endResetModel();
+}
+
+QString TorrentModel::hashForRow(int row) const
+{
+    return row >= 0 && row < m_hashes.size() ? m_hashes.at(row) : QString();
+}
+
+const QHash<QString, QJsonObject> &TorrentModel::torrents() const noexcept
+{
+    return m_torrents;
+}

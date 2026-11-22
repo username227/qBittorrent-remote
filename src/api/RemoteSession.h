@@ -7,6 +7,8 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QJsonObject>
+#include <QTimer>
 #include <QObject>
 #include <QPointer>
 #include <QSslCertificate>
@@ -47,6 +49,7 @@ public:
 signals:
     void connected(const QString &version, const QString &apiVersion);
     void failed(const QString &reason);
+    void mainDataUpdated(const QJsonObject &data);
 
 private:
     QNetworkRequest requestFor(const QString &endpoint) const;
@@ -56,6 +59,7 @@ private:
     bool approveCertificate(const QSslCertificate &certificate, const QStringList &errors);
     void requestVersion();
     void requestApiVersion(const QString &version);
+    void requestMainData();
     void checkReply(QNetworkReply *reply,
                     const std::function<void(const QByteArray &)> &onSuccess);
     void fail(const QString &reason);
@@ -67,6 +71,8 @@ private:
     QString m_tlsFailure;
     CertificateConfirmation m_confirmation;
     bool m_connected = false;
+    qint64 m_syncRid = 0;
+    QTimer m_syncTimer;
 };
 
 } // namespace Remote

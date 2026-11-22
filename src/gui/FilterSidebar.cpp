@@ -4,6 +4,8 @@
 #include "gui/upstream/transferlistfilterswidgetitem.h"
 
 #include <QFrame>
+#include <QJsonObject>
+#include <QVector>
 #include <QIcon>
 #include <QListWidget>
 #include <QListWidgetItem>
@@ -124,4 +126,76 @@ FilterSidebar::FilterSidebar(QWidget *parent)
 
     layout->addStretch();
     setWidget(container);
+}
+
+void FilterSidebar::updateCounts(const QHash<QString, QJsonObject> &torrents)
+{
+    const QList<QListWidget *> lists = findChildren<QListWidget *>(QStringLiteral("filterList"));
+    if (lists.size() != 4)
+        return;
+
+    const QStringList labels {
+        QStringLiteral("All"), QStringLiteral("Downloading"), QStringLiteral("Seeding"),
+        QStringLiteral("Completed"), QStringLiteral("Running"), QStringLiteral("Stopped"),
+        QStringLiteral("Active"), QStringLiteral("Inactive"), QStringLiteral("Stalled"),
+        QStringLiteral("Stalled Uploading"), QStringLiteral("Stalled Downloading"),
+        QStringLiteral("Checking"), QStringLiteral("Moving"), QStringLiteral("Errored")
+    };
+    QVector<int> counts(14, 0);
+    int uncategorized = 0;
+    int untagged = 0;
+    int trackerless = 0;
+    int errors = 0;
+    int warnings = 0;
+
+    for (const QJsonObject &torrent : torrents)
+    {
+        const QString state = torrent.value(QStringLiteral("state")).toString();
+        const bool finished = torrent.value(QStringLiteral("progress")).toDouble() >= 1;
+        const bool down = state == QLatin1String("downloading") || state == QLatin1String("forcedDL")
+                          || state == QLatin1String("metaDL") || state == QLatin1String("stalledDL");
+        const bool up = state == QLatin1String("uploading") || state == QLatin1String("forcedUP")
+                        || state == QLatin1String("stalledUP");
+        const bool stopped = state.startsWith(QLatin1String("stopped"))
+                             || state.startsWith(QLatin1String("paused"));
+        const bool active = torrent.value(QStringLiteral("dlspeed")).toDouble() > 0
+                            || torrent.value(QStringLiteral("upspeed")).toDouble() > 0;
+        ++counts[0];
+        counts[1] += down;
+        counts[2] += up;
+        counts[3] += finished;
+        counts[4] += !stopped && (down || up);
+        counts[5] += stopped;
+        counts[6] += active;
+        counts[7] += !active;
+        counts[8] += state.startsWith(QLatin1String("stalled"));
+        counts[9] += state == QLatin1String("stalledUP");
+        counts[10] += state == QLatin1String("stalledDL");
+        counts[11] += state.startsWith(QLatin1String("checking"));
+        counts[12] += state == QLatin1String("moving");
+        counts[13] += state == QLatin1String("error") || state == QLatin1String("missingFiles");
+
+        uncategorized += torrent.value(QStringLiteral("category")).toString().isEmpty();
+        untagged += torrent.value(QStringLiteral("tags")).toString().isEmpty();
+        trackerless += torrent.value(QStringLiteral("tracker")).toString().isEmpty();
+        errors += state == QLatin1String("error");
+        warnings += state == QLatin1String("missingFiles");
+    }
+
+    for (int row = 0; row < counts.size(); ++row)
+        lists.at(0)->item(row)->setText(
+            QStringLiteral("%1 (%2)").arg(labels.at(row)).arg(counts.at(row)));
+
+    const auto update = [](QListWidget *list, int row, const QString &label, int count) {
+        list->item(row)->setText(QStringLiteral("%1 (%2)").arg(label).arg(count));
+    };
+    update(lists.at(1), 0, QStringLiteral("All"), torrents.size());
+    update(lists.at(1), 1, QStringLiteral("Uncategorized"), uncategorized);
+    update(lists.at(2), 0, QStringLiteral("All"), torrents.size());
+    update(lists.at(2), 1, QStringLiteral("Untagged"), untagged);
+    update(lists.at(3), 0, QStringLiteral("All"), torrents.size());
+    update(lists.at(3), 1, QStringLiteral("Trackerless"), trackerless);
+    update(lists.at(3), 2, QStringLiteral("Tracker error"), errors);
+    update(lists.at(3), 3, QStringLiteral("Other error"), warnings);
+    update(lists.at(3), 4, QStringLiteral("Warning"), warnings);
 }

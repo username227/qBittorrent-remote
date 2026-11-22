@@ -122,6 +122,8 @@ public:
                             result = "v5.1.4";
                         else if (path == "/api/v2/app/webapiVersion" && authenticated)
                             result = "2.11.4";
+                        else if (path.startsWith("/api/v2/sync/maindata?rid=") && authenticated)
+                            result = R"({"rid":1,"full_update":true,"torrents":{},"server_state":{"dl_info_speed":0,"up_info_speed":0}})";
                         else if (path == "/api/v2/auth/logout" && authenticated)
                             result = "Ok.";
                         else

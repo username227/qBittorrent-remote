@@ -2,11 +2,13 @@
 #pragma once
 
 #include <QScrollArea>
+#include <QHash>
+#include <QJsonObject>
 
-// Static empty-state filter sections mirroring the upstream qBittorrent GUI.
-// Future remote models will populate counters and apply selections.
+// Native qBittorrent filter sections with live counts from the remote server.
 class FilterSidebar final : public QScrollArea
 {
 public:
     explicit FilterSidebar(QWidget *parent = nullptr);
+    void updateCounts(const QHash<QString, QJsonObject> &torrents);
 };

@@ -3,6 +3,8 @@
 
 #include <QCryptographicHash>
 #include <QDateTime>
+#include <QJsonDocument>
+#include <QJsonParseError>
 #include <QHostAddress>
 #include <QNetworkCookieJar>
 #include <QSslConfiguration>
@@ -110,6 +112,8 @@ RemoteSession::RemoteSession(QObject *parent)
     , m_network(this)
 {
     m_network.setCookieJar(new QNetworkCookieJar(&m_network));
+    m_syncTimer.setInterval(2000);
+    connect(&m_syncTimer, &QTimer::timeout, this, &RemoteSession::requestMainData);
 }
 
 void RemoteSession::setCertificateTrust(QString pinnedFingerprint,
@@ -273,6 +277,8 @@ void RemoteSession::connectToServer(const ServerProfile &profile,
         return;
     }
 
+    m_syncTimer.stop();
+    m_syncRid = 0;
     m_address = ServerAddress::parse(profile.url);
     if (!m_address)
     {
@@ -396,6 +402,55 @@ void RemoteSession::requestApiVersion(const QString &version)
             }
             m_connected = true;
             emit connected(version, apiVersion);
+            // The first request uses rid=0 for the full server snapshot.
+            // Later polls return only modifications/deletions.
+            if (m_connected)
+            {
+                m_syncTimer.start();
+                QTimer::singleShot(0, this, &RemoteSession::requestMainData);
+            }
+        });
+    });
+}
+
+void RemoteSession::requestMainData()
+{
+    if (!m_connected || m_pendingReply || !m_address)
+        return;
+
+    QNetworkRequest request = requestFor(QStringLiteral("api/v2/sync/maindata"));
+    QUrl url = request.url();
+    QUrlQuery query;
+    query.addQueryItem(QStringLiteral("rid"), QString::number(m_syncRid));
+    url.setQuery(query);
+    request.setUrl(url);
+
+    QNetworkReply *reply = m_network.get(request);
+    armReply(reply);
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        checkReply(reply, [this](const QByteArray &bytes) {
+            QJsonParseError parseError;
+            const QJsonDocument json = QJsonDocument::fromJson(bytes, &parseError);
+            if (parseError.error != QJsonParseError::NoError || !json.isObject())
+            {
+                fail(tr("Invalid /sync/maindata JSON: %1").arg(parseError.errorString()));
+                return;
+            }
+            const QJsonObject payload = json.object();
+            const qint64 rid = payload.value(QStringLiteral("rid")).toInteger(-1);
+            if (rid < 0
+                || (payload.contains(QStringLiteral("torrents"))
+                    && !payload.value(QStringLiteral("torrents")).isObject())
+                || (payload.contains(QStringLiteral("torrents_removed"))
+                    && !payload.value(QStringLiteral("torrents_removed")).isArray())
+                || (m_syncRid == 0 && !payload.value(QStringLiteral("full_update")).toBool()))
+            {
+                fail(tr("Invalid or incomplete /sync/maindata response."));
+                return;
+            }
+
+            m_syncRid = rid;
+            emit mainDataUpdated(payload);
         });
     });
 }
@@ -407,6 +462,7 @@ bool RemoteSession::isConnected() const noexcept
 
 void RemoteSession::disconnectFromServer()
 {
+    m_syncTimer.stop();
     if (m_pendingReply)
     {
         auto *reply = m_pendingReply.data();
@@ -433,6 +489,7 @@ void RemoteSession::disconnectFromServer()
 
 void RemoteSession::fail(const QString &reason)
 {
+    m_syncTimer.stop();
     m_connected = false;
     emit failed(reason);
 }
