@@ -30,6 +30,15 @@
 // torrent model, so changing selections does not affect the other servers.
 namespace
 {
+// The Name column must remain readable even when the other, numerous
+// qBittorrent transfer columns extend past the viewport. Users can scroll
+// horizontally instead of being left with an unresizable 20-pixel Name cell.
+int sensibleNameColumnWidth(const QTableView *table)
+{
+    return qMax(320, table->fontMetrics().horizontalAdvance(
+        QStringLiteral("A descriptive torrent file name")) + 32);
+}
+
 class TorrentFilterProxyModel final : public QSortFilterProxyModel
 {
 public:
@@ -112,7 +121,10 @@ ServerPane::ServerPane(QWidget *parent) : QWidget(parent)
     // Qt highlights selected columns by default; some desktop styles
     // render that state as intermittent bold header labels.
     m_table->horizontalHeader()->setHighlightSections(false);
-    m_table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
+    // Stretch disables user resizing. On Windows it also squeezed Name to
+    // nearly nothing because all other visible columns took the viewport.
+    m_table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Interactive);
+    m_table->horizontalHeader()->resizeSection(0, sensibleNameColumnWidth(m_table));
     m_table->verticalHeader()->hide();
 
     for (int col = 13; col < m_model->columnCount(); ++col)
@@ -384,6 +396,9 @@ void ServerPane::saveLayout(QSettings &settings, const QString &profileId) const
 
     settings.setValue(root + QStringLiteral("/torrentHeader"),
                       m_table->horizontalHeader()->saveState());
+    // Existing layouts saved a non-resizable Name column. Mark layouts saved
+    // after the migration so a user's future manual narrow width is honored.
+    settings.setValue(root + QStringLiteral("/nameColumnResizableV1"), true);
     settings.setValue(root + QStringLiteral("/sortColumn"),
                       m_table->horizontalHeader()->sortIndicatorSection());
     settings.setValue(root + QStringLiteral("/sortOrder"),
@@ -437,6 +452,16 @@ void ServerPane::restoreLayout(QSettings &settings, const QString &profileId)
             && (order == Qt::AscendingOrder || order == Qt::DescendingOrder))
             m_table->sortByColumn(col, order);
     }
+
+    // QHeaderView::restoreState can bring back the old Stretch resize mode
+    // and the minuscule Name column stored by affected Windows versions.
+    // Fix it once per profile, leaving intentional sizes saved after this
+    // change untouched on subsequent launches.
+    auto *header = m_table->horizontalHeader();
+    header->setSectionResizeMode(0, QHeaderView::Interactive);
+    if (!settings.value(root + QStringLiteral("/nameColumnResizableV1"), false).toBool())
+        header->resizeSection(0, qMax(header->sectionSize(0),
+                                      sensibleNameColumnWidth(m_table)));
 
     const auto restoreHeader = [&](const char *objectName, const char *key) {
         if (auto *view = m_details->findChild<QTreeWidget *>(
