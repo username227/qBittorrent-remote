@@ -3,6 +3,9 @@
 
 #include <QCryptographicHash>
 #include <QDateTime>
+#include <QFileInfo>
+#include <QRegularExpression>
+#include <QUuid>
 #include <QJsonDocument>
 #include <QJsonParseError>
 #include <QHostAddress>
@@ -278,6 +281,7 @@ void RemoteSession::connectToServer(const ServerProfile &profile,
     }
 
     m_syncTimer.stop();
+    m_operations.clear();
     m_syncRid = 0;
     m_address = ServerAddress::parse(profile.url);
     if (!m_address)
@@ -312,7 +316,8 @@ void RemoteSession::connectToServer(const ServerProfile &profile,
 
 void RemoteSession::checkReply(
     QNetworkReply *reply,
-    const std::function<void(const QByteArray &)> &onSuccess)
+    const std::function<void(const QByteArray &)> &onSuccess,
+    const std::function<void(const QString &)> &onFailure)
 {
     if (m_pendingReply != reply)
     {
@@ -320,6 +325,12 @@ void RemoteSession::checkReply(
         return;
     }
     m_pendingReply.clear();
+    const auto reject = [this, &onFailure](const QString &reason) {
+        if (onFailure)
+            onFailure(reason);
+        else
+            fail(reason);
+    };
 
     const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
     const bool redirected = reply->attribute(
@@ -336,38 +347,40 @@ void RemoteSession::checkReply(
     {
         const QString failure = m_tlsFailure;
         m_tlsFailure.clear();
-        fail(failure);
+        reject(failure);
         return;
     }
     if (redirected || (status >= 300 && status < 400))
     {
-        fail(tr("The server redirected the API request. Redirects are blocked."));
+        reject(tr("The server redirected the API request. Redirects are blocked."));
         return;
     }
     if (status == 403)
     {
-        fail(tr("Access denied (HTTP 403). Too many failed logins may have triggered an IP ban."));
+        reject(tr("Access denied (HTTP 403). Too many failed logins may have triggered an IP ban."));
         return;
     }
     if (status == 401)
     {
-        fail(tr("Authentication was rejected (HTTP 401)."));
+        reject(tr("Authentication was rejected (HTTP 401)."));
         return;
     }
     if (error != QNetworkReply::NoError)
     {
         if (error == QNetworkReply::SslHandshakeFailedError)
-            fail(tr("TLS certificate validation failed. The certificate was not trusted."));
+            reject(tr("TLS certificate validation failed. The certificate was not trusted."));
         else
-            fail(tr("Cannot reach the server: %1").arg(errorText));
+            reject(tr("Cannot reach the server: %1").arg(errorText));
         return;
     }
     if (status != 200)
     {
-        fail(tr("Unexpected HTTP response: %1").arg(status));
+        reject(tr("Unexpected HTTP response: %1").arg(status));
         return;
     }
     onSuccess(response);
+    if (m_connected && !m_operations.isEmpty())
+        QTimer::singleShot(0, this, &RemoteSession::pumpOperations);
 }
 
 void RemoteSession::requestVersion()
@@ -455,6 +468,163 @@ void RemoteSession::requestMainData()
     });
 }
 
+void RemoteSession::queueOperation(const QString &endpoint, const QByteArray &body,
+                                   const QByteArray &contentType,
+                                   const QString &description, bool checkAccepted)
+{
+    if (!m_connected || !m_address)
+    {
+        emit operationFailed(description, tr("Server is not connected."));
+        return;
+    }
+    m_operations.enqueue({endpoint, body, contentType, description, checkAccepted});
+    pumpOperations();
+}
+
+void RemoteSession::pumpOperations()
+{
+    // The existing secure TLS/checkReply path tracks one outstanding reply.
+    // Serialize all operations with /sync/maindata so no request can overwrite
+    // another reply's TLS verification context or session error state.
+    if (!m_connected || m_pendingReply || m_operations.isEmpty())
+        return;
+
+    const QueuedOperation operation = m_operations.dequeue();
+    QNetworkRequest request = requestFor(operation.endpoint);
+    request.setHeader(QNetworkRequest::ContentTypeHeader,
+                      QString::fromLatin1(operation.contentType));
+    QNetworkReply *reply = m_network.post(request, operation.body);
+    armReply(reply);
+    connect(reply, &QNetworkReply::finished, this, [this, reply, operation]() {
+        checkReply(reply, [this, operation](const QByteArray &response) {
+            if (operation.checkAccepted && response.trimmed() == QByteArrayLiteral("Fails."))
+                emit operationFailed(operation.description, tr("The server rejected the request."));
+            else
+                emit operationSucceeded(operation.description);
+        }, [this, operation](const QString &reason) {
+            emit operationFailed(operation.description, reason);
+        });
+        // Continue the queue even when an individual command was rejected.
+        if (m_connected && !m_pendingReply)
+            QTimer::singleShot(0, this, &RemoteSession::pumpOperations);
+    });
+}
+
+void RemoteSession::commandTorrents(TorrentCommand command,
+                                    const QStringList &hashes, bool deleteFiles)
+{
+    static const QRegularExpression validHash(QStringLiteral("^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$"));
+    if (hashes.isEmpty())
+    {
+        emit operationFailed(tr("Torrent action"), tr("No torrents selected."));
+        return;
+    }
+    for (const QString &hash : hashes)
+    {
+        if (!validHash.match(hash).hasMatch())
+        {
+            emit operationFailed(tr("Torrent action"), tr("Invalid torrent hash."));
+            return;
+        }
+    }
+
+    QString endpoint;
+    QString description;
+    switch (command)
+    {
+    case TorrentCommand::Start:
+        endpoint = QStringLiteral("start"); description = tr("Start torrents"); break;
+    case TorrentCommand::Stop:
+        endpoint = QStringLiteral("stop"); description = tr("Stop torrents"); break;
+    case TorrentCommand::Delete:
+        endpoint = QStringLiteral("delete"); description = tr("Remove torrents"); break;
+    case TorrentCommand::IncreasePriority:
+        endpoint = QStringLiteral("increasePrio"); description = tr("Increase queue priority"); break;
+    case TorrentCommand::DecreasePriority:
+        endpoint = QStringLiteral("decreasePrio"); description = tr("Decrease queue priority"); break;
+    case TorrentCommand::TopPriority:
+        endpoint = QStringLiteral("topPrio"); description = tr("Move to top of queue"); break;
+    case TorrentCommand::BottomPriority:
+        endpoint = QStringLiteral("bottomPrio"); description = tr("Move to bottom of queue"); break;
+    }
+
+    QUrlQuery form;
+    form.addQueryItem(QStringLiteral("hashes"), hashes.join(QLatin1Char('|')));
+    if (command == TorrentCommand::Delete)
+        form.addQueryItem(QStringLiteral("deleteFiles"),
+                          deleteFiles ? QStringLiteral("true") : QStringLiteral("false"));
+    queueOperation(QStringLiteral("api/v2/torrents/") + endpoint,
+                   form.toString(QUrl::FullyEncoded).toUtf8(),
+                   QByteArrayLiteral("application/x-www-form-urlencoded"), description);
+}
+
+void RemoteSession::addTorrentUrls(const QString &urls)
+{
+    const QStringList lines = urls.split(QLatin1Char('\n'));
+    QStringList checked;
+    for (QString line : lines)
+    {
+        line = line.trimmed();
+        if (line.isEmpty())
+            continue;
+        const QUrl url(line, QUrl::StrictMode);
+        const QString scheme = url.scheme().toLower();
+        if (!url.isValid()
+            || (scheme != QLatin1String("magnet") && scheme != QLatin1String("http")
+                && scheme != QLatin1String("https"))
+            || ((scheme == QLatin1String("http") || scheme == QLatin1String("https"))
+                && url.host().isEmpty()))
+        {
+            emit operationFailed(tr("Add torrent links"), tr("Use valid magnet, HTTP or HTTPS URLs."));
+            return;
+        }
+        checked.append(line);
+    }
+    if (checked.isEmpty())
+    {
+        emit operationFailed(tr("Add torrent links"), tr("No torrent URLs supplied."));
+        return;
+    }
+    QUrlQuery form;
+    form.addQueryItem(QStringLiteral("urls"), checked.join(QLatin1Char('\n')));
+    queueOperation(QStringLiteral("api/v2/torrents/add"),
+                   form.toString(QUrl::FullyEncoded).toUtf8(),
+                   QByteArrayLiteral("application/x-www-form-urlencoded"),
+                   tr("Add torrent links"), true);
+}
+
+void RemoteSession::addTorrentFile(const QString &filename, const QByteArray &contents)
+{
+    // A .torrent file contains bencoded metadata, not downloaded content.
+    // Keep the payload bounded and never substitute a local save path.
+    if (contents.isEmpty() || contents.size() > (32 * 1024 * 1024))
+    {
+        emit operationFailed(tr("Add torrent file"), tr("The torrent file is empty or exceeds 32 MiB."));
+        return;
+    }
+
+    QString cleanName = QFileInfo(filename).fileName();
+    cleanName.replace(QRegularExpression(QStringLiteral("[^A-Za-z0-9._-]")),
+                      QStringLiteral("_"));
+    if (cleanName.isEmpty())
+        cleanName = QStringLiteral("upload.torrent");
+
+    const QByteArray boundary = QByteArrayLiteral("qbtRemote-")
+        + QUuid::createUuid().toString(QUuid::WithoutBraces).toLatin1();
+    QByteArray body;
+    body.reserve(contents.size() + 512);
+    body += QByteArrayLiteral("--") + boundary + QByteArrayLiteral("\r\n");
+    body += QByteArrayLiteral("Content-Disposition: form-data; name=\"torrents\"; filename=\"")
+        + cleanName.toUtf8() + QByteArrayLiteral("\"\r\n");
+    body += QByteArrayLiteral("Content-Type: application/x-bittorrent\r\n\r\n");
+    body += contents;
+    body += QByteArrayLiteral("\r\n--") + boundary + QByteArrayLiteral("--\r\n");
+
+    queueOperation(QStringLiteral("api/v2/torrents/add"), body,
+                   QByteArrayLiteral("multipart/form-data; boundary=") + boundary,
+                   tr("Add torrent file"), true);
+}
+
 bool RemoteSession::isConnected() const noexcept
 {
     return m_connected;
@@ -463,6 +633,7 @@ bool RemoteSession::isConnected() const noexcept
 void RemoteSession::disconnectFromServer()
 {
     m_syncTimer.stop();
+    m_operations.clear();
     if (m_pendingReply)
     {
         auto *reply = m_pendingReply.data();
@@ -490,6 +661,7 @@ void RemoteSession::disconnectFromServer()
 void RemoteSession::fail(const QString &reason)
 {
     m_syncTimer.stop();
+    m_operations.clear();
     m_connected = false;
     emit failed(reason);
 }

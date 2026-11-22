@@ -39,6 +39,8 @@ private:
     std::shared_ptr<SessionContext> activeConnection() const;
     ServerPane *activePane() const;
     void updateActiveUi();
+    void updateTorrentActionState();
+    QStringList selectedTorrentHashes() const;
 
     std::unique_ptr<Ui::MainWindow> m_ui;
     QSettings m_defaultSettings;

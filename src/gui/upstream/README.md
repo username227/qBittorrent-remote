@@ -13,6 +13,10 @@ The source is the qBittorrent `upstream-source` branch at commit
   status-filter section widget, compiled without local-engine dependencies.
 - `proptabbar.{h,cpp}`: upstream icon-bearing properties-tab bar; adapted
   only to use our embedded Qt icons instead of upstream's theme manager.
+- `progressbarpainter.{h,cpp}` and `transferlistdelegate.{h,cpp}`: adapted
+  original Qt progress bars, percentages, and stable torrent row sizing.
+  They read Web API-backed Qt models and the native Qt style without importing
+  local BitTorrent session code, UIThemeManager or Preferences.
 - `qbittorrent_icons.qrc`: path-rewritten resource manifest built from the
   complete upstream `src/icons/icons.qrc`. All referenced icons, including
   the country flags, are copied from the same upstream snapshot.

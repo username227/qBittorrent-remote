@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/MainWindow.h"
 #include "gui/ServerPane.h"
+#include "gui/TorrentModel.h"
 #include "gui/FilterSidebar.h"
 #include "gui/ConnectionDialog.h"
 #include "api/RemoteSession.h"
@@ -9,6 +10,15 @@
 #include "ui_mainwindow.h"
 
 #include <QDialog>
+#include <QCheckBox>
+#include <QFileDialog>
+#include <QFile>
+#include <QFileInfo>
+#include <QInputDialog>
+#include <QItemSelectionModel>
+#include <QSortFilterProxyModel>
+#include <QSet>
+#include <QTableView>
 #include <QAction>
 #include <QComboBox>
 #include <QHBoxLayout>
@@ -247,6 +257,130 @@ void MainWindow::setupActions()
             tr("A native Qt desktop client for remote qBittorrent servers.\n"
                "Live torrent synchronization uses each connected server's Web API."));
     });
+    const auto bindCommand = [this](QAction *action,
+                                   Remote::RemoteSession::TorrentCommand command)
+    {
+        connect(action, &QAction::triggered, this, [this, command]() {
+            if (const auto server = activeConnection())
+                server->session->commandTorrents(command, selectedTorrentHashes());
+        });
+    };
+    bindCommand(m_ui->actionStart, Remote::RemoteSession::TorrentCommand::Start);
+    bindCommand(m_ui->actionStop, Remote::RemoteSession::TorrentCommand::Stop);
+    bindCommand(m_ui->actionTopQueuePos, Remote::RemoteSession::TorrentCommand::TopPriority);
+    bindCommand(m_ui->actionIncreaseQueuePos, Remote::RemoteSession::TorrentCommand::IncreasePriority);
+    bindCommand(m_ui->actionDecreaseQueuePos, Remote::RemoteSession::TorrentCommand::DecreasePriority);
+    bindCommand(m_ui->actionBottomQueuePos, Remote::RemoteSession::TorrentCommand::BottomPriority);
+
+    connect(m_ui->actionDelete, &QAction::triggered, this, [this]() {
+        const auto server = activeConnection();
+        const QStringList hashes = selectedTorrentHashes();
+        if (!server || !server->connected || hashes.isEmpty())
+            return;
+
+        QMessageBox prompt(this);
+        prompt.setObjectName(QStringLiteral("removeTorrentsDialog"));
+        prompt.setIcon(QMessageBox::Warning);
+        prompt.setWindowTitle(tr("Remove torrents"));
+        prompt.setText(tr("Remove %1 selected torrent(s) from %2?")
+                           .arg(hashes.size()).arg(server->profile.name));
+        prompt.setInformativeText(tr("Removing a torrent does not delete its downloaded files "
+                                      "unless you explicitly select the option below."));
+        auto *deleteFiles = new QCheckBox(
+            tr("Also delete downloaded files from the REMOTE server"), &prompt);
+        prompt.setCheckBox(deleteFiles);
+        prompt.setStandardButtons(QMessageBox::Yes | QMessageBox::Cancel);
+        prompt.setDefaultButton(QMessageBox::Cancel);
+        if (prompt.exec() != QMessageBox::Yes || !containsConnection(server)
+            || !server->connected)
+            return;
+
+        server->session->commandTorrents(
+            Remote::RemoteSession::TorrentCommand::Delete,
+            hashes, deleteFiles->isChecked());
+    });
+
+    connect(m_ui->actionDownloadFromURL, &QAction::triggered, this, [this]() {
+        const auto server = activeConnection();
+        if (!server || !server->connected)
+            return;
+        bool accepted = false;
+        const QString urls = QInputDialog::getMultiLineText(this,
+            tr("Add torrent link to %1").arg(server->profile.name),
+            tr("Paste magnet or HTTP(S) links, one per line.\n"
+               "The remote server will use its own default download location."),
+            QString(), &accepted);
+        if (accepted && !urls.trimmed().isEmpty()
+            && containsConnection(server) && server->connected)
+            server->session->addTorrentUrls(urls);
+    });
+
+    connect(m_ui->actionOpen, &QAction::triggered, this, [this]() {
+        const auto server = activeConnection();
+        if (!server || !server->connected)
+            return;
+        const QString filename = QFileDialog::getOpenFileName(
+            this, tr("Add .torrent to %1").arg(server->profile.name), QString(),
+            tr("Torrent files (*.torrent);;All files (*)"));
+        if (filename.isEmpty() || !containsConnection(server) || !server->connected)
+            return;
+        QFile file(filename);
+        if (!file.open(QIODevice::ReadOnly))
+        {
+            QMessageBox::warning(this, tr("Cannot open torrent file"),
+                                 tr("Cannot read the selected local .torrent file."));
+            return;
+        }
+        if (file.size() > 32 * 1024 * 1024)
+        {
+            QMessageBox::warning(this, tr("Torrent file too large"),
+                                 tr("The selected .torrent metadata exceeds 32 MiB."));
+            return;
+        }
+        server->session->addTorrentFile(QFileInfo(filename).fileName(), file.readAll());
+    });
+}
+
+QStringList MainWindow::selectedTorrentHashes() const
+{
+    const auto server = activeConnection();
+    if (!server || !server->connected)
+        return {};
+
+    const ServerPane *pane = server->pane;
+    auto *selection = pane->table()->selectionModel();
+    if (!selection)
+        return {};
+
+    QSet<QString> seen;
+    QStringList hashes;
+    for (const QModelIndex &selected : selection->selectedRows())
+    {
+        const QModelIndex source = pane->proxy()->mapToSource(selected);
+        const QString hash = pane->model()->hashForRow(source.row());
+        if (!hash.isEmpty() && !seen.contains(hash))
+        {
+            seen.insert(hash);
+            hashes.append(hash);
+        }
+    }
+    return hashes;
+}
+
+void MainWindow::updateTorrentActionState()
+{
+    const auto server = activeConnection();
+    const bool ready = server && server->connected;
+    const bool selected = ready && !selectedTorrentHashes().isEmpty();
+
+    m_ui->actionOpen->setEnabled(ready);
+    m_ui->actionDownloadFromURL->setEnabled(ready);
+    for (QAction *action : {
+        m_ui->actionDelete, m_ui->actionStart, m_ui->actionStop,
+        m_ui->actionTopQueuePos, m_ui->actionIncreaseQueuePos,
+        m_ui->actionDecreaseQueuePos, m_ui->actionBottomQueuePos
+    })
+        action->setEnabled(selected);
 }
 
 std::shared_ptr<MainWindow::SessionContext> MainWindow::activeConnection() const
@@ -294,6 +428,7 @@ void MainWindow::updateActiveUi()
     m_disconnectAction->setEnabled(static_cast<bool>(connection));
     if (pane)
         pane->sidebar()->setVisible(m_ui->actionShowFiltersSidebar->isChecked());
+    updateTorrentActionState();
     m_ratesLabel->setText(connection && ready && pane
                           ? pane->rateText() : tr("D: —    U: —"));
 
@@ -368,6 +503,13 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
     connection->session = new Remote::RemoteSession(this);
     auto *session = connection->session;
     m_connections.append(connection);
+
+    connect(connection->pane->table()->selectionModel(),
+            &QItemSelectionModel::selectionChanged, this,
+            [this, connection]() {
+                if (activeConnection() == connection)
+                    updateTorrentActionState();
+            });
 
     m_views->addTab(connection->pane, upstreamIcon("folder-remote"), profile.name);
     m_views->setCurrentWidget(connection->pane);
@@ -470,7 +612,25 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
                 return;
             connection->pane->applySync(payload);
             if (activeConnection() == connection)
+            {
                 m_ratesLabel->setText(connection->pane->rateText());
+                updateTorrentActionState();
+            }
+        });
+    connect(session, &Remote::RemoteSession::operationSucceeded, this,
+        [this, connection](const QString &description) {
+            if (containsConnection(connection) && activeConnection() == connection)
+                m_ui->statusBar->showMessage(
+                    tr("%1: %2 request accepted; awaiting server synchronization.")
+                        .arg(connection->profile.name, description));
+        });
+    connect(session, &Remote::RemoteSession::operationFailed, this,
+        [this, connection](const QString &description, const QString &reason) {
+            if (!containsConnection(connection))
+                return;
+            QMessageBox::warning(this, tr("Remote torrent operation failed"),
+                tr("%1 on %2 failed: %3")
+                    .arg(description, connection->profile.name, reason));
         });
     connect(session, &Remote::RemoteSession::failed, this,
         [this, connection](const QString &reason) {

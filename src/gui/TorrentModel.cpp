@@ -94,7 +94,7 @@ QString stateText(const QString &state)
         {QStringLiteral("stalledDL"), QStringLiteral("Stalled downloading")},
         {QStringLiteral("uploading"), QStringLiteral("Seeding")},
         {QStringLiteral("forcedUP"), QStringLiteral("Forced seeding")},
-        {QStringLiteral("stalledUP"), QStringLiteral("Stalled seeding")},
+        {QStringLiteral("stalledUP"), QStringLiteral("Seeding")},
         {QStringLiteral("pausedDL"), QStringLiteral("Paused")},
         {QStringLiteral("pausedUP"), QStringLiteral("Paused")},
         {QStringLiteral("stoppedDL"), QStringLiteral("Stopped")},
@@ -189,8 +189,13 @@ QVariant TorrentModel::data(const QModelIndex &index, int role) const
         return QStringLiteral("—");
 
     const double number = value.toDouble();
-    if (col == 2 || col == 12)
+    if (col == 2)
         return QLocale().toString(number * 100.0, 'f', 1) + QLatin1Char('%');
+    // As in native qBittorrent: the Web API's "availability" is the
+    // number of distributed copies, not a percentage. -1 means unknown.
+    if (col == 12)
+        return number < 0 ? QStringLiteral("N/A")
+            : QLocale().toString(number, 'f', 3);
     if (byteColumn(col))
         return bytesText(number);
     if (speedColumn(col))

@@ -79,6 +79,10 @@ add_library(qbittorrent_remote_gui STATIC
     src/gui/upstream/transferlistfilterswidgetitem.h
     src/gui/upstream/proptabbar.cpp
     src/gui/upstream/proptabbar.h
+    src/gui/upstream/progressbarpainter.cpp
+    src/gui/upstream/progressbarpainter.h
+    src/gui/upstream/transferlistdelegate.cpp
+    src/gui/upstream/transferlistdelegate.h
     src/gui/upstream/hidabletabwidget.cpp
     src/gui/upstream/hidabletabwidget.h
     src/gui/upstream/mainwindow.ui

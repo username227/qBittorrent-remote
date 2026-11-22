@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/MainWindow.h"
 #include "gui/ConnectionDialog.h"
+#include "gui/upstream/transferlistdelegate.h"
 #include "api/CredentialVault.h"
+#include "api/RemoteSession.h"
 
 #include <QAction>
 #include <QApplication>
@@ -21,6 +23,11 @@
 #include <QAbstractItemModel>
 #include <QListWidget>
 #include <QLabel>
+#include <QInputDialog>
+#include <QImage>
+#include <QPainter>
+#include <QStyleOptionViewItem>
+#include <QPair>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QTemporaryDir>
@@ -98,14 +105,33 @@ public:
                             ++m_syncRequests;
                             const QUrlQuery query(QString::fromLatin1(path.mid(path.indexOf('?') + 1)));
                             const int rid = query.queryItemValue(QStringLiteral("rid")).toInt();
-                            if (!m_demoTorrents)
+                            if (m_demoNativePresentation)
+                            {
+                                // Two real server-originated states: completed seeding
+                                // with unavailable swarm information, and an incomplete
+                                // torrent with 2.5 distributed copies.
+                                if (rid == 0)
+                                    response = R"({"rid":1,"full_update":true,"torrents":{"0000000000000000000000000000000000000001":{"name":"Complete seed","size":1024,"progress":1.0,"state":"stalledUP","availability":-1},"0000000000000000000000000000000000000002":{"name":"Partial download","size":1024,"progress":0.5,"state":"downloading","availability":2.5}},"server_state":{"dl_info_speed":0,"up_info_speed":0}})";
+                                else
+                                    response = R"({"rid":2,"full_update":false,"server_state":{"dl_info_speed":0}})";
+                            }
+                            else if (!m_demoTorrents)
                                 response = R"({"rid":1,"full_update":true,"torrents":{},"server_state":{"dl_info_speed":0,"up_info_speed":0}})";
                             else if (rid == 0)
                                 response = R"({"rid":1,"full_update":true,"torrents":{"0123456789abcdef0123456789abcdef01234567":{"name":"Demo Linux ISO","size":1048576,"progress":0.25,"state":"downloading","dlspeed":2048,"upspeed":1024,"category":"linux"}},"server_state":{"dl_info_speed":2048,"up_info_speed":1024}})";
                             else if (rid == 1)
                                 response = R"({"rid":2,"full_update":false,"torrents":{"0123456789abcdef0123456789abcdef01234567":{"name":"Updated Linux ISO","progress":0.5,"dlspeed":4096}},"server_state":{"dl_info_speed":4096}})";
+                            else if (m_keepDemoTorrents)
+                                response = R"({"rid":3,"full_update":false,"server_state":{"dl_info_speed":0}})";
                             else
                                 response = R"({"rid":3,"full_update":false,"torrents_removed":["0123456789abcdef0123456789abcdef01234567"],"server_state":{"dl_info_speed":0,"up_info_speed":0}})";
+                        }
+                        else if (path.startsWith("/api/v2/torrents/") && hasCookie)
+                        {
+                            m_commands.append({path, body});
+                            code = m_rejectCommands ? 400 : 200;
+                            response = m_rejectCommands ? QByteArrayLiteral("Rejected")
+                                                        : QByteArrayLiteral("Ok.");
                         }
                         else if (path == "/api/v2/auth/logout" && hasCookie)
                         {
@@ -138,6 +164,25 @@ public:
     int logouts() const noexcept { return m_logouts; }
     int syncRequests() const noexcept { return m_syncRequests; }
     void enableTorrentSyncDemo() { m_demoTorrents = true; }
+    void enableNativePresentationDemo() { m_demoNativePresentation = true; }
+    void keepDemoTorrents() { m_keepDemoTorrents = true; }
+    void rejectTorrentCommands() { m_rejectCommands = true; }
+    int commandsFor(const QByteArray &endpoint) const
+    {
+        int count = 0;
+        for (const auto &request : m_commands)
+            count += request.first == endpoint;
+        return count;
+    }
+    QByteArray lastCommandBody(const QByteArray &endpoint) const
+    {
+        for (auto it = m_commands.crbegin(); it != m_commands.crend(); ++it)
+        {
+            if (it->first == endpoint)
+                return it->second;
+        }
+        return {};
+    }
 
 private:
     QTcpServer m_server;
@@ -145,7 +190,11 @@ private:
     bool m_acceptBlank;
     int m_logouts = 0;
     bool m_demoTorrents = false;
+    bool m_demoNativePresentation = false;
+    bool m_keepDemoTorrents = false;
+    bool m_rejectCommands = false;
     int m_syncRequests = 0;
+    QList<QPair<QByteArray, QByteArray>> m_commands;
 };
 
 
@@ -168,6 +217,29 @@ protected:
                 QTimer::singleShot(0, dialog, [dialog]() {
                     if (auto *button = dialog->button(QMessageBox::Yes))
                         button->click();
+                });
+            }
+        }
+        return QObject::eventFilter(object, event);
+    }
+};
+
+class ConfirmTorrentRemoval final : public QObject
+{
+public:
+    int prompts = 0;
+protected:
+    bool eventFilter(QObject *object, QEvent *event) override
+    {
+        if (event->type() == QEvent::Show)
+        {
+            auto *dialog = qobject_cast<QMessageBox *>(object);
+            if (dialog && dialog->windowTitle() == QStringLiteral("Remove torrents"))
+            {
+                ++prompts;
+                QTimer::singleShot(0, dialog, [dialog]() {
+                    if (auto *yes = dialog->button(QMessageBox::Yes))
+                        yes->click();
                 });
             }
         }
@@ -433,6 +505,74 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 0, 9000);
     }
 
+    void nativeTransferPresentationShowsUpstreamProgressAndAvailability()
+    {
+        DemoQbittorrentServer server(true);
+        server.enableNativePresentationDemo();
+        QVERIFY(server.start());
+
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("profiles.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        QTRY_VERIFY(window.isVisible());
+        openConnectDialog(window, server.url());
+
+        auto *table = window.findChild<QTableView *>(QStringLiteral("torrentList"));
+        QVERIFY(table && table->model());
+        QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 2, 6000);
+
+        // This is the real native Qt painter installed in the live remote
+        // table, not a plain-text-only progress cell or a mock item model.
+        auto *delegate = qobject_cast<TransferListDelegate *>(table->itemDelegate());
+        QVERIFY2(delegate, "Torrent progress must use the adapted upstream delegate.");
+
+        const auto indexFor = [table](const QString &name, int column) {
+            for (int row = 0; row < table->model()->rowCount(); ++row)
+                if (table->model()->index(row, 0).data().toString() == name)
+                    return table->model()->index(row, column);
+            return QModelIndex();
+        };
+
+        const QModelIndex seed = indexFor(QStringLiteral("Complete seed"), 2);
+        const QModelIndex partial = indexFor(QStringLiteral("Partial download"), 2);
+        QVERIFY(seed.isValid() && partial.isValid());
+        QCOMPARE(seed.data(Qt::UserRole).toDouble(), 1.0);
+        QCOMPARE(partial.data(Qt::UserRole).toDouble(), 0.5);
+        QVERIFY(seed.data().toString().endsWith(QLatin1Char('%')));
+        QVERIFY(partial.data().toString().endsWith(QLatin1Char('%')));
+        QCOMPARE(indexFor(QStringLiteral("Complete seed"), 3).data().toString(),
+                 QStringLiteral("Seeding"));
+        QCOMPARE(indexFor(QStringLiteral("Complete seed"), 12).data().toString(),
+                 QStringLiteral("N/A"));
+
+        const QString known = indexFor(QStringLiteral("Partial download"), 12).data().toString();
+        QCOMPARE(QLocale().toDouble(known), 2.5);
+        QVERIFY(!known.endsWith(QLatin1Char('%')));
+        QCOMPARE(known, QLocale().toString(2.5, 'f', 3));
+
+        // Exercise the actual item's paint path at two remotely supplied
+        // completion levels: native Qt must produce different bar images.
+        const auto paintProgress = [table, delegate](const QModelIndex &index) {
+            QImage image(200, 24, QImage::Format_ARGB32_Premultiplied);
+            image.fill(Qt::transparent);
+            QStyleOptionViewItem option;
+            option.rect = QRect(0, 0, 200, 24);
+            option.widget = table;
+            option.palette = table->palette();
+            option.state = QStyle::State_Enabled | QStyle::State_Active;
+            QPainter painter(&image);
+            delegate->paint(&painter, option, index);
+            painter.end();
+            return image;
+        };
+        const QImage completeBar = paintProgress(seed);
+        const QImage partialBar = paintProgress(partial);
+        QVERIFY2(completeBar != partialBar, "100% and 50% must paint distinct progress bars.");
+    }
+
     void startupConnectsOnlyOptedInProfilesUsingProtectedCredentials()
     {
         DemoQbittorrentServer selected(true);
@@ -540,6 +680,133 @@ private slots:
 
         const int beforeLastPoll = first.syncRequests();
         QTRY_VERIFY_WITH_TIMEOUT(first.syncRequests() > beforeLastPoll, 6000);
+    }
+
+    void torrentFileUploadPreservesBinaryMetadata()
+    {
+        DemoQbittorrentServer server(true);
+        QVERIFY(server.start());
+
+        Remote::RemoteSession session;
+        Remote::ServerProfile profile {
+            QString(), QStringLiteral("Temporary fixture"), server.url(),
+            QStringLiteral("demo"), false, false
+        };
+        QSignalSpy connected(&session, &Remote::RemoteSession::connected);
+        QSignalSpy accepted(&session, &Remote::RemoteSession::operationSucceeded);
+
+        session.connectToServer(profile, QStringLiteral("demo-password"));
+        QTRY_COMPARE_WITH_TIMEOUT(connected.count(), 1, 6000);
+
+        const QByteArray metadata = QByteArray::fromHex("006465616462656566ff");
+        session.addTorrentFile(QStringLiteral("test.torrent"), metadata);
+        QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor("/api/v2/torrents/add"), 1, 6000);
+        QTRY_COMPARE_WITH_TIMEOUT(accepted.count(), 1, 6000);
+
+        const QByteArray request = server.lastCommandBody("/api/v2/torrents/add");
+        QVERIFY(request.contains("name=\"torrents\"; filename=\"test.torrent\""));
+        QVERIFY(request.contains("Content-Type: application/x-bittorrent"));
+        QVERIFY(request.contains(metadata));
+        QVERIFY(request.startsWith("--qbtRemote-"));
+    }
+
+    void rejectedTorrentActionDoesNotDisconnectServer()
+    {
+        DemoQbittorrentServer server(true);
+        server.rejectTorrentCommands();
+        QVERIFY(server.start());
+
+        Remote::RemoteSession session;
+        Remote::ServerProfile profile {
+            QString(), QStringLiteral("Temporary fixture"), server.url(),
+            QStringLiteral("demo"), false, false
+        };
+        QSignalSpy connected(&session, &Remote::RemoteSession::connected);
+        QSignalSpy failedOperation(&session, &Remote::RemoteSession::operationFailed);
+
+        session.connectToServer(profile, QStringLiteral("demo-password"));
+        QTRY_COMPARE_WITH_TIMEOUT(connected.count(), 1, 6000);
+        session.commandTorrents(Remote::RemoteSession::TorrentCommand::Start,
+            {QStringLiteral("0123456789abcdef0123456789abcdef01234567")});
+        QTRY_COMPARE_WITH_TIMEOUT(failedOperation.count(), 1, 6000);
+        QVERIFY(session.isConnected());
+
+        const int requestsBefore = server.syncRequests();
+        QTRY_VERIFY_WITH_TIMEOUT(server.syncRequests() > requestsBefore, 6000);
+    }
+
+    void realTorrentActionsUseAuthenticatedServerApis()
+    {
+        DemoQbittorrentServer server(true);
+        server.enableTorrentSyncDemo();
+        server.keepDemoTorrents();
+        QVERIFY(server.start());
+
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("profiles.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        QTRY_VERIFY(window.isVisible());
+
+        openConnectDialog(window, server.url());
+        auto *table = window.findChild<QTableView *>(QStringLiteral("torrentList"));
+        QVERIFY(table);
+        QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 1, 6000);
+        table->selectRow(0);
+
+        const auto action = [&window](const char *name) {
+            return window.findChild<QAction *>(QString::fromLatin1(name));
+        };
+        QAction *start = action("actionStart");
+        QAction *stop = action("actionStop");
+        QAction *top = action("actionTopQueuePos");
+        QAction *remove = action("actionDelete");
+        QAction *link = action("actionDownloadFromURL");
+        QVERIFY(start && stop && top && remove && link);
+        QTRY_VERIFY(start->isEnabled());
+        QVERIFY(stop->isEnabled());
+        QVERIFY(top->isEnabled());
+        QVERIFY(remove->isEnabled());
+
+        start->trigger();
+        stop->trigger();
+        top->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor("/api/v2/torrents/start"), 1, 5000);
+        QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor("/api/v2/torrents/stop"), 1, 5000);
+        QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor("/api/v2/torrents/topPrio"), 1, 5000);
+        QCOMPARE(QUrlQuery(QString::fromUtf8(server.lastCommandBody(
+            "/api/v2/torrents/start"))).queryItemValue(QStringLiteral("hashes")),
+            QStringLiteral("0123456789abcdef0123456789abcdef01234567"));
+
+        ConfirmTorrentRemoval confirmation;
+        qApp->installEventFilter(&confirmation);
+        remove->trigger();
+        qApp->removeEventFilter(&confirmation);
+        QCOMPARE(confirmation.prompts, 1);
+        QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor("/api/v2/torrents/delete"), 1, 5000);
+        const QUrlQuery deletion(QString::fromUtf8(
+            server.lastCommandBody("/api/v2/torrents/delete")));
+        QCOMPARE(deletion.queryItemValue(QStringLiteral("deleteFiles")),
+                 QStringLiteral("false"));
+
+        QTimer::singleShot(0, []() {
+            auto *dialog = qobject_cast<QInputDialog *>(QApplication::activeModalWidget());
+            if (dialog)
+            {
+                dialog->setTextValue(QStringLiteral(
+                    "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567"));
+                dialog->accept();
+            }
+        });
+        QVERIFY(link->isEnabled());
+        link->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor("/api/v2/torrents/add"), 1, 5000);
+        const QUrlQuery addition(QString::fromUtf8(
+            server.lastCommandBody("/api/v2/torrents/add")));
+        QVERIFY(addition.queryItemValue(QStringLiteral("urls"))
+                .startsWith(QStringLiteral("magnet:?xt=")));
     }
 
     void userSeesAuthenticationFailure()

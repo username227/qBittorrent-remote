@@ -3,6 +3,7 @@
 #include "gui/FilterSidebar.h"
 #include "gui/TorrentModel.h"
 #include "gui/upstream/proptabbar.h"
+#include "gui/upstream/transferlistdelegate.h"
 
 #include <QAbstractItemView>
 #include <QAction>
@@ -43,6 +44,7 @@ ServerPane::ServerPane(QWidget *parent) : QWidget(parent)
     m_proxy->setFilterCaseSensitivity(Qt::CaseInsensitive);
     m_proxy->setFilterKeyColumn(0);
     m_table->setModel(m_proxy);
+    m_table->setItemDelegate(new TransferListDelegate(m_table));
     m_table->setAlternatingRowColors(true);
     m_table->setShowGrid(false);
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
