@@ -1,14 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/MainWindow.h"
+#include "gui/ServerPane.h"
 #include "gui/ConnectionDialog.h"
 #include "gui/upstream/transferlistdelegate.h"
+#include "gui/upstream/proptabbar.h"
 #include "api/CredentialVault.h"
 #include "api/RemoteSession.h"
 
 #include <QAction>
 #include <QApplication>
 #include <QEvent>
+#include <QDateTime>
 #include <QCheckBox>
+#include <QButtonGroup>
 #include <QFile>
 #include <QHash>
 #include <QHostAddress>
@@ -25,8 +29,12 @@
 #include <QLabel>
 #include <QInputDialog>
 #include <QImage>
+#include <QProgressBar>
+#include <QTableWidget>
+#include <QTreeWidget>
 #include <QPainter>
 #include <QStyleOptionViewItem>
+#include <QSplitter>
 #include <QPair>
 #include <QTcpServer>
 #include <QTcpSocket>
@@ -126,6 +134,36 @@ public:
                             else
                                 response = R"({"rid":3,"full_update":false,"torrents_removed":["0123456789abcdef0123456789abcdef01234567"],"server_state":{"dl_info_speed":0,"up_info_speed":0}})";
                         }
+                        else if (m_demoDetails && hasCookie
+                                 && (path.startsWith("/api/v2/torrents/properties?")
+                                     || path.startsWith("/api/v2/torrents/trackers?")
+                                     || path.startsWith("/api/v2/sync/torrentPeers?")
+                                     || path.startsWith("/api/v2/torrents/webseeds?")
+                                     || path.startsWith("/api/v2/torrents/files?")))
+                        {
+                            m_detailRequests.append(path);
+                            if (path.startsWith("/api/v2/torrents/properties?"))
+                                response = R"DEMO({"save_path":"/share/NAS/torrents","comment":"Get it at https://example.test/files?id=7&part=2 and <b>plain markup</b>; javascript:alert(1)","total_downloaded":1048576,"total_uploaded":2048,"total_size":1048576,"time_elapsed":3600,"eta":0,"share_ratio":1.25,"pieces_num":4,"seeds":2,"peers":1})DEMO";
+                            else if (path.startsWith("/api/v2/torrents/trackers?"))
+                            {
+                                response = R"TRACK([
+                                  {"url":"** [DHT] **","tier":-1,"status":0,"disabled_for_torrent":true,"num_peers":0,"num_seeds":0,"num_leeches":0,"num_downloaded":0,"msg":"This torrent is private"},
+                                  {"url":"** [PeX] **","tier":-1,"status":0,"disabled_for_torrent":true,"num_peers":0,"num_seeds":0,"num_leeches":0,"num_downloaded":0,"msg":"This torrent is private"},
+                                  {"url":"** [LSD] **","tier":-1,"status":0,"disabled_for_torrent":true,"num_peers":0,"num_seeds":0,"num_leeches":0,"num_downloaded":0,"msg":"This torrent is private"},
+                                  {"url":"https://tracker.example/announce","tier":0,"status":2,"num_seeds":3,"num_peers":1,"num_leeches":2,"num_downloaded":4,"next_announce":NEXT_EPOCH,"min_announce":MIN_EPOCH,"msg":"Working",
+                                    "endpoints":[{"name":"tracker.example:443","bt_version":1,"status":2,"num_seeds":3,"num_peers":1,"num_leeches":2,"num_downloaded":4,"next_announce":NEXT_EPOCH,"min_announce":MIN_EPOCH,"msg":"Announced"}]}
+                                ])TRACK";
+                                const qint64 now = QDateTime::currentSecsSinceEpoch();
+                                response.replace("NEXT_EPOCH", QByteArray::number(now + 780));
+                                response.replace("MIN_EPOCH", QByteArray::number(now + 540));
+                            }
+                            else if (path.startsWith("/api/v2/sync/torrentPeers?"))
+                                response = R"({"rid":1,"full_update":true,"peers":{"192.0.2.1:61413":{"client":"qBittorrent","country_code":"US","progress":0.75,"dl_speed":1024,"up_speed":2048,"flags":"D","connection":"TCP"}}})";
+                            else if (path.startsWith("/api/v2/torrents/webseeds?"))
+                                response = R"([{"url":"https://mirror.example/file.iso"}])";
+                            else
+                                response = R"([{"index":0,"name":"data/file-one.bin","size":512,"progress":1,"priority":1},{"index":1,"name":"data/file-two.bin","size":512,"progress":0.5,"priority":6}])";
+                        }
                         else if (path.startsWith("/api/v2/torrents/") && hasCookie)
                         {
                             m_commands.append({path, body});
@@ -165,6 +203,18 @@ public:
     int syncRequests() const noexcept { return m_syncRequests; }
     void enableTorrentSyncDemo() { m_demoTorrents = true; }
     void enableNativePresentationDemo() { m_demoNativePresentation = true; }
+    void enableDetailsDemo() { m_demoDetails = true; }
+    int detailsFor(const QByteArray &pathPrefix) const
+    {
+        int count = 0;
+        for (const QByteArray &requested : m_detailRequests)
+            count += requested.startsWith(pathPrefix);
+        return count;
+    }
+    QByteArray lastDetailRequest() const
+    {
+        return m_detailRequests.isEmpty() ? QByteArray() : m_detailRequests.last();
+    }
     void keepDemoTorrents() { m_keepDemoTorrents = true; }
     void rejectTorrentCommands() { m_rejectCommands = true; }
     int commandsFor(const QByteArray &endpoint) const
@@ -191,6 +241,8 @@ private:
     int m_logouts = 0;
     bool m_demoTorrents = false;
     bool m_demoNativePresentation = false;
+    bool m_demoDetails = false;
+    QList<QByteArray> m_detailRequests;
     bool m_keepDemoTorrents = false;
     bool m_rejectCommands = false;
     int m_syncRequests = 0;
@@ -571,6 +623,216 @@ private slots:
         const QImage completeBar = paintProgress(seed);
         const QImage partialBar = paintProgress(partial);
         QVERIFY2(completeBar != partialBar, "100% and 50% must paint distinct progress bars.");
+    }
+
+    void nativeTorrentDetailsUseSelectedRemoteServerAndFilePriorityApis()
+    {
+        DemoQbittorrentServer server(true);
+        server.enableNativePresentationDemo();
+        server.enableDetailsDemo();
+        QVERIFY(server.start());
+
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("profiles.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        QTRY_VERIFY(window.isVisible());
+        openConnectDialog(window, server.url());
+
+        auto *table = window.findChild<QTableView *>(QStringLiteral("torrentList"));
+        QVERIFY(table);
+        QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 2, 6000);
+
+        int targetRow = -1;
+        for (int i = 0; i < table->model()->rowCount(); ++i)
+            if (table->model()->index(i, 0).data().toString() == QStringLiteral("Complete seed"))
+                targetRow = i;
+        QVERIFY(targetRow >= 0);
+        table->selectRow(targetRow);
+        const QString torrentHash = QStringLiteral("0000000000000000000000000000000000000001");
+
+        auto *tabBar = window.findChild<PropTabBar *>();
+        QVERIFY(tabBar);
+        // The original qBittorrent bar lives at the BOTTOM of the splitter,
+        // while the property pages occupy the area immediately above it.
+        QCOMPARE(tabBar->currentIndex(), 0);
+        auto *dock = window.findChild<QWidget *>(QStringLiteral("torrentDetailsDock"));
+        auto *pages = window.findChild<QWidget *>(QStringLiteral("remoteTorrentProperties"));
+        auto *splitter = window.findChild<QSplitter *>(QStringLiteral("torrentDetailsSplitter"));
+        QVERIFY(dock && pages && splitter);
+        QTRY_VERIFY(pages->isVisible());
+        const int expandedHeight = dock->height();
+        QVERIFY2(expandedHeight > 100, "Native properties must open above the bottom tabs.");
+        QVERIFY2(qAbs(tabBar->geometry().bottom() - dock->height()) < 15,
+                 "Tab bar should be bottom-anchored while the details are visible.");
+
+        auto *buttons = tabBar->findChild<QButtonGroup *>();
+        QVERIFY(buttons && buttons->button(0) && buttons->button(1));
+        QTest::mouseClick(buttons->button(0), Qt::LeftButton);
+        QTRY_VERIFY(!pages->isVisible());
+        QCOMPARE(tabBar->currentIndex(), -1);
+        QTRY_VERIFY_WITH_TIMEOUT(dock->height() < 100, 3000);
+        QVERIFY2(qAbs(tabBar->geometry().bottom() - dock->height()) < 15,
+                 "Bottom tabs must stay anchored after the panel collapses.");
+        QTest::mouseClick(buttons->button(0), Qt::LeftButton);
+        QTRY_VERIFY(pages->isVisible());
+        QCOMPARE(tabBar->currentIndex(), 0);
+        QTRY_VERIFY_WITH_TIMEOUT(dock->height() >= expandedHeight - 25, 3000);
+        QVERIFY2(qAbs(tabBar->geometry().bottom() - dock->height()) < 15,
+                 "Bottom tabs must remain fixed after restoring the panel.");
+
+        QTRY_VERIFY_WITH_TIMEOUT(server.detailsFor("/api/v2/torrents/properties?") > 0, 6000);
+        auto *savePath = window.findChild<QLabel *>(QStringLiteral("labelSavePathVal"));
+        QVERIFY(savePath);
+        QTRY_COMPARE_WITH_TIMEOUT(savePath->text(), QStringLiteral("/share/NAS/torrents"), 6000);
+        auto *propertiesBar = window.findChild<QProgressBar *>(QStringLiteral("detailsProgressBar"));
+        QVERIFY(propertiesBar);
+        QCOMPARE(propertiesBar->value(), 1000);
+        auto *comment = window.findChild<QLabel *>(QStringLiteral("labelCommentVal"));
+        QVERIFY(comment);
+        QTRY_VERIFY_WITH_TIMEOUT(comment->text().contains(
+            QStringLiteral("<a href=\"https://example.test/files?id=7&amp;part=2\">")), 6000);
+        QVERIFY(comment->text().contains(QStringLiteral("&lt;b&gt;plain markup&lt;/b&gt;")));
+        QVERIFY(!comment->text().contains(QStringLiteral("href=\"javascript:")));
+        QCOMPARE(comment->textFormat(), Qt::RichText);
+        QVERIFY(!comment->openExternalLinks());
+        // Only the comment becomes rich text. Untrusted torrent metadata
+        // elsewhere in General must remain plain text.
+        QCOMPARE(savePath->textFormat(), Qt::PlainText);
+
+        tabBar->setCurrentIndex(1);
+        auto *trackers = window.findChild<QTreeWidget *>(QStringLiteral("torrentTrackers"));
+        QVERIFY(trackers);
+        QTRY_COMPARE_WITH_TIMEOUT(trackers->topLevelItemCount(), 4, 6000);
+        QCOMPARE(trackers->columnCount(), 11);
+        QCOMPARE(trackers->headerItem()->text(0), QStringLiteral("URL/Announce Endpoint"));
+        QCOMPARE(trackers->headerItem()->text(1), QStringLiteral("Tier"));
+        QCOMPARE(trackers->headerItem()->text(2), QStringLiteral("BT Protocol"));
+        QCOMPARE(trackers->headerItem()->text(7), QStringLiteral("Times Downloaded"));
+        QCOMPARE(trackers->headerItem()->text(9), QStringLiteral("Next Announce"));
+        QCOMPARE(trackers->headerItem()->text(10), QStringLiteral("Min Announce"));
+        for (int row = 0; row < 3; ++row)
+        {
+            auto *protocol = trackers->topLevelItem(row);
+            QVERIFY(protocol);
+            QCOMPARE(protocol->text(1), QString());
+            QCOMPARE(protocol->text(2), QString());
+            QCOMPARE(protocol->text(3), QStringLiteral("Disabled for this torrent"));
+            // Upstream GUI uses N/A for pseudo tracker peer/download counts,
+            // even when the Web API sends zero for those fields.
+            QCOMPARE(protocol->text(4), QStringLiteral("N/A"));
+            QCOMPARE(protocol->text(5), QStringLiteral("0"));
+            QCOMPARE(protocol->text(6), QStringLiteral("0"));
+            QCOMPARE(protocol->text(7), QStringLiteral("N/A"));
+            QCOMPARE(protocol->text(9), QString());
+            QCOMPARE(protocol->text(10), QString());
+            QCOMPARE(protocol->childCount(), 0);
+        }
+        QCOMPARE(trackers->topLevelItem(0)->text(0), QStringLiteral("** [DHT] **"));
+        QCOMPARE(trackers->topLevelItem(1)->text(0), QStringLiteral("** [PeX] **"));
+        QCOMPARE(trackers->topLevelItem(2)->text(0), QStringLiteral("** [LSD] **"));
+
+        auto *tracker = trackers->topLevelItem(3);
+        QVERIFY(tracker);
+        QCOMPARE(tracker->text(0), QStringLiteral("https://tracker.example/announce"));
+        QCOMPARE(tracker->text(1), QStringLiteral("0"));
+        QCOMPARE(tracker->text(3), QStringLiteral("Working"));
+        QCOMPARE(tracker->text(4), QStringLiteral("1"));
+        QCOMPARE(tracker->text(5), QStringLiteral("3"));
+        QCOMPARE(tracker->text(6), QStringLiteral("2"));
+        QCOMPARE(tracker->text(7), QStringLiteral("4"));
+        QVERIFY(!tracker->text(9).isEmpty());
+        QVERIFY(!tracker->text(10).isEmpty());
+        QVERIFY(!tracker->text(9).contains(QLatin1Char('/')));
+        QCOMPARE(tracker->childCount(), 1);
+        QCOMPARE(tracker->child(0)->text(0), QStringLiteral("tracker.example:443"));
+        QCOMPARE(tracker->child(0)->text(1), QString());
+        QCOMPARE(tracker->child(0)->text(2), QStringLiteral("v1"));
+        QCOMPARE(tracker->child(0)->text(3), QStringLiteral("Working"));
+
+        tracker->setExpanded(true);
+        QCOMPARE(tracker->isExpanded(), true);
+        // Re-polling must preserve native tree state, not flatten endpoints.
+        const int previousTrackerQueries = server.detailsFor("/api/v2/torrents/trackers?");
+        auto *serverPane = window.findChild<ServerPane *>();
+        QVERIFY(serverPane);
+        serverPane->refreshSelectedDetails();
+        QTRY_VERIFY_WITH_TIMEOUT(
+            server.detailsFor("/api/v2/torrents/trackers?") > previousTrackerQueries, 6000);
+        QTRY_VERIFY_WITH_TIMEOUT(trackers->topLevelItem(3)->isExpanded(), 6000);
+        QCOMPARE(trackers->topLevelItem(3)->childCount(), 1);
+
+        tabBar->setCurrentIndex(2);
+        auto *peers = window.findChild<QTableWidget *>(QStringLiteral("torrentPeers"));
+        QVERIFY(peers);
+        QTRY_COMPARE_WITH_TIMEOUT(peers->rowCount(), 1, 6000);
+        QCOMPARE(peers->item(0, 2)->text(), QStringLiteral("qBittorrent"));
+
+        tabBar->setCurrentIndex(3);
+        auto *sources = window.findChild<QListWidget *>(QStringLiteral("torrentWebSeeds"));
+        QVERIFY(sources);
+        QTRY_COMPARE_WITH_TIMEOUT(sources->count(), 1, 6000);
+        QCOMPARE(sources->item(0)->text(), QStringLiteral("https://mirror.example/file.iso"));
+
+        tabBar->setCurrentIndex(4);
+        auto *contents = window.findChild<QTreeWidget *>(QStringLiteral("torrentContent"));
+        QVERIFY(contents);
+        QTRY_VERIFY_WITH_TIMEOUT(contents->topLevelItemCount() > 0, 6000);
+        QTRY_VERIFY_WITH_TIMEOUT(contents->topLevelItem(0)->childCount() == 2, 6000);
+        QCOMPARE(contents->columnCount(), 6);
+        QCOMPARE(contents->headerItem()->text(3), QStringLiteral("Download Priority"));
+        auto *rootFolder = contents->topLevelItem(0);
+        auto *fileOne = rootFolder->child(0);
+        auto *fileTwo = rootFolder->child(1);
+        QCOMPARE(fileOne->checkState(0), Qt::Checked);
+        QCOMPARE(fileTwo->checkState(0), Qt::Checked);
+        QCOMPARE(rootFolder->checkState(0), Qt::Checked);
+        QCOMPARE(fileOne->text(2), QStringLiteral("100%"));
+        QCOMPARE(fileTwo->text(2), QStringLiteral("50%"));
+        QVERIFY(fileOne->icon(0).isNull() == false);
+
+        auto *filter = window.findChild<QLineEdit *>(QStringLiteral("torrentFileFilter"));
+        QVERIFY(filter);
+        filter->setText(QStringLiteral("file-two"));
+        QVERIFY(fileOne->isHidden());
+        QVERIFY(!fileTwo->isHidden());
+        filter->clear();
+        QVERIFY(!fileOne->isHidden());
+
+        // Click-to-exclude must send priority=0 for exactly this file;
+        // the folder becomes partially checked, as in upstream qBittorrent.
+        fileOne->setCheckState(0, Qt::Unchecked);
+        QCOMPARE(fileOne->text(3), QStringLiteral("Do not download"));
+        QCOMPARE(rootFolder->checkState(0), Qt::PartiallyChecked);
+        QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor("/api/v2/torrents/filePrio"), 1, 6000);
+        const QUrlQuery excluded(QString::fromUtf8(
+            server.lastCommandBody("/api/v2/torrents/filePrio")));
+        QCOMPARE(excluded.queryItemValue(QStringLiteral("hash")), torrentHash);
+        QCOMPARE(excluded.queryItemValue(QStringLiteral("id")), QStringLiteral("0"));
+        QCOMPARE(excluded.queryItemValue(QStringLiteral("priority")), QStringLiteral("0"));
+
+        auto *selectNone = window.findChild<QPushButton *>(QStringLiteral("selectNoneButton"));
+        QVERIFY(selectNone);
+        // This button excludes the entire torrent without deleting any
+        // already-downloaded files. The server is the authority afterwards.
+        QTest::mouseClick(selectNone, Qt::LeftButton);
+        QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor("/api/v2/torrents/filePrio"), 2, 6000);
+        const QUrlQuery priority(QString::fromUtf8(
+            server.lastCommandBody("/api/v2/torrents/filePrio")));
+        QCOMPARE(priority.queryItemValue(QStringLiteral("hash")), torrentHash);
+        QCOMPARE(priority.queryItemValue(QStringLiteral("id")), QStringLiteral("0|1"));
+        QCOMPARE(priority.queryItemValue(QStringLiteral("priority")), QStringLiteral("0"));
+
+        tabBar->setCurrentIndex(5);
+        auto *speedGraph = window.findChild<QWidget *>(QStringLiteral("remoteSpeedGraph"));
+        QVERIFY(speedGraph);
+        QVERIFY(speedGraph->isVisible());
+        QVERIFY(server.detailsFor("/api/v2/torrents/files?") > 0);
+        QVERIFY(server.detailsFor("/api/v2/sync/torrentPeers?") > 0);
+        QVERIFY(!server.lastDetailRequest().isEmpty());
+        QTRY_VERIFY_WITH_TIMEOUT(server.syncRequests() >= 2, 6000);
     }
 
     void startupConnectsOnlyOptedInProfilesUsingProtectedCredentials()

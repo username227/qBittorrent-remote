@@ -504,6 +504,17 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
     auto *session = connection->session;
     m_connections.append(connection);
 
+    // Properties always use the selected server's own authenticated session,
+    // certificate pin and cookie jar. Inactive tabs remain independent.
+    connect(connection->pane, &ServerPane::torrentDetailsRequested,
+            session, &Remote::RemoteSession::requestTorrentDetails);
+    connect(connection->pane, &ServerPane::filePriorityRequested,
+            session, &Remote::RemoteSession::setFilePriority);
+    connect(session, &Remote::RemoteSession::torrentDetailsReceived,
+            connection->pane, &ServerPane::displayTorrentDetails);
+    connect(session, &Remote::RemoteSession::torrentDetailsFailed,
+            connection->pane, &ServerPane::displayTorrentDetailsError);
+
     connect(connection->pane->table()->selectionModel(),
             &QItemSelectionModel::selectionChanged, this,
             [this, connection]() {
@@ -623,6 +634,15 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
                 m_ui->statusBar->showMessage(
                     tr("%1: %2 request accepted; awaiting server synchronization.")
                         .arg(connection->profile.name, description));
+            if (containsConnection(connection)
+                && description == tr("Set file priorities"))
+            {
+                QPointer<ServerPane> pane(connection->pane);
+                QTimer::singleShot(500, this, [pane]() {
+                    if (pane)
+                        pane->refreshSelectedDetails();
+                });
+            }
         });
     connect(session, &Remote::RemoteSession::operationFailed, this,
         [this, connection](const QString &description, const QString &reason) {
@@ -631,6 +651,10 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
             QMessageBox::warning(this, tr("Remote torrent operation failed"),
                 tr("%1 on %2 failed: %3")
                     .arg(description, connection->profile.name, reason));
+            // Restore server-authoritative priorities when a checkbox action
+            // was rejected. Never leave optimistic selection state misleading.
+            if (description == tr("Set file priorities"))
+                connection->pane->refreshSelectedDetails();
         });
     connect(session, &Remote::RemoteSession::failed, this,
         [this, connection](const QString &reason) {
