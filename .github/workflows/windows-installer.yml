@@ -1,0 +1,48 @@
+name: Windows UCRT64 installer and CTest
+
+on:
+  push:
+    branches:
+      - feature/windows-build-packaging
+  pull_request:
+    branches:
+      - feature/remote-connection-foundation
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test-package:
+    runs-on: windows-2022
+    timeout-minutes: 40
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install MSYS2 UCRT64 toolchain
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            git
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-qt6-base
+            mingw-w64-ucrt-x86_64-qt6-svg
+            mingw-w64-ucrt-x86_64-qtkeychain
+            mingw-w64-ucrt-x86_64-openssl
+            mingw-w64-ucrt-x86_64-nsis
+
+      - name: Build, CTest, stage and package installer
+        shell: msys2 {0}
+        run: bash packaging/windows/build-installer.sh
+
+      - name: Upload installer EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: qBittorrent-Remote-Windows-x64-Setup
+          path: build/windows-ucrt/dist/*.exe
+          if-no-files-found: error

@@ -13,7 +13,10 @@ set(CMAKE_AUTORCC ON)
 include(GNUInstallDirs)
 include(CTest)
 
-find_package(Qt6 6.6 REQUIRED COMPONENTS Core Widgets Network)
+# SVG icons from the bundled qBittorrent UI require the QtSvg icon-engine
+# plugin on every platform. Make the dependency explicit so missing SVG
+# support fails at configure time rather than silently hiding all icons.
+find_package(Qt6 6.6 REQUIRED COMPONENTS Core Widgets Network Svg)
 
 # Optional cross-platform OS credential vault: libsecret/Secret Service,
 # Windows Credential Manager or macOS Keychain. Never allow plaintext fallback.
@@ -25,6 +28,13 @@ if(Qt6Keychain_FOUND AND TARGET qt6keychain)
     set(QBT_REMOTE_KEYCHAIN_TARGET qt6keychain)
 elseif(Qt6Keychain_FOUND AND TARGET Qt6Keychain::Qt6Keychain)
     set(QBT_REMOTE_KEYCHAIN_TARGET Qt6Keychain::Qt6Keychain)
+endif()
+
+option(QBT_REMOTE_REQUIRE_KEYCHAIN
+    "Fail configuration if secure QtKeychain support is unavailable" OFF)
+if(QBT_REMOTE_REQUIRE_KEYCHAIN AND NOT QBT_REMOTE_KEYCHAIN_TARGET)
+    message(FATAL_ERROR
+        "This build requires QtKeychain; install the Qt 6 QtKeychain development package.")
 endif()
 
 if(QBT_REMOTE_KEYCHAIN_TARGET)
@@ -76,7 +86,7 @@ target_include_directories(qbittorrent_remote_gui PUBLIC
 set_target_properties(qbittorrent_remote_gui PROPERTIES
     AUTOUIC_SEARCH_PATHS "${PROJECT_SOURCE_DIR}/src/gui/upstream"
 )
-target_link_libraries(qbittorrent_remote_gui PUBLIC qbittorrent_remote_core Qt6::Widgets)
+target_link_libraries(qbittorrent_remote_gui PUBLIC qbittorrent_remote_core Qt6::Widgets Qt6::Svg)
 
 qt_add_executable(qbittorrent-remote
     src/main.cpp

@@ -1,0 +1,25 @@
+qBittorrent Remote - Third-party runtime notices
+================================================
+
+This installer is a development/testing build of qBittorrent Remote, released
+under GPL-3.0-or-later (see LICENSE.txt). Qt Designer UI and icon assets are
+attributed in src/gui/upstream/README.md in the source repository.
+
+Runtime components (versions depend on the MSYS2 build date):
+- Qt 6 Core/Gui/Widgets/Network/Svg and the Windows platform/TLS/SVG plugins:
+  The Qt Company and contributors; LGPL-3.0-only and other component licenses.
+  https://www.qt.io/licensing/  https://code.qt.io/
+- QtKeychain (libqt6keychain.dll): BSD-3-Clause.
+  https://github.com/frankosterfeld/qtkeychain
+- GCC/MinGW-w64 compiler support runtime: GCC Runtime Library Exception
+  and the respective GCC/MinGW-w64 component license terms.
+  https://gcc.gnu.org/  https://www.mingw-w64.org/
+- NSIS installer system: zlib/libpng license.
+  https://nsis.sourceforge.io/
+
+Corresponding project source:
+https://github.com/username227/qBittorrent-remote
+
+QtKeychain requests Windows' secure credential service and insecure fallback
+is disabled in the application's source. The installer does not contain
+your saved credentials or user settings.
