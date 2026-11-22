@@ -2,10 +2,12 @@
 #include "gui/MainWindow.h"
 #include "gui/ServerPane.h"
 #include "gui/ConnectionDialog.h"
+#include "gui/RemoteAddTorrentDialog.h"
 #include "gui/upstream/transferlistdelegate.h"
 #include "gui/upstream/proptabbar.h"
 #include "api/CredentialVault.h"
 #include "api/RemoteSession.h"
+#include "api/TorrentMetadataReader.h"
 
 #include <QAction>
 #include <QApplication>
@@ -14,6 +16,7 @@
 #include <QCheckBox>
 #include <QButtonGroup>
 #include <QFile>
+#include <QFileDialog>
 #include <QFontInfo>
 #include <QHash>
 #include <QHeaderView>
@@ -30,6 +33,8 @@
 #include <QListWidget>
 #include <QLabel>
 #include <QInputDialog>
+#include <QPlainTextEdit>
+#include <QDialogButtonBox>
 #include <QImage>
 #include <QProgressBar>
 #include <QTableWidget>
@@ -115,7 +120,19 @@ public:
                             ++m_syncRequests;
                             const QUrlQuery query(QString::fromLatin1(path.mid(path.indexOf('?') + 1)));
                             const int rid = query.queryItemValue(QStringLiteral("rid")).toInt();
-                            if (m_demoNativePresentation)
+                            if (!m_existingTorrentHash.isEmpty())
+                            {
+                                if (rid == 0)
+                                    response = QByteArrayLiteral("{\"rid\":1,\"full_update\":true,\"torrents\":{\"")
+                                        + m_existingTorrentHash.toUtf8()
+                                        + QByteArrayLiteral("\":{\"name\":\"Already present\",\"progress\":1,\"state\":\"uploading\",\"private\":")
+                                        + (m_existingTorrentPrivate ? QByteArrayLiteral("true")
+                                                                    : QByteArrayLiteral("false"))
+                                        + QByteArrayLiteral("}}}");
+                                else
+                                    response = R"({"rid":2,"full_update":false,"server_state":{"dl_info_speed":0}})";
+                            }
+                            else if (m_demoNativePresentation)
                             {
                                 // Two real server-originated states: completed seeding
                                 // with unavailable swarm information, and an incomplete
@@ -204,6 +221,8 @@ public:
     int logouts() const noexcept { return m_logouts; }
     int syncRequests() const noexcept { return m_syncRequests; }
     void enableTorrentSyncDemo() { m_demoTorrents = true; }
+    void setExistingTorrentHash(const QString &hash) { m_existingTorrentHash = hash; }
+    void setExistingTorrentPrivate(bool value) { m_existingTorrentPrivate = value; }
     void enableNativePresentationDemo() { m_demoNativePresentation = true; }
     void enableDetailsDemo() { m_demoDetails = true; }
     int detailsFor(const QByteArray &pathPrefix) const
@@ -242,6 +261,8 @@ private:
     bool m_acceptBlank;
     int m_logouts = 0;
     bool m_demoTorrents = false;
+    QString m_existingTorrentHash;
+    bool m_existingTorrentPrivate = false;
     bool m_demoNativePresentation = false;
     bool m_demoDetails = false;
     QList<QByteArray> m_detailRequests;
@@ -336,6 +357,70 @@ public:
     int reads = 0;
     int writes = 0;
     int erases = 0;
+};
+
+// Operate the real file chooser, native Add Torrent dialog, and duplicate
+// confirmation as a person would, against a disposable authenticated server.
+class MergeDuplicateTorrentUi final : public QObject
+{
+public:
+    explicit MergeDuplicateTorrentUi(QString fileName) : m_fileName(std::move(fileName)) {}
+    int chosenFiles = 0;
+    int addDialogs = 0;
+    int mergePrompts = 0;
+    int privateWarnings = 0;
+
+protected:
+    bool eventFilter(QObject *obj, QEvent *event) override
+    {
+        if (event->type() != QEvent::Show)
+            return QObject::eventFilter(obj, event);
+        if (auto *picker = qobject_cast<QFileDialog *>(obj);
+            picker && picker->objectName() == QLatin1String("addTorrentFileDialog"))
+        {
+            ++chosenFiles;
+            const QString path = m_fileName;
+            QTimer::singleShot(0, picker, [picker, path]() {
+                picker->selectFile(path);
+                // QFileDialog::accept() is protected in Qt. Dispatch through
+                // the public QDialog interface, preserving its override.
+                static_cast<QDialog *>(picker)->accept();
+            });
+        }
+        else if (auto *dialog = qobject_cast<RemoteAddTorrentDialog *>(obj))
+        {
+            ++addDialogs;
+            QTimer::singleShot(0, dialog, [dialog]() {
+                auto *buttons = dialog->findChild<QDialogButtonBox *>(
+                    QStringLiteral("buttonBox"));
+                if (buttons && buttons->button(QDialogButtonBox::Ok))
+                    buttons->button(QDialogButtonBox::Ok)->click();
+            });
+        }
+        else if (auto *prompt = qobject_cast<QMessageBox *>(obj))
+        {
+            if (prompt->objectName() == QLatin1String("duplicateTorrentTrackersDialog"))
+            {
+                ++mergePrompts;
+                QTimer::singleShot(0, prompt, [prompt]() {
+                    if (auto *yes = prompt->button(QMessageBox::Yes))
+                        yes->click();
+                });
+            }
+            else if (prompt->windowTitle() == QLatin1String("Torrent already exists")
+                     && prompt->text().contains(QLatin1String("private torrent")))
+            {
+                ++privateWarnings;
+                QTimer::singleShot(0, prompt, [prompt]() {
+                    if (auto *ok = prompt->button(QMessageBox::Ok))
+                        ok->click();
+                });
+            }
+        }
+        return QObject::eventFilter(obj, event);
+    }
+private:
+    QString m_fileName;
 };
 
 class ConnectionWorkflowTest final : public QObject
@@ -1186,6 +1271,205 @@ private slots:
         QVERIFY(request.startsWith("--qbtRemote-"));
     }
 
+    void duplicateTorrentOffersTrackerMergeThroughNativeGui()
+    {
+        DemoQbittorrentServer server(true);
+        QVERIFY(server.start());
+
+        const QByteArray tracker("https://tracker.duplicate.example/announce");
+        const QByteArray info("d6:lengthi123e4:name7:examplee");
+        const QByteArray metadata = QByteArrayLiteral("d8:announce")
+            + QByteArray::number(tracker.size()) + ':' + tracker
+            + QByteArrayLiteral("4:info") + info + QByteArrayLiteral("e");
+        Remote::TorrentMetadata parsed;
+        QVERIFY(Remote::TorrentMetadataReader::read(metadata, parsed));
+        QVERIFY(!parsed.infoHashV1.isEmpty());
+        server.setExistingTorrentHash(parsed.infoHashV1);
+
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        const QString filename = temp.filePath(QStringLiteral("existing.torrent"));
+        QFile file(filename);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        QCOMPARE(file.write(metadata), qint64(metadata.size()));
+        file.close();
+
+        QSettings settings(temp.filePath(QStringLiteral("settings.ini")), QSettings::IniFormat);
+        MainWindow window(nullptr, &settings);
+        window.show();
+        openConnectDialog(window, server.url());
+        auto *table = window.findChild<QTableView *>(QStringLiteral("torrentList"));
+        QVERIFY(table);
+        QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 1, 6000);
+
+        // Test the real Qt widget workflow with a deterministic non-native
+        // file picker on headless Linux and Windows runners. A watchdog
+        // closes unexpected modal dialogs instead of hanging CTest forever.
+        const bool originallyNative = QApplication::testAttribute(Qt::AA_DontUseNativeDialogs);
+        QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, true);
+        MergeDuplicateTorrentUi interaction(filename);
+        QApplication::instance()->installEventFilter(&interaction);
+        QTimer watchdog;
+        watchdog.setSingleShot(true);
+        QObject::connect(&watchdog, &QTimer::timeout, &window, []() {
+            for (QWidget *widget : QApplication::topLevelWidgets())
+                if (auto *modal = qobject_cast<QDialog *>(widget);
+                    modal && modal->isVisible())
+                    modal->reject();
+        });
+        auto *add = window.findChild<QAction *>(QStringLiteral("actionOpen"));
+        QVERIFY(add && add->isEnabled());
+        watchdog.start(10000);
+        add->trigger();
+        watchdog.stop();
+        QApplication::instance()->removeEventFilter(&interaction);
+        QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, originallyNative);
+
+        QCOMPARE(interaction.chosenFiles, 1);
+        QCOMPARE(interaction.addDialogs, 1);
+        QCOMPARE(interaction.mergePrompts, 1);
+        QCOMPARE(server.commandsFor("/api/v2/torrents/add"), 0);
+        QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor("/api/v2/torrents/addTrackers"), 1, 6000);
+        QUrlQuery merged(QString::fromUtf8(
+            server.lastCommandBody("/api/v2/torrents/addTrackers")));
+        QCOMPARE(merged.queryItemValue(QStringLiteral("hash")), parsed.infoHashV1);
+        QCOMPARE(merged.queryItemValue(QStringLiteral("urls")), QString::fromLatin1(tracker));
+    }
+
+    void privateTorrentsNeverOfferOrSendTrackerMerge()
+    {
+        // Block merging both when the *server's existing torrent* is private
+        // and when only the incoming .torrent file carries the private flag.
+        for (const bool incomingPrivate : {false, true})
+        {
+            DemoQbittorrentServer server(true);
+            QVERIFY(server.start());
+            const QByteArray tracker("https://tracker.duplicate.example/announce");
+            const QByteArray info = incomingPrivate
+                ? QByteArrayLiteral("d6:lengthi123e4:name7:example7:privatei1ee")
+                : QByteArrayLiteral("d6:lengthi123e4:name7:examplee");
+            const QByteArray metadata = QByteArrayLiteral("d8:announce")
+                + QByteArray::number(tracker.size()) + ':' + tracker
+                + QByteArrayLiteral("4:info") + info + QByteArrayLiteral("e");
+            Remote::TorrentMetadata parsed;
+            QVERIFY(Remote::TorrentMetadataReader::read(metadata, parsed));
+            QCOMPARE(parsed.isPrivate, incomingPrivate);
+            server.setExistingTorrentHash(parsed.infoHashV1);
+            server.setExistingTorrentPrivate(!incomingPrivate);
+
+            QTemporaryDir temp;
+            QVERIFY(temp.isValid());
+            const QString filename = temp.filePath(QStringLiteral("private.torrent"));
+            QFile file(filename);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write(metadata), qint64(metadata.size()));
+            file.close();
+
+            QSettings settings(temp.filePath(QStringLiteral("settings.ini")), QSettings::IniFormat);
+            MainWindow window(nullptr, &settings);
+            window.show();
+            openConnectDialog(window, server.url());
+            auto *table = window.findChild<QTableView *>(QStringLiteral("torrentList"));
+            QVERIFY(table);
+            QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 1, 6000);
+
+            const bool originallyNative =
+                QApplication::testAttribute(Qt::AA_DontUseNativeDialogs);
+            QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, true);
+            MergeDuplicateTorrentUi interaction(filename);
+            QApplication::instance()->installEventFilter(&interaction);
+            QTimer watchdog;
+            watchdog.setSingleShot(true);
+            QObject::connect(&watchdog, &QTimer::timeout, &window, []() {
+                for (QWidget *widget : QApplication::topLevelWidgets())
+                    if (auto *modal = qobject_cast<QDialog *>(widget);
+                        modal && modal->isVisible())
+                        modal->reject();
+            });
+            auto *add = window.findChild<QAction *>(QStringLiteral("actionOpen"));
+            QVERIFY(add && add->isEnabled());
+            watchdog.start(10000);
+            add->trigger();
+            watchdog.stop();
+            QApplication::instance()->removeEventFilter(&interaction);
+            QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, originallyNative);
+
+            QCOMPARE(interaction.chosenFiles, 1);
+            QCOMPARE(interaction.addDialogs, 1);
+            QCOMPARE(interaction.privateWarnings, 1);
+            QCOMPARE(interaction.mergePrompts, 0);
+            QCOMPARE(server.commandsFor("/api/v2/torrents/add"), 0);
+            QCOMPARE(server.commandsFor("/api/v2/torrents/addTrackers"), 0);
+        }
+    }
+
+    void nativeAddTorrentOptionsUseAuthenticatedServerApi()
+    {
+        DemoQbittorrentServer server(true);
+        QVERIFY(server.start());
+        Remote::RemoteSession session;
+        Remote::ServerProfile profile {
+            {}, QStringLiteral("QNAP"), server.url(),
+            QStringLiteral("demo"), false, false
+        };
+        QSignalSpy connected(&session, &Remote::RemoteSession::connected);
+        QSignalSpy submitted(&session, &Remote::RemoteSession::operationSucceeded);
+        session.connectToServer(profile, QStringLiteral("demo-password"));
+        QTRY_COMPARE_WITH_TIMEOUT(connected.count(), 1, 6000);
+
+        Remote::AddTorrentOptions options;
+        options.savePath = QStringLiteral("/share/CACHEDEV1_DATA/Music");
+        options.downloadPath = QStringLiteral("/share/CACHEDEV1_DATA/Incomplete");
+        options.useDownloadPath = true;
+        options.category = QStringLiteral("Music");
+        options.tags = QStringLiteral("Classical,Dvorak");
+        options.contentLayout = QStringLiteral("NoSubfolder");
+        options.stopped = true;
+        options.queueTop = true;
+        options.firstLastPiece = true;
+        session.addTorrentUrls(
+            QStringLiteral("magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567"),
+            options);
+        QTRY_COMPARE_WITH_TIMEOUT(submitted.count(), 1, 6000);
+        QCOMPARE(server.commandsFor("/api/v2/torrents/add"), 1);
+        QUrlQuery form(QString::fromUtf8(
+            server.lastCommandBody("/api/v2/torrents/add")));
+        QCOMPARE(form.queryItemValue(QStringLiteral("savepath")), options.savePath);
+        QCOMPARE(form.queryItemValue(QStringLiteral("downloadPath")), options.downloadPath);
+        QCOMPARE(form.queryItemValue(QStringLiteral("useDownloadPath")), QStringLiteral("true"));
+        QCOMPARE(form.queryItemValue(QStringLiteral("category")), options.category);
+        QCOMPARE(form.queryItemValue(QStringLiteral("tags")), options.tags);
+        QCOMPARE(form.queryItemValue(QStringLiteral("stopped")), QStringLiteral("true"));
+        QCOMPARE(form.queryItemValue(QStringLiteral("addToTopOfQueue")), QStringLiteral("true"));
+        QCOMPARE(form.queryItemValue(QStringLiteral("contentLayout")), QStringLiteral("NoSubfolder"));
+
+        // File metadata goes through multipart, not URL-encoded binary data.
+        const QByteArray metadata = QByteArray::fromHex("006465616462656566ff");
+        session.addTorrentFile(QStringLiteral("music.torrent"), metadata, options);
+        QTRY_COMPARE_WITH_TIMEOUT(submitted.count(), 2, 6000);
+        QCOMPARE(server.commandsFor("/api/v2/torrents/add"), 2);
+        const QByteArray body = server.lastCommandBody("/api/v2/torrents/add");
+        QVERIFY(body.contains("name=\"savepath\"\r\n\r\n/share/CACHEDEV1_DATA/Music"));
+        QVERIFY(body.contains("name=\"downloadPath\"\r\n\r\n/share/CACHEDEV1_DATA/Incomplete"));
+        QVERIFY(body.contains("name=\"stopped\"\r\n\r\ntrue"));
+        QVERIFY(body.contains("name=\"contentLayout\"\r\n\r\nNoSubfolder"));
+        QVERIFY(body.contains("name=\"torrents\"; filename=\"music.torrent\""));
+        QVERIFY(body.contains(metadata));
+        QVERIFY(!body.contains("filePriorities")); // not supported for uploaded files
+
+        session.addTorrentTrackers(
+            QStringLiteral("0123456789abcdef0123456789abcdef01234567"),
+            {QStringLiteral("https://first.example/announce"),
+             QStringLiteral("udp://second.example:80/announce")});
+        QTRY_COMPARE_WITH_TIMEOUT(submitted.count(), 3, 6000);
+        const QUrlQuery merged(QString::fromUtf8(
+            server.lastCommandBody("/api/v2/torrents/addTrackers")));
+        QCOMPARE(merged.queryItemValue(QStringLiteral("hash")),
+                 QStringLiteral("0123456789abcdef0123456789abcdef01234567"));
+        QCOMPARE(merged.queryItemValue(QStringLiteral("urls"), QUrl::FullyDecoded),
+                 QStringLiteral("https://first.example/announce\nudp://second.example:80/announce"));
+    }
+
     void rejectedTorrentActionDoesNotDisconnectServer()
     {
         DemoQbittorrentServer server(true);
@@ -1268,12 +1552,19 @@ private slots:
                  QStringLiteral("false"));
 
         QTimer::singleShot(0, []() {
-            auto *dialog = qobject_cast<QInputDialog *>(QApplication::activeModalWidget());
-            if (dialog)
+            auto *dialog = qobject_cast<RemoteAddTorrentDialog *>(
+                QApplication::activeModalWidget());
+            if (!dialog)
+                return;
+            auto *links = dialog->findChild<QPlainTextEdit *>(
+                QStringLiteral("torrentLinks"));
+            auto *buttons = dialog->findChild<QDialogButtonBox *>(
+                QStringLiteral("buttonBox"));
+            if (links && buttons)
             {
-                dialog->setTextValue(QStringLiteral(
-                    "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567"));
-                dialog->accept();
+                links->setPlainText(QStringLiteral(
+                    "magnet:?xt=urn:btih:fedcba9876543210fedcba9876543210fedcba98"));
+                buttons->button(QDialogButtonBox::Ok)->click();
             }
         });
         QVERIFY(link->isEnabled());

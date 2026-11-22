@@ -36,6 +36,24 @@ struct CertificateChallenge
 // Each remote server owns an independent QNetworkAccessManager and cookie jar.
 // TLS errors are never globally bypassed; an explicit, endpoint-bound
 // certificate decision is required for a self-signed/untrusted certificate.
+// Common, server-side options for both magnet/HTTP URLs and local .torrent
+// metadata uploads. Never pass local mount paths to these fields.
+struct AddTorrentOptions
+{
+    QString savePath;
+    QString downloadPath;
+    QString category;
+    QString tags;
+    QString contentLayout = QStringLiteral("Original");
+    bool autoTMM = false;
+    bool useDownloadPath = false;
+    bool stopped = false;
+    bool sequential = false;
+    bool firstLastPiece = false;
+    bool queueTop = false;
+    bool seedMode = false;
+};
+
 class RemoteSession final : public QObject
 {
     Q_OBJECT
@@ -59,7 +77,13 @@ public:
     void commandTorrents(TorrentCommand command, const QStringList &hashes,
                          bool deleteFiles = false);
     void addTorrentUrls(const QString &urls);
+    void addTorrentUrls(const QString &urls, const AddTorrentOptions &options);
     void addTorrentFile(const QString &filename, const QByteArray &contents);
+    void addTorrentFile(const QString &filename, const QByteArray &contents,
+                        const AddTorrentOptions &options);
+    // Merge only explicitly supplied announce URLs into the existing remote
+    // torrent; no local tracker traffic and no re-add of torrent metadata.
+    void addTorrentTrackers(const QString &hash, const QStringList &urls);
     void requestTorrentDetails(const QString &hash, int tab);
     void setFilePriority(const QString &hash, const QList<int> &fileIds, int priority);
 
