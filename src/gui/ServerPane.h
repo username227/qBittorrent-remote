@@ -24,7 +24,9 @@ class ServerPane final : public QWidget
 {
     Q_OBJECT
 public:
-    enum class TorrentContextAction { Start, Stop, Remove };
+    enum class TorrentContextAction {
+        Start, Stop, ForceStart, Remove, ForceRecheck, ForceReannounce
+    };
     Q_ENUM(TorrentContextAction)
 
     explicit ServerPane(QWidget *parent = nullptr);

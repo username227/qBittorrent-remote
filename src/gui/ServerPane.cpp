@@ -397,6 +397,44 @@ void ServerPane::showTorrentContextMenu(const QPoint &position)
                                         [&stopped](const SelectedTorrent &t) {
                                             return !stopped(t);
                                         });
+    const auto isErrored = [](const SelectedTorrent &t) {
+        const QString state = t.record.value(QStringLiteral("state")).toString();
+        return state == QLatin1String("error")
+            || state == QLatin1String("missingFiles");
+    };
+    const auto isChecking = [](const SelectedTorrent &t) {
+        return t.record.value(QStringLiteral("state")).toString()
+            .startsWith(QLatin1String("checking"));
+    };
+    const auto isQueued = [](const SelectedTorrent &t) {
+        return t.record.value(QStringLiteral("state")).toString()
+            .startsWith(QLatin1String("queued"));
+    };
+    const bool needsForce = std::any_of(torrents.cbegin(), torrents.cend(),
+        [&isErrored](const SelectedTorrent &t) {
+            return !t.record.value(QStringLiteral("force_start")).toBool()
+                || isErrored(t);
+        });
+    // The sync feed does not always provide has_metadata. Exclude the
+    // explicit metadata-download states instead of assuming their files
+    // can be rechecked.
+    const bool hasMetadata = std::any_of(torrents.cbegin(), torrents.cend(),
+        [](const SelectedTorrent &t) {
+            const QString state = t.record.value(QStringLiteral("state")).toString();
+            const QJsonValue metadata = t.record.value(QStringLiteral("has_metadata"));
+            if (metadata.isBool())
+                return metadata.toBool();
+            return !state.isEmpty()
+                && state != QLatin1String("metaDL")
+                && state != QLatin1String("forcedMetaDL")
+                && state != QLatin1String("unknown");
+        });
+    const bool canReannounce = std::any_of(torrents.cbegin(), torrents.cend(),
+        [&stopped, &isErrored, &isChecking, &isQueued](const SelectedTorrent &t) {
+            const QString state = t.record.value(QStringLiteral("state")).toString();
+            return !state.isEmpty() && state != QLatin1String("unknown")
+                && !stopped(t) && !isErrored(t) && !isChecking(t) && !isQueued(t);
+        });
 
     // Match native qBittorrent for uniform selections: only show the
     // applicable action. For a mixed selection both actions are useful.
@@ -418,12 +456,43 @@ void ServerPane::showTorrentContextMenu(const QPoint &position)
             emit torrentContextActionRequested(TorrentContextAction::Stop);
         });
     }
+    if (needsForce)
+    {
+        QAction *force = menu.addAction(icon("torrent-start-forced"), tr("Force Start"));
+        force->setIconVisibleInMenu(true);
+        force->setObjectName(QStringLiteral("torrentContextForceStart"));
+        connect(force, &QAction::triggered, this, [this]() {
+            emit torrentContextActionRequested(TorrentContextAction::ForceStart);
+        });
+    }
     menu.addSeparator();
     QAction *remove = menu.addAction(icon("list-remove"), tr("Remove"));
     remove->setIconVisibleInMenu(true);
     remove->setObjectName(QStringLiteral("torrentContextRemove"));
     connect(remove, &QAction::triggered, this, [this]() {
         emit torrentContextActionRequested(TorrentContextAction::Remove);
+    });
+    menu.addSeparator();
+
+    // Upstream places these after category/options controls, which can be
+    // inserted above them by subsequent focused context-menu PRs.
+    if (hasMetadata)
+    {
+        QAction *recheck = menu.addAction(icon("force-recheck"), tr("Force Recheck"));
+        recheck->setObjectName(QStringLiteral("torrentContextForceRecheck"));
+        recheck->setIconVisibleInMenu(true);
+        connect(recheck, &QAction::triggered, this, [this]() {
+            emit torrentContextActionRequested(TorrentContextAction::ForceRecheck);
+        });
+    }
+    QAction *reannounce = menu.addAction(icon("reannounce"), tr("Force Reannounce"));
+    reannounce->setObjectName(QStringLiteral("torrentContextForceReannounce"));
+    reannounce->setIconVisibleInMenu(true);
+    reannounce->setEnabled(canReannounce);
+    if (!canReannounce)
+        reannounce->setToolTip(tr("Cannot reannounce stopped, queued, errored or checking torrents."));
+    connect(reannounce, &QAction::triggered, this, [this]() {
+        emit torrentContextActionRequested(TorrentContextAction::ForceReannounce);
     });
     menu.addSeparator();
 

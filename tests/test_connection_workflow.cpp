@@ -23,6 +23,7 @@
 #include <QHostAddress>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <QMenu>
 #include <QPushButton>
 #include <QSettings>
 #include <QStatusBar>
@@ -1468,6 +1469,100 @@ private slots:
                  QStringLiteral("0123456789abcdef0123456789abcdef01234567"));
         QCOMPARE(merged.queryItemValue(QStringLiteral("urls"), QUrl::FullyDecoded),
                  QStringLiteral("https://first.example/announce\nudp://second.example:80/announce"));
+    }
+
+
+    void userForceActionsReachSelectedAuthenticatedRemoteServer()
+    {
+        // Run the real application window through login, torrent selection,
+        // the native right-click menu, and a disposable HTTP Web API server.
+        // Do not invoke RemoteSession methods to simulate user interaction.
+        DemoQbittorrentServer server(true);
+        server.enableTorrentSyncDemo();
+        server.keepDemoTorrents();
+        QVERIFY(server.start());
+
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("profiles.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        QTRY_VERIFY(window.isVisible());
+        openConnectDialog(window, server.url());
+
+        auto *table = window.findChild<QTableView *>(QStringLiteral("torrentList"));
+        QVERIFY(table);
+        QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 1, 6000);
+        table->selectRow(0);
+        QVERIFY(table->selectionModel()->hasSelection());
+
+        const QString selectedHash = QStringLiteral("0123456789abcdef0123456789abcdef01234567");
+        const struct {
+            const char *action;
+            const char *endpoint;
+            bool hasValue;
+        } operations[] = {
+            {"torrentContextForceStart", "/api/v2/torrents/setForceStart", true},
+            {"torrentContextForceRecheck", "/api/v2/torrents/recheck", false},
+            {"torrentContextForceReannounce", "/api/v2/torrents/reannounce", false}
+        };
+        for (const auto &operation : operations)
+        {
+            QString error;
+            QTimer::singleShot(0, &window, [&]() {
+                auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+                if (!menu || menu->objectName() != QLatin1String("torrentListContextMenu"))
+                {
+                    error = QStringLiteral("User did not see the native torrent context menu");
+                    if (menu) menu->close();
+                    return;
+                }
+
+                QAction *action = nullptr;
+                for (QAction *candidate : menu->actions())
+                {
+                    if (candidate->objectName() == QString::fromLatin1(operation.action))
+                    {
+                        action = candidate;
+                        break;
+                    }
+                }
+                if (!action || !action->isEnabled())
+                {
+                    error = QStringLiteral("Requested torrent menu action missing/disabled: ")
+                        + QString::fromLatin1(operation.action);
+                }
+                else
+                {
+                    // Trigger exactly as if the user selected this visible action.
+                    action->trigger();
+                }
+                menu->close();
+            });
+            const QModelIndex row = table->selectionModel()->selectedRows(0).value(0);
+            QVERIFY(row.isValid());
+            QVERIFY(QMetaObject::invokeMethod(table, "customContextMenuRequested",
+                Qt::DirectConnection, Q_ARG(QPoint, table->visualRect(row).center())));
+            QVERIFY2(error.isEmpty(), qPrintable(error));
+
+            const QByteArray endpoint(operation.endpoint);
+            QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor(endpoint), 1, 6000);
+            const QUrlQuery submitted(QString::fromUtf8(server.lastCommandBody(endpoint)));
+            QCOMPARE(submitted.queryItemValue(QStringLiteral("hashes")), selectedHash);
+            if (operation.hasValue)
+                QCOMPARE(submitted.queryItemValue(QStringLiteral("value")),
+                         QStringLiteral("true"));
+            else
+                QVERIFY(!submitted.hasQueryItem(QStringLiteral("value")));
+        }
+
+        // All three commands must go to the authenticated active server,
+        // not an anonymous request or the local torrent engine.
+        QCOMPARE(server.commandsFor("/api/v2/torrents/setForceStart"), 1);
+        QCOMPARE(server.commandsFor("/api/v2/torrents/recheck"), 1);
+        QCOMPARE(server.commandsFor("/api/v2/torrents/reannounce"), 1);
+        QVERIFY(table->selectionModel()->hasSelection());
     }
 
     void rejectedTorrentActionDoesNotDisconnectServer()

@@ -64,6 +64,7 @@ private slots:
     void rightClickUnselectedRowTargetsOnlyThatTorrent();
     void rightClickSelectedRowPreservesMultipleSelectionAndCopiesNames();
     void mixedSelectionOffersBothStartAndStop();
+    void forceActionsRespectTorrentStatesAndSelections();
     void copySubmenuCopiesRealRemoteFieldsAndDisablesUnavailableMetadata();
 };
 
@@ -74,7 +75,8 @@ void TorrentContextMenuWorkflowTest::contextMenuUsesNativeQbittorrentIcons()
     const QStringList nativeIcons = {
         QStringLiteral("torrent-start"), QStringLiteral("torrent-stop"),
         QStringLiteral("list-remove"), QStringLiteral("edit-copy"),
-        QStringLiteral("name"), QStringLiteral("hash"),
+        QStringLiteral("torrent-start-forced"), QStringLiteral("force-recheck"),
+        QStringLiteral("reannounce"), QStringLiteral("name"), QStringLiteral("hash"),
         QStringLiteral("torrent-magnet"), QStringLiteral("help-about"),
         QStringLiteral("directory")
     };
@@ -89,6 +91,9 @@ void TorrentContextMenuWorkflowTest::contextMenuUsesNativeQbittorrentIcons()
     const QHash<QString, QString> expectedIcon = {
         {QStringLiteral("torrentContextStart"), QStringLiteral("torrent-start")},
         {QStringLiteral("torrentContextStop"), QStringLiteral("torrent-stop")},
+        {QStringLiteral("torrentContextForceStart"), QStringLiteral("torrent-start-forced")},
+        {QStringLiteral("torrentContextForceRecheck"), QStringLiteral("force-recheck")},
+        {QStringLiteral("torrentContextForceReannounce"), QStringLiteral("reannounce")},
         {QStringLiteral("torrentContextRemove"), QStringLiteral("list-remove")},
         {QStringLiteral("torrentContextCopyMenu"), QStringLiteral("edit-copy")},
         {QStringLiteral("torrentCopyName"), QStringLiteral("name")},
@@ -132,6 +137,9 @@ void TorrentContextMenuWorkflowTest::contextMenuUsesNativeQbittorrentIcons()
             QList<QAction *> actions;
             actions.append(actionNamed(menu, row.second));
             actions.append(actionNamed(menu, QStringLiteral("torrentContextRemove")));
+            actions.append(actionNamed(menu, QStringLiteral("torrentContextForceStart")));
+            actions.append(actionNamed(menu, QStringLiteral("torrentContextForceRecheck")));
+            actions.append(actionNamed(menu, QStringLiteral("torrentContextForceReannounce")));
             QMenu *copy = copySubmenu(menu);
             actions.append(copy ? copy->menuAction() : nullptr);
             if (copy)
@@ -356,6 +364,111 @@ void TorrentContextMenuWorkflowTest::mixedSelectionOffersBothStartAndStop()
         Q_ARG(QPoint, table->visualRect(indexForName(table, QStringLiteral("Stopped track"))).center())));
     QVERIFY2(error.isEmpty(), qPrintable(error));
     QCOMPARE(selection->selectedRows().size(), 2);
+}
+
+
+void TorrentContextMenuWorkflowTest::forceActionsRespectTorrentStatesAndSelections()
+{
+    ServerPane pane;
+    pane.resize(1200, 740);
+    pane.applySync(payload(R"JSON({
+      "full_update":true,
+      "torrents":{
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa":{"name":"Stopped","state":"stoppedUP","force_start":false},
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb":{"name":"Downloading","state":"downloading","force_start":false},
+        "cccccccccccccccccccccccccccccccccccccccc":{"name":"Forced","state":"forcedUP","force_start":true},
+        "dddddddddddddddddddddddddddddddddddddddd":{"name":"Queued","state":"queuedDL","force_start":false},
+        "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee":{"name":"Checking","state":"checkingUP","force_start":false},
+        "ffffffffffffffffffffffffffffffffffffffff":{"name":"Metadata","state":"metaDL","force_start":false,"has_metadata":false},
+        "1111111111111111111111111111111111111111":{"name":"Missing","state":"missingFiles","force_start":false}
+      }
+    })JSON"));
+    pane.show();
+    auto *table = pane.table();
+    QList<ServerPane::TorrentContextAction> emitted;
+    connect(&pane, &ServerPane::torrentContextActionRequested, &pane,
+        [&](ServerPane::TorrentContextAction action) { emitted.append(action); });
+
+    struct Case {
+        const char *name;
+        bool forceStart;
+        bool recheck;
+        bool reannounceEnabled;
+    };
+    const QList<Case> cases {
+        {"Stopped", true, true, false},
+        {"Downloading", true, true, true},
+        {"Forced", false, true, true},
+        {"Queued", true, true, false},
+        {"Checking", true, true, false},
+        {"Metadata", true, false, true},
+        {"Missing", true, true, false}
+    };
+    for (const Case &item : cases)
+    {
+        const QModelIndex index = indexForName(table, QString::fromLatin1(item.name));
+        QVERIFY(index.isValid());
+        table->selectionModel()->setCurrentIndex(index,
+            QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+        QString error;
+        QTimer::singleShot(0, &pane, [&]() {
+            auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+            if (!menu) { error = QStringLiteral("Missing context menu"); return; }
+            auto *force = actionNamed(menu, QStringLiteral("torrentContextForceStart"));
+            auto *recheck = actionNamed(menu, QStringLiteral("torrentContextForceRecheck"));
+            auto *reannounce = actionNamed(menu, QStringLiteral("torrentContextForceReannounce"));
+            if (static_cast<bool>(force) != item.forceStart
+                || static_cast<bool>(recheck) != item.recheck
+                || !reannounce || reannounce->isEnabled() != item.reannounceEnabled)
+                error = QStringLiteral("Incorrect force-action availability for ")
+                    + QString::fromLatin1(item.name);
+            if (reannounce && !item.reannounceEnabled
+                && reannounce->toolTip().isEmpty())
+                error = QStringLiteral("Disabled reannounce needs an explanation");
+            if (QString::fromLatin1(item.name) == QLatin1String("Downloading")
+                && error.isEmpty())
+            {
+                // Trigger actual menu actions and check the signals, not a
+                // synthetic enum dispatch detached from the real QMenu.
+                force->trigger();
+                recheck->trigger();
+                reannounce->trigger();
+            }
+            menu->close();
+        });
+        QVERIFY(QMetaObject::invokeMethod(table, "customContextMenuRequested",
+            Qt::DirectConnection, Q_ARG(QPoint, table->visualRect(index).center())));
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+    }
+    QCOMPARE(emitted.size(), 3);
+    QCOMPARE(emitted.at(0), ServerPane::TorrentContextAction::ForceStart);
+    QCOMPARE(emitted.at(1), ServerPane::TorrentContextAction::ForceRecheck);
+    QCOMPARE(emitted.at(2), ServerPane::TorrentContextAction::ForceReannounce);
+
+    // Mixed selection: a forced torrent must not suppress Force Start for
+    // an ordinary torrent, and a queued torrent must not disable reannounce
+    // when another selected torrent is eligible.
+    auto *selection = table->selectionModel();
+    const QModelIndex forced = indexForName(table, QStringLiteral("Forced"));
+    const QModelIndex queued = indexForName(table, QStringLiteral("Queued"));
+    const QModelIndex downloading = indexForName(table, QStringLiteral("Downloading"));
+    selection->select(forced, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    selection->select(queued, QItemSelectionModel::Select | QItemSelectionModel::Rows);
+    selection->select(downloading, QItemSelectionModel::Select | QItemSelectionModel::Rows);
+    QString error;
+    QTimer::singleShot(0, &pane, [&]() {
+        auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+        if (!menu) { error = QStringLiteral("No mixed-selection menu"); return; }
+        auto *force = actionNamed(menu, QStringLiteral("torrentContextForceStart"));
+        auto *reannounce = actionNamed(menu, QStringLiteral("torrentContextForceReannounce"));
+        if (!force || !reannounce || !force->isEnabled() || !reannounce->isEnabled())
+            error = QStringLiteral("Mixed states must enable force and reannounce");
+        menu->close();
+    });
+    QVERIFY(QMetaObject::invokeMethod(table, "customContextMenuRequested",
+        Qt::DirectConnection, Q_ARG(QPoint, table->visualRect(forced).center())));
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QCOMPARE(selection->selectedRows().size(), 3);
 }
 
 void TorrentContextMenuWorkflowTest::copySubmenuCopiesRealRemoteFieldsAndDisablesUnavailableMetadata()
