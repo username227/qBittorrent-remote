@@ -6,6 +6,8 @@
 #include <QTimer>
 #include <QWidget>
 
+class QSettings;
+class QSplitter;
 class FilterSidebar;
 class QSortFilterProxyModel;
 class QTableView;
@@ -37,6 +39,8 @@ public:
     void displayTorrentDetailsError(const QString &hash, int tab, const QString &reason);
     void refreshSelectedDetails();
     void refreshFontMetrics();
+    void saveLayout(QSettings &settings, const QString &profileId) const;
+    void restoreLayout(QSettings &settings, const QString &profileId);
 
 signals:
     void torrentDetailsRequested(const QString &hash, int tab);
@@ -56,4 +60,8 @@ private:
     TorrentDetailsWidget *m_details = nullptr;
     PropTabBar *m_detailTabs = nullptr;
     QTimer m_detailsRefresh;
+    QSplitter *m_outerSplitter = nullptr;
+    QSplitter *m_detailsSplitter = nullptr;
+    QByteArray m_expandedDetailsState;
+    int m_originalDetailsHandleWidth = -1;
 };

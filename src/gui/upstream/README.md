@@ -34,6 +34,15 @@ The source is the qBittorrent `upstream-source` branch at commit
   themed icons, progress bars, tri-state folder inclusion, and filename
   filter. Unchecking sends remote filePrio=0 (not filesystem deletion);
   right-click Priority and Select All/None reuse the same authenticated API.
+- UI layout persistence: Qt QSettings holds main-window geometry, normal/
+  maximized/minimized state, native toolbar state, sidebar/status visibility,
+  active connected server, per-profile horizontal/vertical splitter state,
+  per-profile torrent/content/tracker/peer header widths and ordering, sorting,
+  bottom property-tab selection and collapse status, and connection/certificate/
+  removal dialog geometry. No credentials, cookies or torrent metadata stored.
+  Last-selected server only restores when that server is explicitly opted in
+  for automatic startup connection. Wayland compositors may ignore exact
+  top-level window positioning.
 - Application accessibility: View → Font Size (Ctrl++ / Ctrl+=, Ctrl+−,
   Ctrl+0) controls one saved QApplication point size shared by the torrent
   list, tracker/content trees, sidebar, tab buttons, menus and dialogs.

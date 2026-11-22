@@ -10,6 +10,8 @@
 #include <memory>
 
 class QAction;
+class QCloseEvent;
+class QDialog;
 class QLabel;
 class QLineEdit;
 class QComboBox;
@@ -34,7 +36,10 @@ private:
     void setupActions();
     void applyFontPointSize(int points);
     void updateFontActionStates();
+    void restoreWindowLayout();
+    void trackDialogGeometry(QDialog &dialog, const QString &name);
     void showEmptyPane();
+    void closeEvent(QCloseEvent *event) override;
     void connectToProfile(const Remote::ServerProfile &profile, const QString &password);
     void disconnectCurrentServer();
     void removeConnection(const std::shared_ptr<SessionContext> &connection);
@@ -64,4 +69,6 @@ private:
     QAction *m_resetFontAction = nullptr;
     int m_baseFontPointSize = 10;
     int m_fontPointSize = 10;
+    QString m_preferredServerId;
+    bool m_restoringStartup = false;
 };

@@ -8,6 +8,10 @@
 
 #include <QAbstractItemView>
 #include <QAction>
+#include <QCryptographicHash>
+#include <QSettings>
+#include <QTreeWidget>
+#include <QTableWidget>
 #include <QHeaderView>
 #include <QItemSelectionModel>
 #include <QFontMetrics>
@@ -28,6 +32,8 @@ ServerPane::ServerPane(QWidget *parent) : QWidget(parent)
     layout->setSpacing(0);
 
     auto *outer = new QSplitter(Qt::Horizontal, this);
+    outer->setObjectName(QStringLiteral("serverHorizontalSplitter"));
+    m_outerSplitter = outer;
     outer->setChildrenCollapsible(false);
     layout->addWidget(outer);
 
@@ -37,6 +43,7 @@ ServerPane::ServerPane(QWidget *parent) : QWidget(parent)
 
     auto *vertical = new QSplitter(Qt::Vertical, outer);
     vertical->setObjectName(QStringLiteral("torrentDetailsSplitter"));
+    m_detailsSplitter = vertical;
     vertical->setChildrenCollapsible(false);
 
     m_table = new QTableView(vertical);
@@ -125,13 +132,14 @@ ServerPane::ServerPane(QWidget *parent) : QWidget(parent)
     // pane is collapsed, without wasting a large blank splitter area.
     // Preserve the exact user-adjusted splitter sizes for reopening.
     connect(m_detailTabs, &PropTabBar::visibilityToggled, this,
-            [this, vertical, details, expandedSizes = QList<int>{},
-             originalHandleWidth = -1](bool show) mutable {
+            [this, vertical, details](bool show) {
                 auto *handle = vertical->handle(1);
                 if (!show)
                 {
-                    expandedSizes = vertical->sizes();
-                    originalHandleWidth = vertical->handleWidth();
+                    // Save the EXPANDED splitter geometry, not the compressed
+                    // tab-row-only geometry, for the next launch/reopen.
+                    m_expandedDetailsState = vertical->saveState();
+                    m_originalDetailsHandleWidth = vertical->handleWidth();
                     m_details->hide();
                     const int tabHeight = m_detailTabs->sizeHint().height()
                         + m_detailTabs->contentsMargins().top()
@@ -145,13 +153,13 @@ ServerPane::ServerPane(QWidget *parent) : QWidget(parent)
                 else
                 {
                     details->setMaximumHeight(QWIDGETSIZE_MAX);
-                    if (originalHandleWidth >= 0)
-                        vertical->setHandleWidth(originalHandleWidth);
+                    if (m_originalDetailsHandleWidth >= 0)
+                        vertical->setHandleWidth(m_originalDetailsHandleWidth);
                     if (handle)
                         handle->setVisible(true);
                     m_details->show();
-                    if (!expandedSizes.isEmpty())
-                        vertical->setSizes(expandedSizes);
+                    if (!m_expandedDetailsState.isEmpty())
+                        vertical->restoreState(m_expandedDetailsState);
                 }
             });
 
@@ -269,4 +277,119 @@ void ServerPane::refreshFontMetrics()
     m_table->verticalHeader()->setDefaultSectionSize(suggested);
     m_table->doItemsLayout();
     m_table->viewport()->update();
+}
+
+namespace
+{
+QString serverLayoutPrefix(const QString &id)
+{
+    // The opaque profile ID is hashed so arbitrary text in an imported
+    // profile cannot introduce '/' separators into QSettings paths.
+    return QStringLiteral("Layout/Servers/")
+        + QString::fromLatin1(QCryptographicHash::hash(
+            id.toUtf8(), QCryptographicHash::Sha256).toHex());
+}
+} // namespace
+
+void ServerPane::saveLayout(QSettings &settings, const QString &profileId) const
+{
+    if (profileId.isEmpty())
+        return;
+
+    const QString root = serverLayoutPrefix(profileId);
+    settings.setValue(root + QStringLiteral("/horizontal"), m_outerSplitter->saveState());
+    const QByteArray expandedState = m_detailTabs->currentIndex() >= 0
+        ? m_detailsSplitter->saveState() : m_expandedDetailsState;
+    if (!expandedState.isEmpty())
+        settings.setValue(root + QStringLiteral("/verticalExpanded"), expandedState);
+
+    settings.setValue(root + QStringLiteral("/torrentHeader"),
+                      m_table->horizontalHeader()->saveState());
+    settings.setValue(root + QStringLiteral("/sortColumn"),
+                      m_table->horizontalHeader()->sortIndicatorSection());
+    settings.setValue(root + QStringLiteral("/sortOrder"),
+                      static_cast<int>(m_table->horizontalHeader()->sortIndicatorOrder()));
+    settings.setValue(root + QStringLiteral("/detailsTab"), m_details->currentTab());
+    settings.setValue(root + QStringLiteral("/detailsVisible"),
+                      m_detailTabs->currentIndex() >= 0);
+
+    const auto saveHeader = [&](const char *objectName, const char *key) {
+        if (auto *view = m_details->findChild<QTreeWidget *>(
+                QString::fromLatin1(objectName)))
+            settings.setValue(root + QLatin1Char('/') + QString::fromLatin1(key),
+                              view->header()->saveState());
+    };
+    saveHeader("torrentTrackers", "trackerHeader");
+    saveHeader("torrentContent", "contentHeader");
+
+    if (auto *peers = m_details->findChild<QTableWidget *>(QStringLiteral("torrentPeers")))
+        settings.setValue(root + QStringLiteral("/peerHeader"),
+                          peers->horizontalHeader()->saveState());
+}
+
+void ServerPane::restoreLayout(QSettings &settings, const QString &profileId)
+{
+    if (profileId.isEmpty())
+        return;
+    const QString root = serverLayoutPrefix(profileId);
+
+    const auto restoreSplitter = [&settings, &root](QSplitter *splitter, const char *key) {
+        const QByteArray data = settings.value(
+            root + QLatin1Char('/') + QString::fromLatin1(key)).toByteArray();
+        if (!data.isEmpty())
+            splitter->restoreState(data);
+    };
+    restoreSplitter(m_outerSplitter, "horizontal");
+    m_expandedDetailsState =
+        settings.value(root + QStringLiteral("/verticalExpanded")).toByteArray();
+    if (!m_expandedDetailsState.isEmpty())
+        m_detailsSplitter->restoreState(m_expandedDetailsState);
+
+    const QByteArray torrentHeader =
+        settings.value(root + QStringLiteral("/torrentHeader")).toByteArray();
+    if (!torrentHeader.isEmpty())
+    {
+        m_table->horizontalHeader()->restoreState(torrentHeader);
+        const int col = settings.value(root + QStringLiteral("/sortColumn"), 0).toInt();
+        const auto order = static_cast<Qt::SortOrder>(
+            settings.value(root + QStringLiteral("/sortOrder"),
+                           static_cast<int>(Qt::AscendingOrder)).toInt());
+        if (col >= 0 && col < m_model->columnCount()
+            && (order == Qt::AscendingOrder || order == Qt::DescendingOrder))
+            m_table->sortByColumn(col, order);
+    }
+
+    const auto restoreHeader = [&](const char *objectName, const char *key) {
+        if (auto *view = m_details->findChild<QTreeWidget *>(
+                QString::fromLatin1(objectName)))
+        {
+            const QByteArray data = settings.value(
+                root + QLatin1Char('/') + QString::fromLatin1(key)).toByteArray();
+            if (!data.isEmpty())
+                view->header()->restoreState(data);
+        }
+    };
+    restoreHeader("torrentTrackers", "trackerHeader");
+    restoreHeader("torrentContent", "contentHeader");
+    if (auto *peers = m_details->findChild<QTableWidget *>(QStringLiteral("torrentPeers")))
+    {
+        const QByteArray data =
+            settings.value(root + QStringLiteral("/peerHeader")).toByteArray();
+        if (!data.isEmpty())
+            peers->horizontalHeader()->restoreState(data);
+    }
+
+    const int tab = settings.value(root + QStringLiteral("/detailsTab"), 0).toInt();
+    if (tab >= 0 && tab <= 5 && m_detailTabs->currentIndex() != tab)
+        m_detailTabs->setCurrentIndex(tab);
+    const bool visible = settings.value(root + QStringLiteral("/detailsVisible"), true).toBool();
+    if (!visible)
+    {
+        // Collapse only after the first real layout pass; otherwise the
+        // pre-show splitter size could overwrite the saved expanded height.
+        QTimer::singleShot(0, this, [this]() {
+            if (m_detailTabs->currentIndex() >= 0)
+                m_detailTabs->setCurrentIndex(-1);
+        });
+    }
 }

@@ -23,6 +23,9 @@ public:
     QString password() const;
     bool rememberPassword() const;
 
+protected:
+    void done(int result) override;
+
 private:
     void refreshProfiles(const QString &selectId = {});
     void loadSelectedProfile();
@@ -30,6 +33,7 @@ private:
     void removeCurrentProfile();
     void clearForNewProfile();
 
+    QSettings *m_settings = nullptr;
     Remote::ProfileStore m_store;
     Remote::CredentialVault *m_vault = nullptr;
     Remote::ServerProfile m_selected;
