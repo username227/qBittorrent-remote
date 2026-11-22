@@ -618,6 +618,12 @@ void RemoteSession::commandTorrents(TorrentCommand command,
         endpoint = QStringLiteral("start"); description = tr("Start torrents"); break;
     case TorrentCommand::Stop:
         endpoint = QStringLiteral("stop"); description = tr("Stop torrents"); break;
+    case TorrentCommand::ForceStart:
+        endpoint = QStringLiteral("setForceStart"); description = tr("Force start torrents"); break;
+    case TorrentCommand::ForceRecheck:
+        endpoint = QStringLiteral("recheck"); description = tr("Force recheck torrents"); break;
+    case TorrentCommand::ForceReannounce:
+        endpoint = QStringLiteral("reannounce"); description = tr("Force reannounce torrents"); break;
     case TorrentCommand::Delete:
         endpoint = QStringLiteral("delete"); description = tr("Remove torrents"); break;
     case TorrentCommand::IncreasePriority:
@@ -632,6 +638,9 @@ void RemoteSession::commandTorrents(TorrentCommand command,
 
     QUrlQuery form;
     form.addQueryItem(QStringLiteral("hashes"), hashes.join(QLatin1Char('|')));
+    // Web API setForceStart requires value=true in addition to the hashes.
+    if (command == TorrentCommand::ForceStart)
+        form.addQueryItem(QStringLiteral("value"), QStringLiteral("true"));
     if (command == TorrentCommand::Delete)
         form.addQueryItem(QStringLiteral("deleteFiles"),
                           deleteFiles ? QStringLiteral("true") : QStringLiteral("false"));

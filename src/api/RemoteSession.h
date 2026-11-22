@@ -63,8 +63,8 @@ public:
 
     enum class TorrentCommand
     {
-        Start, Stop, Delete, IncreasePriority, DecreasePriority,
-        TopPriority, BottomPriority
+        Start, Stop, ForceStart, ForceRecheck, ForceReannounce, Delete,
+        IncreasePriority, DecreasePriority, TopPriority, BottomPriority
     };
 
     explicit RemoteSession(QObject *parent = nullptr);

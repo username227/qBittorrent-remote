@@ -859,6 +859,18 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
         case ServerPane::TorrentContextAction::Stop:
             m_ui->actionStop->trigger();
             break;
+        case ServerPane::TorrentContextAction::ForceStart:
+            connection->session->commandTorrents(
+                Remote::RemoteSession::TorrentCommand::ForceStart, selectedTorrentHashes());
+            break;
+        case ServerPane::TorrentContextAction::ForceRecheck:
+            connection->session->commandTorrents(
+                Remote::RemoteSession::TorrentCommand::ForceRecheck, selectedTorrentHashes());
+            break;
+        case ServerPane::TorrentContextAction::ForceReannounce:
+            connection->session->commandTorrents(
+                Remote::RemoteSession::TorrentCommand::ForceReannounce, selectedTorrentHashes());
+            break;
         case ServerPane::TorrentContextAction::Remove:
             m_ui->actionDelete->trigger();
             break;
