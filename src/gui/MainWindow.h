@@ -2,10 +2,17 @@
 #pragma once
 
 #include <QMainWindow>
+#include <QSettings>
 
 #include <memory>
 
 class FilterSidebar;
+class QAction;
+namespace Remote
+{
+class RemoteSession;
+struct ServerProfile;
+}
 
 namespace Ui
 {
@@ -17,13 +24,21 @@ class MainWindow;
 class MainWindow final : public QMainWindow
 {
 public:
-    explicit MainWindow(QWidget *parent = nullptr);
+    explicit MainWindow(QWidget *parent = nullptr, QSettings *settings = nullptr);
     ~MainWindow() override;
 
 private:
     void setupMainArea();
     void setupActions();
+    void connectToProfile(const Remote::ServerProfile &profile, const QString &password);
+    void disconnectCurrentServer();
 
     std::unique_ptr<Ui::MainWindow> m_ui;
     FilterSidebar *m_filterSidebar = nullptr;
+    QSettings m_defaultSettings;
+    QSettings *m_settings = nullptr;
+    Remote::RemoteSession *m_session = nullptr;
+    QAction *m_connectAction = nullptr;
+    QAction *m_disconnectAction = nullptr;
+    QString m_currentServerName;
 };

@@ -11,6 +11,8 @@ class QPushButton;
 
 class ConnectionDialog final : public QDialog
 {
+    Q_OBJECT
+
 public:
     explicit ConnectionDialog(QSettings &settings, QWidget *parent = nullptr);
 

@@ -3,8 +3,10 @@
 An independent, cross-platform Qt 6 desktop application for controlling
 remote qBittorrent instances through their Web API.
 
-**Current status:** native GUI preview, without remote connectivity or
-torrent management. No local torrent engine or libtorrent dependency.
+**Current status:** early remote-connection foundation. Saved server profiles,
+real Web API cookie authentication, qBittorrent/version verification and
+disconnect are available. Torrent synchronization and management are not yet
+implemented. No local torrent engine or libtorrent dependency.
 
 ## Build and test
 
@@ -14,7 +16,7 @@ There are no alternate build scripts or independent test commands.
 Requirements:
 - CMake 3.21 or newer
 - C++17 compiler
-- Qt 6.6 or newer (Core, Widgets, and Test when tests are enabled)
+- Qt 6.6 or newer (Core, Widgets, Network and Test when tests are enabled)
 - Ninja (for the checked-in presets)
 
 ```sh
@@ -55,7 +57,34 @@ filter models and central content remain independent Qt Widgets; the local
 torrent engine is never imported.
 
 Only working interface actions are enabled. Torrent-mutating controls and
-filtering remain disabled until the remote API implementation exists.
+filtering remain disabled until remote synchronization and management exist.
+
+## Connect to a server (foundation)
+
+Use **File > Connect to Server...**. Enter a name, full HTTP(S) URL,
+username and password. **Save** stores only the name, URL and username in
+Qt's per-user settings; the password is never stored. **Connect** also
+saves/updates the profile and performs a real Web API login, followed by
+a request for the remote qBittorrent version and Web API version.
+
+The status bar reports the result. **File > Disconnect** releases the
+connection and attempts a nonblocking Web API logout.
+
+Authentication uses an independent Qt Network cookie jar per session,
+an explicit same-origin Referer, no automatic redirects, bounded request
+timeouts and standard HTTPS certificate verification. Self-signed HTTPS
+certificate trust/pinning is **not yet implemented**: an untrusted
+certificate fails securely. HTTP itself is not encrypted unless protected
+by a separate trusted tunnel (such as an existing VPN).
+
+This initial milestone exposes **one selected visible connection**.
+Unrestricted multiple concurrent sessions with dynamic tabs are the next
+development stage, not a hardcoded architectural server limit. No fake
+torrents, server tabs or welcome screen have been added.
+
+CTest includes a disposable local simulated qBittorrent Web API server
+to exercise real login, server/version verification, authentication
+failure and disconnect without any live NAS or passwords.
 
 **Future multiple-instance behavior:** saved profiles and active sessions are
 distinct; there is no arbitrary connection limit. When remote connectivity
