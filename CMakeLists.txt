@@ -13,21 +13,52 @@ set(CMAKE_AUTORCC ON)
 include(GNUInstallDirs)
 include(CTest)
 
-find_package(Qt6 6.6 REQUIRED COMPONENTS Core Widgets)
+find_package(Qt6 6.6 REQUIRED COMPONENTS Core Widgets Network)
+
+# Optional cross-platform OS credential vault: libsecret/Secret Service,
+# Windows Credential Manager or macOS Keychain. Never allow plaintext fallback.
+find_package(Qt6Keychain QUIET)
+# QtKeychain exports 'qt6keychain' on Arch and most distributions.
+# Some packages provide a namespaced target; support either without forcing
+# any particular Linux keyring provider or system library.
+if(Qt6Keychain_FOUND AND TARGET qt6keychain)
+    set(QBT_REMOTE_KEYCHAIN_TARGET qt6keychain)
+elseif(Qt6Keychain_FOUND AND TARGET Qt6Keychain::Qt6Keychain)
+    set(QBT_REMOTE_KEYCHAIN_TARGET Qt6Keychain::Qt6Keychain)
+endif()
+
+if(QBT_REMOTE_KEYCHAIN_TARGET)
+    message(STATUS "QtKeychain found: secure Remember password available")
+else()
+    message(STATUS "Secure QtKeychain target unavailable: Remember password disabled")
+endif()
 
 add_library(qbittorrent_remote_core STATIC
     src/api/ServerAddress.cpp
     src/api/ServerAddress.h
+    src/api/ServerProfile.cpp
+    src/api/ServerProfile.h
+    src/api/RemoteSession.cpp
+    src/api/RemoteSession.h
+    src/api/CredentialVault.cpp
+    src/api/CredentialVault.h
 )
 target_include_directories(qbittorrent_remote_core PUBLIC
     "${PROJECT_SOURCE_DIR}/src"
 )
-target_link_libraries(qbittorrent_remote_core PUBLIC Qt6::Core)
+target_link_libraries(qbittorrent_remote_core PUBLIC Qt6::Core Qt6::Network)
+if(QBT_REMOTE_KEYCHAIN_TARGET)
+    target_link_libraries(qbittorrent_remote_core PUBLIC ${QBT_REMOTE_KEYCHAIN_TARGET})
+    target_compile_definitions(qbittorrent_remote_core PRIVATE
+        QBT_REMOTE_WITH_KEYCHAIN=1)
+endif()
 
 # Shared by the real application and CTest GUI workflows.
 add_library(qbittorrent_remote_gui STATIC
     src/gui/MainWindow.cpp
     src/gui/MainWindow.h
+    src/gui/ConnectionDialog.cpp
+    src/gui/ConnectionDialog.h
     src/gui/FilterSidebar.cpp
     src/gui/FilterSidebar.h
     src/gui/upstream/transferlistfilterswidgetitem.cpp
@@ -45,7 +76,7 @@ target_include_directories(qbittorrent_remote_gui PUBLIC
 set_target_properties(qbittorrent_remote_gui PROPERTIES
     AUTOUIC_SEARCH_PATHS "${PROJECT_SOURCE_DIR}/src/gui/upstream"
 )
-target_link_libraries(qbittorrent_remote_gui PUBLIC Qt6::Widgets)
+target_link_libraries(qbittorrent_remote_gui PUBLIC qbittorrent_remote_core Qt6::Widgets)
 
 qt_add_executable(qbittorrent-remote
     src/main.cpp
@@ -79,8 +110,41 @@ if(BUILD_TESTING)
 
     add_test(NAME window_open_and_quit COMMAND test_window_workflow)
 
+    add_executable(test_profile_workflow
+        tests/test_profile_workflow.cpp
+    )
+    target_link_libraries(test_profile_workflow PRIVATE
+        qbittorrent_remote_gui
+        Qt6::Test
+    )
+    add_test(NAME server_profile_management COMMAND test_profile_workflow)
+
+    add_executable(test_connection_workflow
+        tests/test_connection_workflow.cpp
+    )
+    target_link_libraries(test_connection_workflow PRIVATE
+        qbittorrent_remote_gui
+        Qt6::Test
+        Qt6::Network
+    )
+    add_test(NAME remote_connection_workflow COMMAND test_connection_workflow)
+
+    # Tests start local TLS endpoints with ephemeral certificates and drive
+    # real certificate-decision GUI workflows; no production server involved.
+    add_executable(test_tls_trust_workflow
+        tests/test_tls_trust_workflow.cpp
+    )
+    target_link_libraries(test_tls_trust_workflow PRIVATE
+        qbittorrent_remote_gui
+        Qt6::Test
+        Qt6::Network
+    )
+    add_test(NAME certificate_trust_workflow COMMAND test_tls_trust_workflow)
+    # A stalled TLS handshake or modal UI must not hang the complete CTest run.
+    set_tests_properties(certificate_trust_workflow PROPERTIES TIMEOUT 90)
+
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        set_tests_properties(window_open_and_quit PROPERTIES
+        set_tests_properties(window_open_and_quit server_profile_management remote_connection_workflow certificate_trust_workflow PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         )
     endif()

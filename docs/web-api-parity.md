@@ -11,6 +11,17 @@ Stages:
    validation, and explicit certificate trust/pinning for self-signed servers.
    Multiple concurrent sessions with independent state and no fixed limit.
    Instance tabs appear only for two or more active connections.
+   Saved profiles and active sessions remain separate: provide an explicit,
+   per-profile **Connect automatically on startup** option (not all saved
+   profiles connect by default). An opted-in server should connect without a
+   login dialog using an empty password when server authentication allows
+   that, or retrieving its credential from the protected operating-system
+   vault when needed. Open its live torrent view immediately after connection
+   and initial synchronization. One connected server shows no server tabs;
+   two or more connected servers show dynamic tabs. Connection failures or
+   missing credentials must be visible and recoverable without blocking the
+   rest of the application. This startup functionality is planned for the
+   connection-lifecycle/multi-server phase, not the initial credential commit.
 2. Incremental `/api/v2/sync/maindata`: live torrent list, server transfer
    rates, categories, tags, tracker state, sorting, filtering and status bar.
    Handle disconnects, reconnects and server-side reordering correctly.
