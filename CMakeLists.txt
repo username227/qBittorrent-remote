@@ -7,6 +7,8 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTOUIC ON)
+set(CMAKE_AUTORCC ON)
 
 include(GNUInstallDirs)
 include(CTest)
@@ -22,13 +24,26 @@ target_include_directories(qbittorrent_remote_core PUBLIC
 )
 target_link_libraries(qbittorrent_remote_core PUBLIC Qt6::Core)
 
-# Share the actual application window with the executable and functional tests.
+# Shared by the real application and CTest GUI workflows.
 add_library(qbittorrent_remote_gui STATIC
     src/gui/MainWindow.cpp
     src/gui/MainWindow.h
+    src/gui/FilterSidebar.cpp
+    src/gui/FilterSidebar.h
+    src/gui/upstream/transferlistfilterswidgetitem.cpp
+    src/gui/upstream/transferlistfilterswidgetitem.h
+    src/gui/upstream/proptabbar.cpp
+    src/gui/upstream/proptabbar.h
+    src/gui/upstream/hidabletabwidget.cpp
+    src/gui/upstream/hidabletabwidget.h
+    src/gui/upstream/mainwindow.ui
+    src/gui/upstream/qbittorrent_icons.qrc
 )
 target_include_directories(qbittorrent_remote_gui PUBLIC
     "${PROJECT_SOURCE_DIR}/src"
+)
+set_target_properties(qbittorrent_remote_gui PROPERTIES
+    AUTOUIC_SEARCH_PATHS "${PROJECT_SOURCE_DIR}/src/gui/upstream"
 )
 target_link_libraries(qbittorrent_remote_gui PUBLIC Qt6::Widgets)
 
@@ -52,8 +67,8 @@ install(TARGETS qbittorrent-remote
 if(BUILD_TESTING)
     find_package(Qt6 6.6 REQUIRED COMPONENTS Test)
 
-    # Tests exercise externally visible workflows, not implementation units
-    # or hard-coded protocol inputs. All tests are registered with CTest.
+    # Tests exercise user-visible workflows, not implementation units
+    # or hard-coded protocol inputs. All tests run through CTest.
     add_executable(test_window_workflow
         tests/test_window_workflow.cpp
     )
@@ -64,7 +79,6 @@ if(BUILD_TESTING)
 
     add_test(NAME window_open_and_quit COMMAND test_window_workflow)
 
-    # Allows a GUI workflow smoke test in headless Linux CI.
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         set_tests_properties(window_open_and_quit PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
