@@ -10,6 +10,9 @@
 #include <QAbstractItemView>
 #include <QApplication>
 #include <QAction>
+#include <QClipboard>
+#include <QGuiApplication>
+#include <QIcon>
 #include <QCryptographicHash>
 #include <QJsonArray>
 #include <QSettings>
@@ -20,6 +23,8 @@
 #include <QFont>
 #include <QFontMetrics>
 #include <QHBoxLayout>
+#include <algorithm>
+#include <functional>
 #include <QJsonObject>
 #include <QLocale>
 #include <QMenu>
@@ -146,6 +151,9 @@ ServerPane::ServerPane(QWidget *parent) : QWidget(parent)
     m_table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Interactive);
     m_table->horizontalHeader()->resizeSection(0, sensibleNameColumnWidth(m_table));
     m_table->verticalHeader()->hide();
+    m_table->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_table, &QWidget::customContextMenuRequested,
+            this, &ServerPane::showTorrentContextMenu);
 
     for (int col = 13; col < m_model->columnCount(); ++col)
         m_table->hideColumn(col);
@@ -336,6 +344,149 @@ void ServerPane::setSearchColumn(int index)
     static_cast<TorrentFilterProxyModel *>(m_proxy)->setSearchField(index);
 }
 
+void ServerPane::showTorrentContextMenu(const QPoint &position)
+{
+    const QModelIndex hit = m_table->indexAt(position);
+    if (!hit.isValid())
+        return; // Empty whitespace is not a selected torrent.
+
+    auto *selection = m_table->selectionModel();
+    if (!selection->isRowSelected(hit.row(), QModelIndex()))
+    {
+        // Right-clicking an unselected row acts on that row; right-clicking
+        // an already selected row preserves the existing multi-selection.
+        selection->setCurrentIndex(hit, QItemSelectionModel::ClearAndSelect
+                                     | QItemSelectionModel::Rows);
+    }
+
+    const QModelIndexList selected = selection->selectedRows(0);
+    if (selected.isEmpty())
+        return;
+
+    struct SelectedTorrent
+    {
+        QString hash;
+        QJsonObject record;
+    };
+    QList<SelectedTorrent> torrents;
+    for (const QModelIndex &row : selected)
+    {
+        const QModelIndex source = m_proxy->mapToSource(row);
+        const QString hash = m_model->hashForRow(source.row());
+        if (!hash.isEmpty())
+            torrents.append({hash, m_model->torrents().value(hash)});
+    }
+    if (torrents.isEmpty())
+        return;
+
+    QMenu menu(m_table);
+    menu.setObjectName(QStringLiteral("torrentListContextMenu"));
+    const auto icon = [](const char *name) {
+        // Reuse the original qBittorrent SVG icons already embedded in the
+        // native GUI resource collection. No dependency on an OS icon theme.
+        return QIcon(QStringLiteral(":/icons/") + QString::fromLatin1(name)
+                     + QStringLiteral(".svg"));
+    };
+    const auto stopped = [](const SelectedTorrent &entry) {
+        const QString state = entry.record.value(QStringLiteral("state")).toString();
+        return state.startsWith(QLatin1String("stopped"))
+            || state.startsWith(QLatin1String("paused"));
+    };
+    const bool anyStopped = std::any_of(torrents.cbegin(), torrents.cend(), stopped);
+    const bool anyRunning = std::any_of(torrents.cbegin(), torrents.cend(),
+                                        [&stopped](const SelectedTorrent &t) {
+                                            return !stopped(t);
+                                        });
+
+    // Match native qBittorrent for uniform selections: only show the
+    // applicable action. For a mixed selection both actions are useful.
+    if (anyStopped)
+    {
+        QAction *start = menu.addAction(icon("torrent-start"), tr("Start"));
+        start->setIconVisibleInMenu(true);
+        start->setObjectName(QStringLiteral("torrentContextStart"));
+        connect(start, &QAction::triggered, this, [this]() {
+            emit torrentContextActionRequested(TorrentContextAction::Start);
+        });
+    }
+    if (anyRunning)
+    {
+        QAction *stop = menu.addAction(icon("torrent-stop"), tr("Stop"));
+        stop->setIconVisibleInMenu(true);
+        stop->setObjectName(QStringLiteral("torrentContextStop"));
+        connect(stop, &QAction::triggered, this, [this]() {
+            emit torrentContextActionRequested(TorrentContextAction::Stop);
+        });
+    }
+    menu.addSeparator();
+    QAction *remove = menu.addAction(icon("list-remove"), tr("Remove"));
+    remove->setIconVisibleInMenu(true);
+    remove->setObjectName(QStringLiteral("torrentContextRemove"));
+    connect(remove, &QAction::triggered, this, [this]() {
+        emit torrentContextActionRequested(TorrentContextAction::Remove);
+    });
+    menu.addSeparator();
+
+    QMenu *copy = menu.addMenu(icon("edit-copy"), tr("Copy"));
+    copy->menuAction()->setIconVisibleInMenu(true);
+    copy->setObjectName(QStringLiteral("torrentContextCopyMenu"));
+    copy->menuAction()->setObjectName(QStringLiteral("torrentContextCopyMenu"));
+    const auto copyField = [this, copy, &torrents, &icon](
+        const QString &label, const QString &objectName, const char *iconName,
+        const std::function<QString(const SelectedTorrent &)> &extract) {
+        QStringList values;
+        for (const SelectedTorrent &torrent : torrents)
+        {
+            const QString value = extract(torrent);
+            if (!value.isEmpty())
+                values.append(value);
+        }
+        QAction *action = copy->addAction(icon(iconName), label);
+        action->setIconVisibleInMenu(true);
+        action->setObjectName(objectName);
+        action->setEnabled(!values.isEmpty());
+        connect(action, &QAction::triggered, this, [values]() {
+            QGuiApplication::clipboard()->setText(values.join(QLatin1Char('\n')));
+        });
+    };
+
+    copyField(tr("Name"), QStringLiteral("torrentCopyName"), "name",
+        [](const SelectedTorrent &t) {
+            return t.record.value(QStringLiteral("name")).toString();
+        });
+    copyField(tr("Info hash v1"), QStringLiteral("torrentCopyHashV1"), "hash",
+        [](const SelectedTorrent &t) {
+            const QString v1 = t.record.value(QStringLiteral("infohash_v1")).toString();
+            return v1.isEmpty() && t.hash.size() == 40 ? t.hash : v1;
+        });
+    copyField(tr("Info hash v2"), QStringLiteral("torrentCopyHashV2"), "hash",
+        [](const SelectedTorrent &t) {
+            const QString v2 = t.record.value(QStringLiteral("infohash_v2")).toString();
+            return v2.isEmpty() && t.hash.size() == 64 ? t.hash : v2;
+        });
+    copyField(tr("Magnet link"), QStringLiteral("torrentCopyMagnet"), "torrent-magnet",
+        [](const SelectedTorrent &t) {
+            return t.record.value(QStringLiteral("magnet_uri")).toString();
+        });
+    // The remote Web API identifies torrents by canonical hash.
+    copyField(tr("Torrent ID"), QStringLiteral("torrentCopyId"), "help-about",
+        [](const SelectedTorrent &t) { return t.hash; });
+    copyField(tr("Comment"), QStringLiteral("torrentCopyComment"), "edit-copy",
+        [](const SelectedTorrent &t) {
+            return t.record.value(QStringLiteral("comment")).toString();
+        });
+    copyField(tr("Content Path"), QStringLiteral("torrentCopyContentPath"), "directory",
+        [](const SelectedTorrent &t) {
+            // Always copy the remote server's actual content path. A local
+            // NAS mapping is only applicable to opening the path later.
+            return t.record.value(QStringLiteral("content_path")).toString();
+        });
+
+    // Every displayed action works; values not present in /sync/maindata
+    // remain disabled rather than guessing metadata or local file paths.
+    menu.exec(m_table->viewport()->mapToGlobal(position));
+}
+
 void ServerPane::updateSelectedTorrent()
 {
     const auto selected = m_table->selectionModel()->selectedRows();
@@ -486,6 +637,12 @@ void ServerPane::restoreLayout(QSettings &settings, const QString &profileId)
     // Fix it once per profile, leaving intentional sizes saved after this
     // change untouched on subsequent launches.
     auto *header = m_table->horizontalHeader();
+    // Qt serializes highlightSections in QHeaderView::saveState(). A saved
+    // layout from an older build can re-enable the selected-column highlight
+    // even though the constructor disabled it, causing intermittent bold
+    // torrent headings whenever rows are selected. Override that persisted
+    // visual flag *after* restoring section geometry and sort state.
+    header->setHighlightSections(false);
     header->setSectionResizeMode(0, QHeaderView::Interactive);
     if (!settings.value(root + QStringLiteral("/nameColumnResizableV1"), false).toBool())
         header->resizeSection(0, qMax(header->sectionSize(0),
