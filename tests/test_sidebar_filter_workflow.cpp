@@ -5,6 +5,8 @@
 
 #include <algorithm>
 
+#include <QApplication>
+#include <QFont>
 #include <QHeaderView>
 #include <QJsonDocument>
 #include <QListWidget>
@@ -60,6 +62,55 @@ class SidebarWorkflowTest final : public QObject
 {
     Q_OBJECT
 private slots:
+    void torrentColumnHeaderStaysRegularAfterSelectionAndFontChanges()
+    {
+        ServerPane pane;
+        pane.resize(1200, 650);
+        pane.applySync(payload(R"JSON({
+          "full_update": true,
+          "torrents": {
+            "aa": {"name":"Album 2","state":"uploading","progress":1},
+            "bb": {"name":"Album 10","state":"uploading","progress":1}
+          }
+        })JSON"));
+        pane.show();
+        auto *table = pane.table();
+        auto *header = table->horizontalHeader();
+        QVERIFY(!header->highlightSections());
+        QCOMPARE(header->font().weight(), QFont::Normal);
+        QVERIFY2(header->font().resolveMask() & QFont::WeightResolved,
+                 "Qt's selected headers may turn bold unless weight is explicit");
+
+        const QModelIndex first = table->model()->index(0, 0);
+        const QRect rowRect = table->visualRect(first);
+        QVERIFY(rowRect.isValid());
+        QTest::mouseClick(table->viewport(), Qt::LeftButton,
+                          Qt::NoModifier, rowRect.center());
+        QVERIFY(table->selectionModel()->hasSelection());
+        table->sortByColumn(0, Qt::DescendingOrder);
+        QCOMPARE(header->font().weight(), QFont::Normal);
+        QVERIFY(header->font().resolveMask() & QFont::WeightResolved);
+
+        // The real View -> Font Size route updates the QApplication font,
+        // then calls each ServerPane::refreshFontMetrics(). Verify that
+        // the explicit weight does not freeze the old font size.
+        const QFont originalFont = QApplication::font();
+        if (originalFont.pointSize() > 0)
+        {
+            QFont enlarged = originalFont;
+            enlarged.setPointSize(originalFont.pointSize() + 2);
+            QApplication::setFont(enlarged);
+            pane.refreshFontMetrics();
+            const int newSize = header->font().pointSize();
+            const QFont::Weight newWeight = header->font().weight();
+            QApplication::setFont(originalFont);
+            pane.refreshFontMetrics();
+            QCOMPARE(newSize, enlarged.pointSize());
+            QCOMPARE(newWeight, QFont::Normal);
+            QCOMPARE(header->font().pointSize(), originalFont.pointSize());
+        }
+    }
+
     void torrentNameColumnIsResizableAndRemembersUserWidth()
     {
         QTemporaryDir temporary;

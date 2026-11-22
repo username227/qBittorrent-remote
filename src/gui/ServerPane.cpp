@@ -8,6 +8,7 @@
 #include "gui/upstream/transferlistdelegate.h"
 
 #include <QAbstractItemView>
+#include <QApplication>
 #include <QAction>
 #include <QCryptographicHash>
 #include <QJsonArray>
@@ -16,6 +17,7 @@
 #include <QTableWidget>
 #include <QHeaderView>
 #include <QItemSelectionModel>
+#include <QFont>
 #include <QFontMetrics>
 #include <QHBoxLayout>
 #include <QJsonObject>
@@ -131,9 +133,14 @@ ServerPane::ServerPane(QWidget *parent) : QWidget(parent)
     m_table->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_table->setSortingEnabled(true);
     m_table->horizontalHeader()->setStretchLastSection(false);
-    // Qt highlights selected columns by default; some desktop styles
-    // render that state as intermittent bold header labels.
+    // Native Qt may still bold labels of selected header sections even when
+    // highlighting is disabled. An explicitly resolved Normal weight prevents
+    // QCommonStyle::CE_HeaderLabel from synthesizing bold, without styling
+    // or replacing the native header.
     m_table->horizontalHeader()->setHighlightSections(false);
+    QFont headerFont = QApplication::font();
+    headerFont.setWeight(QFont::Normal);
+    m_table->horizontalHeader()->setFont(headerFont);
     // Stretch disables user resizing. On Windows it also squeezed Name to
     // nearly nothing because all other visible columns took the viewport.
     m_table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Interactive);
@@ -368,6 +375,14 @@ void ServerPane::displayTorrentDetailsError(const QString &hash, int tab,
 void ServerPane::refreshFontMetrics()
 {
     m_sidebar->refreshFontMetrics();
+
+    // The header's explicit weight must not freeze its inherited size.
+    // The application adjusts the global Qt font via View -> Font Size;
+    // re-resolve from QApplication rather than the cached table font, which
+    // can still report the previous size during live style propagation.
+    QFont headerFont = QApplication::font();
+    headerFont.setWeight(QFont::Normal);
+    m_table->horizontalHeader()->setFont(headerFont);
 
     // The original upstream delegate caches the name-column sizeHint for
     // fast scrolling; that cache must be invalidated for font changes.
