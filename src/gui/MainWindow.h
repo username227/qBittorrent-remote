@@ -25,12 +25,15 @@ public:
     explicit MainWindow(QWidget *parent = nullptr, QSettings *settings = nullptr,
                         Remote::CredentialVault *vault = nullptr);
     ~MainWindow() override;
+    int fontPointSize() const noexcept { return m_fontPointSize; }
 
 private:
     struct SessionContext;
 
     void setupMainArea();
     void setupActions();
+    void applyFontPointSize(int points);
+    void updateFontActionStates();
     void showEmptyPane();
     void connectToProfile(const Remote::ServerProfile &profile, const QString &password);
     void disconnectCurrentServer();
@@ -56,4 +59,9 @@ private:
     QComboBox *m_searchBy = nullptr;
     QAction *m_connectAction = nullptr;
     QAction *m_disconnectAction = nullptr;
+    QAction *m_increaseFontAction = nullptr;
+    QAction *m_decreaseFontAction = nullptr;
+    QAction *m_resetFontAction = nullptr;
+    int m_baseFontPointSize = 10;
+    int m_fontPointSize = 10;
 };

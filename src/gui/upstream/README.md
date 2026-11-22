@@ -34,6 +34,12 @@ The source is the qBittorrent `upstream-source` branch at commit
   themed icons, progress bars, tri-state folder inclusion, and filename
   filter. Unchecking sends remote filePrio=0 (not filesystem deletion);
   right-click Priority and Select All/None reuse the same authenticated API.
+- Application accessibility: View → Font Size (Ctrl++ / Ctrl+=, Ctrl+−,
+  Ctrl+0) controls one saved QApplication point size shared by the torrent
+  list, tracker/content trees, sidebar, tab buttons, menus and dialogs.
+  The original desktop/torrent-list font is the minimum; Qt theme and family
+  are inherited. Sidebar list heights and transfer-list delegate caches
+  are refreshed without restarting or connecting to the server.
 - `progressbarpainter.{h,cpp}` and `transferlistdelegate.{h,cpp}`: adapted
   original Qt progress bars, percentages, and stable torrent row sizing.
   They read Web API-backed Qt models and the native Qt style without importing
