@@ -18,6 +18,8 @@ find_package(Qt6 6.6 REQUIRED COMPONENTS Core Widgets)
 add_library(qbittorrent_remote_core STATIC
     src/api/ServerAddress.cpp
     src/api/ServerAddress.h
+    src/api/ServerProfile.cpp
+    src/api/ServerProfile.h
 )
 target_include_directories(qbittorrent_remote_core PUBLIC
     "${PROJECT_SOURCE_DIR}/src"
@@ -28,6 +30,8 @@ target_link_libraries(qbittorrent_remote_core PUBLIC Qt6::Core)
 add_library(qbittorrent_remote_gui STATIC
     src/gui/MainWindow.cpp
     src/gui/MainWindow.h
+    src/gui/ConnectionDialog.cpp
+    src/gui/ConnectionDialog.h
     src/gui/FilterSidebar.cpp
     src/gui/FilterSidebar.h
     src/gui/upstream/transferlistfilterswidgetitem.cpp
@@ -45,7 +49,7 @@ target_include_directories(qbittorrent_remote_gui PUBLIC
 set_target_properties(qbittorrent_remote_gui PROPERTIES
     AUTOUIC_SEARCH_PATHS "${PROJECT_SOURCE_DIR}/src/gui/upstream"
 )
-target_link_libraries(qbittorrent_remote_gui PUBLIC Qt6::Widgets)
+target_link_libraries(qbittorrent_remote_gui PUBLIC qbittorrent_remote_core Qt6::Widgets)
 
 qt_add_executable(qbittorrent-remote
     src/main.cpp
@@ -79,8 +83,17 @@ if(BUILD_TESTING)
 
     add_test(NAME window_open_and_quit COMMAND test_window_workflow)
 
+    add_executable(test_profile_workflow
+        tests/test_profile_workflow.cpp
+    )
+    target_link_libraries(test_profile_workflow PRIVATE
+        qbittorrent_remote_gui
+        Qt6::Test
+    )
+    add_test(NAME server_profile_management COMMAND test_profile_workflow)
+
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        set_tests_properties(window_open_and_quit PROPERTIES
+        set_tests_properties(window_open_and_quit server_profile_management PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         )
     endif()
