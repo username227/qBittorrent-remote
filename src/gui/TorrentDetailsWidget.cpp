@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/TorrentDetailsWidget.h"
+#include "gui/NaturalNameSort.h"
 #include "ui_remotepropertieswidget.h"
 #include "gui/upstream/progressbarpainter.h"
 
@@ -248,6 +249,81 @@ private:
     ProgressBarPainter m_painter;
 };
 
+// Sort the actual Qt detail widgets by raw API values, not formatted text.
+// QTreeWidget automatically sorts each sibling group within its own parent,
+// retaining the torrent folder and tracker endpoint hierarchy.
+class SortableDetailTreeItem final : public QTreeWidgetItem
+{
+public:
+    explicit SortableDetailTreeItem(QTreeWidget *parent, const QStringList &labels = {})
+        : QTreeWidgetItem(parent, labels) {}
+    explicit SortableDetailTreeItem(QTreeWidgetItem *parent, const QStringList &labels = {})
+        : QTreeWidgetItem(parent, labels) {}
+
+    bool operator<(const QTreeWidgetItem &other) const override
+    {
+        const int column = treeWidget() ? treeWidget()->sortColumn() : 0;
+        if (column > 0)
+        {
+            const QVariant left = data(column, Qt::UserRole);
+            const QVariant right = other.data(column, Qt::UserRole);
+            if (left.isValid() != right.isValid())
+                return !left.isValid();
+            if (left.isValid())
+            {
+                if (left.toDouble() != right.toDouble())
+                    return left.toDouble() < right.toDouble();
+                return RemoteGuiSort::naturalNameCompare(text(0), other.text(0)) < 0;
+            }
+        }
+        const int result = RemoteGuiSort::naturalNameCompare(
+            text(column), other.text(column));
+        return result ? result < 0
+            : RemoteGuiSort::naturalNameCompare(text(0), other.text(0)) < 0;
+    }
+};
+
+class SortablePeerItem final : public QTableWidgetItem
+{
+public:
+    explicit SortablePeerItem(const QString &text) : QTableWidgetItem(text) {}
+
+    bool operator<(const QTableWidgetItem &other) const override
+    {
+        const QVariant left = data(Qt::UserRole);
+        const QVariant right = other.data(Qt::UserRole);
+        if (left.isValid() != right.isValid())
+            return !left.isValid();
+        if (left.isValid())
+            return left.toDouble() < right.toDouble();
+        return RemoteGuiSort::naturalNameCompare(text(), other.text()) < 0;
+    }
+};
+
+void setNumericSortKey(QTreeWidgetItem *item, int column, const QJsonValue &value)
+{
+    if (value.isDouble() && value.toDouble() >= 0)
+        item->setData(column, Qt::UserRole, value.toDouble());
+}
+
+void setTrackerSortKeys(QTreeWidgetItem *item, const QJsonObject &record,
+                        bool pseudo, bool endpoint)
+{
+    if (!pseudo && !endpoint)
+        setNumericSortKey(item, 1, record.value(QStringLiteral("tier")));
+    if (endpoint)
+        setNumericSortKey(item, 2, record.value(QStringLiteral("bt_version")));
+    if (!pseudo)
+    {
+        setNumericSortKey(item, 4, record.value(QStringLiteral("num_peers")));
+        setNumericSortKey(item, 7, record.value(QStringLiteral("num_downloaded")));
+        setNumericSortKey(item, 9, record.value(QStringLiteral("next_announce")));
+        setNumericSortKey(item, 10, record.value(QStringLiteral("min_announce")));
+    }
+    setNumericSortKey(item, 5, record.value(QStringLiteral("num_seeds")));
+    setNumericSortKey(item, 6, record.value(QStringLiteral("num_leeches")));
+}
+
 // Server-specific rates from /sync/maindata, kept independently for each pane.
 // Similar native Qt painting to upstream SpeedPlotView, without libtorrent.
 class NativeSpeedGraph final : public QWidget
@@ -379,7 +455,8 @@ TorrentDetailsWidget::TorrentDetailsWidget(QWidget *parent)
     m_trackers->setUniformRowHeights(true);
     m_trackers->setRootIsDecorated(true);
     m_trackers->setItemsExpandable(true);
-    m_trackers->setSortingEnabled(false); // native pseudo-tracker rows stay first
+    m_trackers->setSortingEnabled(true);
+    m_trackers->sortItems(0, Qt::AscendingOrder);
     m_trackers->header()->setStretchLastSection(false);
     m_trackers->header()->setHighlightSections(false);
     m_trackers->header()->setSectionsMovable(true);
@@ -418,6 +495,8 @@ TorrentDetailsWidget::TorrentDetailsWidget(QWidget *parent)
     m_peers->setAlternatingRowColors(true);
     m_peers->horizontalHeader()->setStretchLastSection(true);
     m_peers->horizontalHeader()->setHighlightSections(false);
+    m_peers->setSortingEnabled(true);
+    m_peers->sortItems(0, Qt::AscendingOrder);
     m_ui->vBoxLayoutPeerPage->addWidget(m_peers);
 
     m_ui->listWebSeeds->setObjectName(QStringLiteral("torrentWebSeeds"));
@@ -442,6 +521,8 @@ TorrentDetailsWidget::TorrentDetailsWidget(QWidget *parent)
     tree->setSelectionMode(QAbstractItemView::ExtendedSelection);
     tree->setAlternatingRowColors(true);
     tree->setUniformRowHeights(true);
+    tree->setSortingEnabled(true);
+    tree->sortItems(0, Qt::AscendingOrder);
     connect(tree, &QWidget::customContextMenuRequested, this, [this](const QPoint &pos) {
         if (m_hash.isEmpty() || m_ui->filesList->selectedItems().isEmpty())
             return;
@@ -487,6 +568,7 @@ TorrentDetailsWidget::TorrentDetailsWidget(QWidget *parent)
                 item->setData(0, Qt::UserRole + 3, next);
                 item->setCheckState(0, next == 0 ? Qt::Unchecked : Qt::Checked);
                 item->setText(3, priorityText(next));
+                item->setData(3, Qt::UserRole, next);
             }
             else
             {
@@ -697,6 +779,7 @@ void TorrentDetailsWidget::displayTrackers(const QJsonArray &trackers)
     }
 
     QSignalBlocker blocker(m_trackers);
+    m_trackers->setSortingEnabled(false);
     m_trackers->setUpdatesEnabled(false);
     m_trackers->clear();
     const auto setAlignment = [](QTreeWidgetItem *item) {
@@ -712,8 +795,9 @@ void TorrentDetailsWidget::displayTrackers(const QJsonArray &trackers)
         const QString url = record.value(QStringLiteral("url")).toString();
         const bool pseudo = isPseudoTracker(url);
 
-        auto *item = new QTreeWidgetItem(m_trackers,
+        auto *item = new SortableDetailTreeItem(m_trackers,
                                         nativeTrackerFields(record, pseudo, false));
+        setTrackerSortKeys(item, record, pseudo, false);
         item->setFlags((item->flags() | Qt::ItemIsSelectable | Qt::ItemIsEnabled)
                        & ~Qt::ItemIsEditable);
         item->setToolTip(0, url);
@@ -738,8 +822,9 @@ void TorrentDetailsWidget::displayTrackers(const QJsonArray &trackers)
                 if (!endpointValue.isObject())
                     continue;
                 const QJsonObject endpoint = endpointValue.toObject();
-                auto *child = new QTreeWidgetItem(item,
+                auto *child = new SortableDetailTreeItem(item,
                     nativeTrackerFields(endpoint, false, true));
+                setTrackerSortKeys(child, endpoint, false, true);
                 child->setFlags((child->flags() | Qt::ItemIsSelectable | Qt::ItemIsEnabled)
                                 & ~Qt::ItemIsEditable);
                 child->setToolTip(0, child->text(0));
@@ -754,6 +839,7 @@ void TorrentDetailsWidget::displayTrackers(const QJsonArray &trackers)
         if (selectedRows.contains(url))
             item->setSelected(true);
     }
+    m_trackers->setSortingEnabled(true);
     m_trackers->setUpdatesEnabled(true);
 }
 
@@ -778,7 +864,15 @@ void TorrentDetailsWidget::displayPeers(const QJsonObject &reply)
             p.value(QStringLiteral("connection")).toString()
         };
         for (int col = 0; col < values.size(); ++col)
-            m_peers->setItem(row, col, new QTableWidgetItem(values.at(col)));
+        {
+            auto *item = new SortablePeerItem(values.at(col));
+            const QJsonValue raw = col == 3 ? p.value(QStringLiteral("progress"))
+                : col == 4 ? p.value(QStringLiteral("dl_speed"))
+                : col == 5 ? p.value(QStringLiteral("up_speed")) : QJsonValue();
+            if (raw.isDouble() && raw.toDouble() >= 0)
+                item->setData(Qt::UserRole, raw.toDouble());
+            m_peers->setItem(row, col, item);
+        }
     }
     m_peers->setSortingEnabled(true);
 }
@@ -800,6 +894,7 @@ void TorrentDetailsWidget::displayFiles(const QJsonArray &files)
 {
     auto *tree = m_ui->filesList;
     QSignalBlocker blocker(tree);
+    tree->setSortingEnabled(false);
     tree->clear();
     QHash<QString, QTreeWidgetItem *> folders;
     const QMimeDatabase mimeDatabase;
@@ -822,8 +917,8 @@ void TorrentDetailsWidget::displayFiles(const QJsonArray &files)
             path += QLatin1Char('/') + parts.at(i);
             if (!folders.contains(path))
             {
-                auto *folder = parent ? new QTreeWidgetItem(parent)
-                                      : new QTreeWidgetItem(tree);
+                auto *folder = parent ? new SortableDetailTreeItem(parent)
+                                      : new SortableDetailTreeItem(tree);
                 folder->setText(0, parts.at(i));
                 folder->setIcon(0, style()->standardIcon(QStyle::SP_DirIcon));
                 folder->setFlags(folder->flags() | Qt::ItemIsUserCheckable);
@@ -832,8 +927,8 @@ void TorrentDetailsWidget::displayFiles(const QJsonArray &files)
             parent = folders.value(path);
         }
 
-        auto *item = parent ? new QTreeWidgetItem(parent)
-                            : new QTreeWidgetItem(tree);
+        auto *item = parent ? new SortableDetailTreeItem(parent)
+                            : new SortableDetailTreeItem(tree);
         item->setText(0, parts.last());
         // Determine icons strictly from filename extension: never stat or
         // navigate the server's arbitrary file paths on the local machine.
@@ -851,12 +946,17 @@ void TorrentDetailsWidget::displayFiles(const QJsonArray &files)
              file.value(QStringLiteral("progress")).toDouble(0.0), 1.0);
         const int priority = file.value(QStringLiteral("priority")).toInt(1);
         item->setText(1, bytesText(size));
+        item->setData(1, Qt::UserRole, size);
         item->setText(2, QLocale().toString(fraction * 100.0, 'f', 0)
                              + QLatin1Char('%'));
         item->setData(2, Qt::UserRole, fraction);
         item->setText(3, priorityText(priority));
-        item->setText(4, bytesText(std::max(0.0, size * (1.0 - fraction))));
+        item->setData(3, Qt::UserRole, priority);
+        const double remaining = std::max(0.0, size * (1.0 - fraction));
+        item->setText(4, bytesText(remaining));
+        item->setData(4, Qt::UserRole, remaining);
         item->setText(5, availabilityText(file.value(QStringLiteral("availability"))));
+        setNumericSortKey(item, 5, file.value(QStringLiteral("availability")));
         if (!file.contains(QStringLiteral("availability")))
             item->setText(5, QStringLiteral("N/A"));
 
@@ -868,6 +968,7 @@ void TorrentDetailsWidget::displayFiles(const QJsonArray &files)
         item->setCheckState(0, priority == 0 ? Qt::Unchecked : Qt::Checked);
     }
     updateFileFolders();
+    tree->setSortingEnabled(true);
     tree->expandToDepth(0);
     // Preserve a user's active filename filter across server refreshes.
     if (auto *filter = findChild<QLineEdit *>(QStringLiteral("torrentFileFilter")))
@@ -893,6 +994,8 @@ void TorrentDetailsWidget::updateFileFolders()
 {
     auto *tree = m_ui->filesList;
     QSignalBlocker blocker(tree);
+    const bool wasSorting = tree->isSortingEnabled();
+    tree->setSortingEnabled(false);
     struct Summary
     {
         qint64 size = 0;
@@ -928,12 +1031,17 @@ void TorrentDetailsWidget::updateFileFolders()
         const double fraction = summary.size
             ? qBound(0.0, summary.completed / summary.size, 1.0) : 0.0;
         node->setText(1, bytesText(summary.size));
+        node->setData(1, Qt::UserRole, summary.size);
         node->setText(2, QLocale().toString(fraction * 100.0, 'f', 0)
                              + QLatin1Char('%'));
         node->setData(2, Qt::UserRole, fraction);
         node->setText(3, summary.commonPriority >= 0
                          ? priorityText(summary.commonPriority) : QStringLiteral("Mixed"));
-        node->setText(4, bytesText(std::max(0.0, summary.size - summary.completed)));
+        node->setData(3, Qt::UserRole, summary.commonPriority >= 0
+            ? QVariant(summary.commonPriority) : QVariant());
+        const double remaining = std::max(0.0, summary.size - summary.completed);
+        node->setText(4, bytesText(remaining));
+        node->setData(4, Qt::UserRole, remaining);
         node->setText(5, QStringLiteral("N/A"));
         node->setCheckState(0, summary.selected == 0 ? Qt::Unchecked
             : (summary.selected == summary.total ? Qt::Checked : Qt::PartiallyChecked));
@@ -941,6 +1049,7 @@ void TorrentDetailsWidget::updateFileFolders()
     };
     for (int i = 0; i < tree->topLevelItemCount(); ++i)
         visit(tree->topLevelItem(i), visit);
+    tree->setSortingEnabled(wasSorting);
 }
 
 void TorrentDetailsWidget::chooseFilePriorities(int priority, bool allFiles)
@@ -975,6 +1084,8 @@ void TorrentDetailsWidget::chooseFilePriorities(int priority, bool allFiles)
     // will replace it when /torrents/files refreshes on server acceptance.
     {
         QSignalBlocker blocker(tree);
+        const bool wasSorting = tree->isSortingEnabled();
+        tree->setSortingEnabled(false);
         const auto update = [&ids, priority, allFiles](QTreeWidgetItem *node,
                                                        const auto &self) -> void {
             const QVariant fileId = node->data(0, Qt::UserRole);
@@ -988,6 +1099,7 @@ void TorrentDetailsWidget::chooseFilePriorities(int priority, bool allFiles)
                     node->setData(0, Qt::UserRole + 3, next);
                     node->setCheckState(0, next ? Qt::Checked : Qt::Unchecked);
                     node->setText(3, priorityText(next));
+                    node->setData(3, Qt::UserRole, next);
                 }
             }
             for (int j = 0; j < node->childCount(); ++j)
@@ -996,6 +1108,7 @@ void TorrentDetailsWidget::chooseFilePriorities(int priority, bool allFiles)
         for (int i = 0; i < tree->topLevelItemCount(); ++i)
             update(tree->topLevelItem(i), update);
         updateFileFolders();
+        tree->setSortingEnabled(wasSorting);
     }
     emit filePriorityRequested(m_hash, ids, priority);
 }
