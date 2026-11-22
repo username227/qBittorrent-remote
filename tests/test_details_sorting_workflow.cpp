@@ -63,8 +63,13 @@ class DetailsSortingWorkflowTest final : public QObject
 {
     Q_OBJECT
 private slots:
-    void contentSortsNaturalNamesAndNestedFolders()
-    {
+    void contentSortsNaturalNamesAndNestedFolders();
+    void peersSortNumbersRatherThanFormattedPercentagesAndSpeeds();
+    void trackersSortStatusAndNumericColumnsWithoutFlatteningEndpoints();
+};
+
+void DetailsSortingWorkflowTest::contentSortsNaturalNamesAndNestedFolders()
+{
         TorrentDetailsWidget widget;
         widget.setSelection(QStringLiteral("test-hash"));
         widget.showTab(4);
@@ -139,10 +144,10 @@ private slots:
         track2->setCheckState(0, Qt::Unchecked);
         QCOMPARE(prioritySpy.size(), 1);
         QCOMPARE(prioritySpy.at(0).at(1).value<QList<int>>(), QList<int>{1});
-    }
+}
 
-    void peersSortNumbersRatherThanFormattedPercentagesAndSpeeds()
-    {
+void DetailsSortingWorkflowTest::peersSortNumbersRatherThanFormattedPercentagesAndSpeeds()
+{
         TorrentDetailsWidget widget;
         widget.setSelection(QStringLiteral("test-hash"));
         widget.showTab(2);
@@ -180,10 +185,10 @@ private slots:
         QCOMPARE(table->horizontalHeader()->sortIndicatorSection(), 5);
         QCOMPARE(table->horizontalHeader()->sortIndicatorOrder(), Qt::DescendingOrder);
         QCOMPARE(table->item(0, 0)->text(), QStringLiteral("10.0.0.3:6881"));
-    }
+}
 
-    void trackersSortStatusAndNumericColumnsWithoutFlatteningEndpoints()
-    {
+void DetailsSortingWorkflowTest::trackersSortStatusAndNumericColumnsWithoutFlatteningEndpoints()
+{
         TorrentDetailsWidget widget;
         widget.setSelection(QStringLiteral("test-hash"));
         widget.showTab(1);
@@ -243,8 +248,7 @@ private slots:
         QCOMPARE(childNames(working), (QStringList{
             QStringLiteral("server 10"), QStringLiteral("server 2")
         }));
-    }
-};
+}
 
 QTEST_MAIN(DetailsSortingWorkflowTest)
 #include "test_details_sorting_workflow.moc"
