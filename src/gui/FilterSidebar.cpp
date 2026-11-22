@@ -35,11 +35,30 @@ QListWidget *makeFilterList(QWidget *parent, std::initializer_list<Item> entries
     {
         const QString iconPath = QStringLiteral(":/icons/")
             + QString::fromLatin1(entry.second) + QStringLiteral(".svg");
-        new QListWidgetItem(QIcon(iconPath), entry.first, list);
+        auto *item = new QListWidgetItem(QIcon(iconPath), entry.first, list);
+#ifdef Q_OS_WIN
+        // Windows' native item delegate adds much larger vertical padding
+        // than the upstream qBittorrent sidebar on Linux. Only on Windows,
+        // provide an explicit, DPI-aware row size: room for the inherited
+        // font and the 16px icon, plus 4 logical pixels of breathing space.
+        const int compactHeight = qMax(list->fontMetrics().height(),
+                                       list->iconSize().height()) + 4;
+        item->setSizeHint(QSize(0, compactHeight));
+#else
+        Q_UNUSED(item);
+#endif
     }
 
     list->setCurrentRow(0);
+#ifdef Q_OS_WIN
+    // Match the actual Windows item height so the fixed-height list has no
+    // extra blank space after its last row.
+    const int rowHeight = qMax(list->fontMetrics().height(),
+                               list->iconSize().height()) + 4;
+#else
+    // Linux sizing remains exactly as before: native Qt style decides.
     const int rowHeight = qMax(list->fontMetrics().height() + 4, list->sizeHintForRow(0));
+#endif
     list->setFixedHeight((rowHeight * list->count()) + (2 * list->frameWidth()));
     return list;
 }

@@ -16,7 +16,7 @@ There are no alternate build scripts or independent test commands.
 Requirements:
 - CMake 3.21 or newer
 - C++17 compiler
-- Qt 6.6 or newer (Core, Widgets, Network and Test when tests are enabled)
+- Qt 6.6 or newer (Core, Widgets, Network, Svg and Test when tests are enabled)
 - Ninja (for the checked-in presets)
 
 ```sh
@@ -46,6 +46,17 @@ must not be written around individual code blocks, internal implementation
 details, or fixed example inputs merely to exercise a parser or function.
 
 Qt Test may drive GUI interactions but is invoked exclusively through CTest.
+
+### Windows installer and cross-platform CI
+
+A native Windows x64 installer can be built from **MSYS2 UCRT64** using the
+same Qt 6/CMake/CTest source tree. It packages Qt, QtKeychain and compiler
+runtime DLLs, Qt SVG icon-rendering plugins, the Windows platform plugin, and the native Schannel TLS
+backend. Windows Credential Manager is used for protected password memory.
+
+Follow [the Windows build and installer guide](docs/windows-build.md).
+The build/installer workflow also runs in Windows GitHub Actions; the draft
+must be validated on a real Windows computer before distribution.
 
 ## Native interface
 

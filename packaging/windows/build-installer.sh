@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Run only inside an MSYS2 UCRT64 shell on Windows.
+set -euo pipefail
+
+if [[ "$(printenv MSYSTEM || true)" != UCRT64 ]]; then
+  echo "ERROR: Open the MSYS2 UCRT64 terminal (not MSYS/MINGW64/Git Bash)." >&2
+  exit 2
+fi
+
+for tool in cmake ctest ninja windeployqt6 makensis objdump cygpath; do
+  command -v "$tool" >/dev/null || { echo "Missing tool: $tool" >&2; exit 2; }
+done
+
+source_root="$(cd -- "$(dirname -- "$0")/../.." && pwd)"
+build_root="$source_root/build/windows-ucrt"
+deploy="$build_root/deploy"
+dist="$build_root/dist"
+exe="$build_root/qbittorrent-remote.exe"
+
+cd "$source_root"
+cmake --preset windows-ucrt
+cmake --build --preset windows-ucrt
+# QtTest GUI workflows run offscreen and never access real Windows secrets.
+QT_QPA_PLATFORM=offscreen ctest --preset windows-ucrt --output-on-failure
+
+test -f "$exe" || { echo "Windows executable not generated: $exe" >&2; exit 1; }
+
+# Never reuse old runtime DLLs or plugins from a prior installer.
+rm -rf -- "$deploy"
+mkdir -p -- "$deploy" "$dist"
+cp -- "$exe" "$deploy/"
+cp -- "$source_root/LICENSE" "$deploy/LICENSE.txt"
+cp -- "$source_root/packaging/windows/THIRD-PARTY-NOTICES.txt" "$deploy/"
+
+# Qt runtime DLLs, platforms, image formats, styles and plugins.
+windeployqt6 --release --no-translations --dir "$deploy" "$deploy/qbittorrent-remote.exe"
+# QtKeychain is a third-party DLL, not a standard Qt module.
+cp -- /ucrt64/bin/libqt6keychain.dll "$deploy/"
+
+# The qBittorrent UI uses original SVG icons from Qt resources. Qt's SVG
+# icon engine is a runtime plugin; a binary can pass CTest without it and
+# silently show text-only toolbar actions. Bundle and verify both plugins.
+mkdir -p -- "$deploy/iconengines" "$deploy/imageformats"
+cp -- /ucrt64/bin/Qt6Svg.dll "$deploy/"
+cp -- /ucrt64/share/qt6/plugins/iconengines/qsvgicon.dll "$deploy/iconengines/"
+cp -- /ucrt64/share/qt6/plugins/imageformats/qsvg.dll "$deploy/imageformats/"
+
+# Use the Windows native Schannel TLS backend, not OpenSSL bundled libraries.
+# This does NOT disable hostname, certificate or pin verification.
+mkdir -p -- "$deploy/tls"
+cp -- /ucrt64/share/qt6/plugins/tls/qschannelbackend.dll "$deploy/tls/"
+rm -f -- "$deploy/tls/qopensslbackend.dll" "$deploy/tls/qcertonlybackend.dll"
+
+# Bundle transitive MinGW/Qt dependency DLLs, including dependencies of
+# plugins and QtKeychain. Leave Windows system DLLs on Windows itself.
+while :; do
+  copied=0
+  while IFS= read -r -d '' binary; do
+    while IFS= read -r dependency; do
+      [[ -z "$dependency" || -f "$deploy/$dependency" ]] && continue
+      if [[ -f "/ucrt64/bin/$dependency" ]]; then
+        cp -- "/ucrt64/bin/$dependency" "$deploy/"
+        copied=1
+      fi
+    done < <(objdump -p "$binary" | awk '$1=="DLL" && $2=="Name:" {print $3}')
+  done < <(find "$deploy" -type f \( -iname '*.exe' -o -iname '*.dll' \) -print0)
+  [[ "$copied" -eq 0 ]] && break
+done
+
+for essential in \
+  "$deploy/Qt6Core.dll" \
+  "$deploy/Qt6Widgets.dll" \
+  "$deploy/Qt6Network.dll" \
+  "$deploy/Qt6Svg.dll" \
+  "$deploy/iconengines/qsvgicon.dll" \
+  "$deploy/imageformats/qsvg.dll" \
+  "$deploy/libqt6keychain.dll" \
+  "$deploy/platforms/qwindows.dll" \
+  "$deploy/tls/qschannelbackend.dll"; do
+  if [[ ! -f "$essential" ]]; then
+    echo "Missing required bundled runtime: $essential" >&2
+    exit 1
+  fi
+done
+
+# MSYS2's license text files, if provided by the package.
+mkdir -p -- "$deploy/licenses"
+for directory in /ucrt64/share/licenses/qt6-base /ucrt64/share/licenses/qt6-svg /ucrt64/share/licenses/qtkeychain; do
+  if [[ -d "$directory" ]]; then
+    cp -R -- "$directory" "$deploy/licenses/"
+  fi
+done
+
+installer="$dist/qBittorrent-Remote-0.1.0-Windows-x64-Setup.exe"
+makensis \
+  "-DPAYLOAD_DIR=$(cygpath -w "$deploy")" \
+  "-DOUTPUT_FILE=$(cygpath -w "$installer")" \
+  "$source_root/packaging/windows/qbittorrent-remote.nsi"
+
+test -s "$installer" || { echo "NSIS did not create the installer." >&2; exit 1; }
+echo "Installer ready: $installer"
+echo "Test the installed application outside MSYS2, including TLS and Credential Manager."
