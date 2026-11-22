@@ -50,6 +50,8 @@ add_library(qbittorrent_remote_core STATIC
     src/api/ServerProfile.h
     src/api/PathMappingStore.cpp
     src/api/PathMappingStore.h
+    src/api/TorrentMetadataReader.cpp
+    src/api/TorrentMetadataReader.h
     src/api/RemoteSession.cpp
     src/api/RemoteSession.h
     src/api/CredentialVault.cpp
@@ -73,6 +75,13 @@ add_library(qbittorrent_remote_gui STATIC
     src/gui/ConnectionDialog.h
     src/gui/RemotePreferencesDialog.cpp
     src/gui/RemotePreferencesDialog.h
+    src/gui/RemoteAddTorrentDialog.cpp
+    src/gui/RemoteAddTorrentDialog.h
+    src/gui/RemoteFileSystemPathComboEdit.cpp
+    src/gui/RemoteFileSystemPathComboEdit.h
+    src/gui/RemoteTorrentContentWidget.cpp
+    src/gui/RemoteTorrentContentWidget.h
+    src/gui/addnewtorrentdialog.ui
     src/gui/optionsdialog.ui
     src/gui/FilterSidebar.cpp
     src/gui/FilterSidebar.h
@@ -154,6 +163,17 @@ if(BUILD_TESTING)
     )
     add_test(NAME native_preferences_and_remote_paths COMMAND test_preferences_workflow)
 
+    add_executable(test_add_torrent_workflow
+        tests/test_add_torrent_workflow.cpp
+    )
+    target_link_libraries(test_add_torrent_workflow PRIVATE
+        qbittorrent_remote_gui
+        Qt6::Test
+    )
+    add_test(NAME native_add_torrent_and_path_mapping COMMAND test_add_torrent_workflow)
+    # Unexpected modal dialogs must not stall CI indefinitely.
+    set_tests_properties(native_add_torrent_and_path_mapping PROPERTIES TIMEOUT 75)
+
     add_executable(test_connection_workflow
         tests/test_connection_workflow.cpp
     )
@@ -163,6 +183,9 @@ if(BUILD_TESTING)
         Qt6::Network
     )
     add_test(NAME remote_connection_workflow COMMAND test_connection_workflow)
+    # Modal file-picker/duplicate-confirmation GUI workflows must never stall CI.
+    set_tests_properties(remote_connection_workflow PROPERTIES TIMEOUT 120)
+    set_tests_properties(remote_connection_workflow PROPERTIES TIMEOUT 100)
 
     # Tests start local TLS endpoints with ephemeral certificates and drive
     # real certificate-decision GUI workflows; no production server involved.
@@ -179,7 +202,7 @@ if(BUILD_TESTING)
     set_tests_properties(certificate_trust_workflow PROPERTIES TIMEOUT 90)
 
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        set_tests_properties(window_open_and_quit server_profile_management native_preferences_and_remote_paths remote_connection_workflow certificate_trust_workflow PROPERTIES
+        set_tests_properties(window_open_and_quit server_profile_management native_preferences_and_remote_paths native_add_torrent_and_path_mapping remote_connection_workflow certificate_trust_workflow PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         )
     endif()

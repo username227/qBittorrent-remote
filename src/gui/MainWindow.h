@@ -45,6 +45,8 @@ private:
     void removeConnection(const std::shared_ptr<SessionContext> &connection);
     bool containsConnection(const std::shared_ptr<SessionContext> &connection) const;
     std::shared_ptr<SessionContext> activeConnection() const;
+    std::shared_ptr<SessionContext> connectedById(const QString &id) const;
+    QList<Remote::ServerProfile> connectedServerProfiles() const;
     ServerPane *activePane() const;
     void updateActiveUi();
     void updateTorrentActionState();

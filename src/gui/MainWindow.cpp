@@ -5,7 +5,9 @@
 #include "gui/FilterSidebar.h"
 #include "gui/ConnectionDialog.h"
 #include "gui/RemotePreferencesDialog.h"
+#include "gui/RemoteAddTorrentDialog.h"
 #include "api/RemoteSession.h"
+#include "api/TorrentMetadataReader.h"
 #include "gui/upstream/hidabletabwidget.h"
 
 #include "ui_mainwindow.h"
@@ -39,7 +41,10 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QPointer>
+#include <QRegularExpression>
 #include <QSslCertificate>
+#include <QUrl>
+#include <QUrlQuery>
 #include <QSizePolicy>
 #include <QStatusBar>
 #include <QToolBar>
@@ -51,6 +56,105 @@
 
 namespace
 {
+struct TorrentIdentity
+{
+    QStringList hashes;
+    QStringList trackers;
+    bool isPrivate = false;
+};
+
+QString base32Btih(const QString &raw)
+{
+    // Legacy magnet links may encode the 20-byte BTIH as 32 Base32 chars.
+    // Decode only this exact bounded shape; malformed values cannot match.
+    if (raw.size() != 32) return {};
+    QByteArray decoded;
+    quint32 bits = 0;
+    int bitCount = 0;
+    for (QChar c : raw.toUpper())
+    {
+        const ushort u = c.unicode();
+        int value = -1;
+        if (u >= 'A' && u <= 'Z') value = u - 'A';
+        else if (u >= '2' && u <= '7') value = u - '2' + 26;
+        if (value < 0) return {};
+        bits = (bits << 5) | static_cast<quint32>(value);
+        bitCount += 5;
+        if (bitCount >= 8)
+        {
+            bitCount -= 8;
+            decoded.append(static_cast<char>((bits >> bitCount) & 0xff));
+        }
+    }
+    return decoded.size() == 20 ? QString::fromLatin1(decoded.toHex()) : QString();
+}
+
+TorrentIdentity magnetIdentity(const QString &links)
+{
+    TorrentIdentity result;
+    const QStringList sources = links.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    if (sources.size() != 1)
+        return result; // Avoid claiming a single duplicate for multiple links.
+    const QUrl url(sources.first().trimmed(), QUrl::StrictMode);
+    if (!url.isValid() || url.scheme().compare(QLatin1String("magnet"),
+                                               Qt::CaseInsensitive) != 0)
+        return result;
+    const QUrlQuery query(url);
+    static const QRegularExpression hex40(QStringLiteral("^[0-9a-fA-F]{40}$"));
+    static const QRegularExpression hex64(QStringLiteral("^[0-9a-fA-F]{64}$"));
+    for (const auto &part : query.queryItems(QUrl::FullyDecoded))
+    {
+        if (part.first == QLatin1String("xt"))
+        {
+            const QString xt = part.second;
+            if (xt.startsWith(QLatin1String("urn:btih:"), Qt::CaseInsensitive))
+            {
+                const QString hash = xt.mid(9);
+                if (hex40.match(hash).hasMatch())
+                    result.hashes.append(hash.toLower());
+                else
+                {
+                    const QString decoded = base32Btih(hash);
+                    if (!decoded.isEmpty()) result.hashes.append(decoded);
+                }
+            }
+            else if (xt.startsWith(QLatin1String("urn:btmh:1220"), Qt::CaseInsensitive))
+            {
+                const QString hash = xt.mid(13);
+                if (hex64.match(hash).hasMatch())
+                    result.hashes.append(hash.toLower());
+            }
+        }
+        else if (part.first == QLatin1String("tr") && result.trackers.size() < 256)
+        {
+            const QUrl tracker(part.second, QUrl::StrictMode);
+            const QString scheme = tracker.scheme().toLower();
+            if (tracker.isValid() && !tracker.host().isEmpty()
+                && (scheme == QLatin1String("http") || scheme == QLatin1String("https")
+                    || scheme == QLatin1String("udp"))
+                && !part.second.contains(QLatin1Char('\n'))
+                && !part.second.contains(QLatin1Char('\r'))
+                && !result.trackers.contains(part.second))
+                result.trackers.append(part.second);
+        }
+    }
+    return result;
+}
+
+QString existingHash(const TorrentModel &model, const QStringList &candidateHashes)
+{
+    if (candidateHashes.isEmpty()) return {};
+    for (auto it = model.torrents().cbegin(); it != model.torrents().cend(); ++it)
+    {
+        const QJsonObject record = it.value();
+        for (const QString &hash : {it.key(),
+                 record.value(QStringLiteral("infohash_v1")).toString(),
+                 record.value(QStringLiteral("infohash_v2")).toString()})
+            if (!hash.isEmpty() && candidateHashes.contains(hash, Qt::CaseInsensitive))
+                return it.key(); // Server's canonical, authenticated torrent ID.
+    }
+    return {};
+}
 
 QIcon upstreamIcon(const char *name)
 {
@@ -400,37 +504,97 @@ void MainWindow::setupActions()
             hashes, deleteFiles->isChecked());
     });
 
-    connect(m_ui->actionDownloadFromURL, &QAction::triggered, this, [this]() {
+    // A duplicate is identified by its actual infohash in the chosen
+    // server's synchronized model. Never mistake an arbitrary Web API failure
+    // for a duplicate, and never route tracker changes to another server.
+    const auto offerTrackerMerge = [this](const std::shared_ptr<SessionContext> &server,
+                                          const TorrentIdentity &identity) {
+        if (!server || !server->connected) return false;
+        const QString hash = existingHash(*server->pane->model(), identity.hashes);
+        if (hash.isEmpty()) return false;
+
+        const QJsonObject record = server->pane->model()->torrents().value(hash);
+        const QJsonValue privateValue = record.value(QStringLiteral("private"));
+        const QJsonValue legacyPrivate = record.value(QStringLiteral("is_private"));
+        if (identity.isPrivate || privateValue.toBool() || legacyPrivate.toBool())
+        {
+            QMessageBox::information(this, tr("Torrent already exists"),
+                tr("This torrent is already present on %1. "
+                   "Trackers cannot be merged because it is a private torrent.")
+                    .arg(server->profile.name));
+            return true;
+        }
+        // A magnet's privacy is unknown until its metadata arrives.
+        // Never send a tracker-changing request unless the selected server
+        // explicitly reports that its existing torrent is non-private.
+        if (!privateValue.isBool() && !legacyPrivate.isBool())
+        {
+            QMessageBox::information(this, tr("Torrent already exists"),
+                tr("This torrent is already present on %1, but its private status "
+                   "is not available. Trackers were not merged.")
+                    .arg(server->profile.name));
+            return true;
+        }
+
+        if (identity.trackers.isEmpty())
+        {
+            QMessageBox::information(this, tr("Torrent already exists"),
+                tr("This torrent is already present on %1. "
+                   "No trackers were provided to merge.").arg(server->profile.name));
+            return true;
+        }
+
+        QMessageBox prompt(QMessageBox::Question, tr("Torrent already exists"),
+            tr("This torrent is already present on %1. "
+               "Do you want to merge its trackers?").arg(server->profile.name),
+            QMessageBox::Yes | QMessageBox::No, this);
+        prompt.setObjectName(QStringLiteral("duplicateTorrentTrackersDialog"));
+        prompt.setInformativeText(tr(
+            "Tracker URLs from the new torrent will be added to the existing "
+            "torrent on this server. The torrent will not be added again."));
+        prompt.setDefaultButton(QMessageBox::No);
+        if (prompt.exec() == QMessageBox::Yes && containsConnection(server)
+            && server->connected)
+            server->session->addTorrentTrackers(hash, identity.trackers);
+        return true; // Duplicate was handled even when the user declined.
+    };
+
+    connect(m_ui->actionDownloadFromURL, &QAction::triggered, this, [this, offerTrackerMerge]() {
         const auto server = activeConnection();
         if (!server || !server->connected)
             return;
-        QInputDialog dialog(this);
-        dialog.setObjectName(QStringLiteral("addTorrentUrlDialog"));
-        dialog.setWindowTitle(tr("Add torrent link to %1").arg(server->profile.name));
-        dialog.setLabelText(tr("Paste magnet or HTTP(S) links, one per line.\n"
-                               "The remote server will use its own default download location."));
-        dialog.setInputMode(QInputDialog::TextInput);
-        dialog.setOption(QInputDialog::UsePlainTextEditForTextInput);
-        trackDialogGeometry(dialog, QStringLiteral("AddTorrentURL"));
+        RemoteAddTorrentDialog dialog(*m_settings, server->profile,
+            RemoteAddTorrentDialog::Source::Links, {}, {}, {}, this,
+            connectedServerProfiles(),
+            [this](const QString &id) { return static_cast<bool>(connectedById(id)); });
+        trackDialogGeometry(dialog, QStringLiteral("AddTorrent"));
         if (dialog.exec() != QDialog::Accepted)
             return;
-        const QString urls = dialog.textValue();
-        if (!urls.trimmed().isEmpty() && containsConnection(server) && server->connected)
-            server->session->addTorrentUrls(urls);
+        const auto target = connectedById(dialog.selectedServerId());
+        if (!target)
+        {
+            QMessageBox::warning(this, tr("Server disconnected"),
+                                 tr("The selected server disconnected before the torrent "
+                                    "could be submitted. Nothing was added."));
+            return;
+        }
+        if (offerTrackerMerge(target, magnetIdentity(dialog.links())))
+            return;
+        target->session->addTorrentUrls(dialog.links(), dialog.options());
     });
 
-    connect(m_ui->actionOpen, &QAction::triggered, this, [this]() {
+    connect(m_ui->actionOpen, &QAction::triggered, this, [this, offerTrackerMerge]() {
         const auto server = activeConnection();
         if (!server || !server->connected)
             return;
-        QFileDialog dialog(this, tr("Add .torrent to %1").arg(server->profile.name));
-        dialog.setObjectName(QStringLiteral("addTorrentFileDialog"));
-        dialog.setFileMode(QFileDialog::ExistingFile);
-        dialog.setNameFilters({tr("Torrent files (*.torrent)"), tr("All files (*)")});
-        trackDialogGeometry(dialog, QStringLiteral("AddTorrentFile"));
-        if (dialog.exec() != QDialog::Accepted)
+        QFileDialog filePicker(this, tr("Select local .torrent metadata"));
+        filePicker.setObjectName(QStringLiteral("addTorrentFileDialog"));
+        filePicker.setFileMode(QFileDialog::ExistingFile);
+        filePicker.setNameFilters({tr("Torrent files (*.torrent)"), tr("All files (*)")});
+        trackDialogGeometry(filePicker, QStringLiteral("SelectTorrentFile"));
+        if (filePicker.exec() != QDialog::Accepted)
             return;
-        const QString filename = dialog.selectedFiles().value(0);
+        const QString filename = filePicker.selectedFiles().value(0);
         if (filename.isEmpty() || !containsConnection(server) || !server->connected)
             return;
         QFile file(filename);
@@ -446,7 +610,40 @@ void MainWindow::setupActions()
                                  tr("The selected .torrent metadata exceeds 32 MiB."));
             return;
         }
-        server->session->addTorrentFile(QFileInfo(filename).fileName(), file.readAll());
+        const QByteArray contents = file.readAll();
+        const auto available = connectedServerProfiles();
+        if (available.isEmpty())
+            return;
+        const auto initial = connectedById(server->profile.id);
+        RemoteAddTorrentDialog dialog(*m_settings,
+            initial ? initial->profile : available.first(),
+            RemoteAddTorrentDialog::Source::TorrentFile, {},
+            QFileInfo(filename).fileName(), contents, this, available,
+            [this](const QString &id) { return static_cast<bool>(connectedById(id)); });
+        trackDialogGeometry(dialog, QStringLiteral("AddTorrent"));
+        if (dialog.exec() != QDialog::Accepted)
+            return;
+        const auto target = connectedById(dialog.selectedServerId());
+        if (!target)
+        {
+            QMessageBox::warning(this, tr("Server disconnected"),
+                                 tr("The selected server disconnected before the torrent "
+                                    "could be submitted. Nothing was added."));
+            return;
+        }
+        Remote::TorrentMetadata metadata;
+        if (Remote::TorrentMetadataReader::read(dialog.fileContents(), metadata))
+        {
+            TorrentIdentity identity;
+            if (!metadata.infoHashV1.isEmpty()) identity.hashes.append(metadata.infoHashV1);
+            if (!metadata.infoHashV2.isEmpty()) identity.hashes.append(metadata.infoHashV2);
+            identity.trackers = metadata.trackers;
+            identity.isPrivate = metadata.isPrivate;
+            if (offerTrackerMerge(target, identity))
+                return;
+        }
+        target->session->addTorrentFile(dialog.fileName(), dialog.fileContents(),
+                                        dialog.options());
     });
 }
 
@@ -508,6 +705,23 @@ std::shared_ptr<MainWindow::SessionContext> MainWindow::activeConnection() const
 bool MainWindow::containsConnection(const std::shared_ptr<SessionContext> &connection) const
 {
     return m_connections.contains(connection);
+}
+
+std::shared_ptr<MainWindow::SessionContext> MainWindow::connectedById(const QString &id) const
+{
+    for (const auto &connection : m_connections)
+        if (connection->connected && connection->profile.id == id)
+            return connection;
+    return {};
+}
+
+QList<Remote::ServerProfile> MainWindow::connectedServerProfiles() const
+{
+    QList<Remote::ServerProfile> profiles;
+    for (const auto &connection : m_connections)
+        if (connection->connected)
+            profiles.append(connection->profile);
+    return profiles;
 }
 
 ServerPane *MainWindow::activePane() const

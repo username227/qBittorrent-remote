@@ -111,6 +111,8 @@ bool ProfileStore::save(ServerProfile &profile)
         // Redirecting this saved profile to a new endpoint must never
         // inherit paths belonging to the previous NAS.
         PathMappingStore(m_settings).remove(profile.id);
+        m_settings.remove(QStringLiteral("AddTorrent/LastRemoteSavePath/")
+                          + trustKey(profile.id));
         m_settings.sync();
         return m_settings.status() == QSettings::NoError;
     }
@@ -129,6 +131,8 @@ bool ProfileStore::remove(const QString &id)
                 return false;
             m_settings.remove(QStringLiteral("certificateTrust/") + trustKey(id));
             PathMappingStore(m_settings).remove(id);
+            m_settings.remove(QStringLiteral("AddTorrent/LastRemoteSavePath/")
+                              + trustKey(id));
             m_settings.sync();
             return m_settings.status() == QSettings::NoError;
         }

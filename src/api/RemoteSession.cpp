@@ -640,7 +640,58 @@ void RemoteSession::commandTorrents(TorrentCommand command,
                    QByteArrayLiteral("application/x-www-form-urlencoded"), description);
 }
 
+namespace
+{
+void appendAddOptions(QUrlQuery &form, const AddTorrentOptions &options)
+{
+    // Explicit remote paths only. Empty means let the server choose.
+    form.addQueryItem(QStringLiteral("autoTMM"), options.autoTMM
+        ? QStringLiteral("true") : QStringLiteral("false"));
+    if (!options.savePath.isEmpty() && !options.autoTMM)
+        form.addQueryItem(QStringLiteral("savepath"), options.savePath);
+    if (options.useDownloadPath && !options.downloadPath.isEmpty() && !options.autoTMM)
+    {
+        form.addQueryItem(QStringLiteral("useDownloadPath"), QStringLiteral("true"));
+        form.addQueryItem(QStringLiteral("downloadPath"), options.downloadPath);
+    }
+    if (!options.category.isEmpty())
+        form.addQueryItem(QStringLiteral("category"), options.category);
+    if (!options.tags.isEmpty())
+        form.addQueryItem(QStringLiteral("tags"), options.tags);
+    form.addQueryItem(QStringLiteral("stopped"), options.stopped
+        ? QStringLiteral("true") : QStringLiteral("false"));
+    if (options.sequential)
+        form.addQueryItem(QStringLiteral("sequentialDownload"), QStringLiteral("true"));
+    if (options.firstLastPiece)
+        form.addQueryItem(QStringLiteral("firstLastPiecePrio"), QStringLiteral("true"));
+    if (options.queueTop)
+        form.addQueryItem(QStringLiteral("addToTopOfQueue"), QStringLiteral("true"));
+    if (options.seedMode)
+        form.addQueryItem(QStringLiteral("seedMode"), QStringLiteral("true"));
+    if (options.contentLayout == QLatin1String("Original")
+        || options.contentLayout == QLatin1String("Subfolder")
+        || options.contentLayout == QLatin1String("NoSubfolder"))
+        form.addQueryItem(QStringLiteral("contentLayout"), options.contentLayout);
+}
+
+void appendMultipartField(QByteArray &body, const QByteArray &boundary,
+                          const QByteArray &field, const QString &value)
+{
+    if (value.isEmpty())
+        return;
+    body += QByteArrayLiteral("--") + boundary
+        + QByteArrayLiteral("\r\nContent-Disposition: form-data; name=\"")
+        + field + QByteArrayLiteral("\"\r\n\r\n")
+        + value.toUtf8() + QByteArrayLiteral("\r\n");
+}
+} // namespace
+
 void RemoteSession::addTorrentUrls(const QString &urls)
+{
+    addTorrentUrls(urls, {});
+}
+
+void RemoteSession::addTorrentUrls(const QString &urls, const AddTorrentOptions &options)
 {
     const QStringList lines = urls.split(QLatin1Char('\n'));
     QStringList checked;
@@ -669,13 +720,54 @@ void RemoteSession::addTorrentUrls(const QString &urls)
     }
     QUrlQuery form;
     form.addQueryItem(QStringLiteral("urls"), checked.join(QLatin1Char('\n')));
+    appendAddOptions(form, options);
     queueOperation(QStringLiteral("api/v2/torrents/add"),
                    form.toString(QUrl::FullyEncoded).toUtf8(),
                    QByteArrayLiteral("application/x-www-form-urlencoded"),
                    tr("Add torrent links"), true);
 }
 
+void RemoteSession::addTorrentTrackers(const QString &hash, const QStringList &urls)
+{
+    static const QRegularExpression validHash(
+        QStringLiteral("^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$"));
+    if (!validHash.match(hash).hasMatch() || urls.isEmpty() || urls.size() > 256)
+    {
+        emit operationFailed(tr("Merge torrent trackers"), tr("Invalid torrent hash or tracker list."));
+        return;
+    }
+    QStringList validated;
+    for (const QString &raw : urls)
+    {
+        const QUrl url(raw, QUrl::StrictMode);
+        const QString scheme = url.scheme().toLower();
+        if (!url.isValid() || url.host().isEmpty()
+            || (scheme != QLatin1String("https") && scheme != QLatin1String("http")
+                && scheme != QLatin1String("udp"))
+            || raw.contains(QLatin1Char('\n')) || raw.contains(QLatin1Char('\r')))
+        {
+            emit operationFailed(tr("Merge torrent trackers"), tr("Invalid tracker URL."));
+            return;
+        }
+        if (!validated.contains(raw))
+            validated.append(raw);
+    }
+    QUrlQuery form;
+    form.addQueryItem(QStringLiteral("hash"), hash);
+    form.addQueryItem(QStringLiteral("urls"), validated.join(QLatin1Char('\n')));
+    queueOperation(QStringLiteral("api/v2/torrents/addTrackers"),
+                   form.toString(QUrl::FullyEncoded).toUtf8(),
+                   QByteArrayLiteral("application/x-www-form-urlencoded"),
+                   tr("Merge torrent trackers"), true);
+}
+
 void RemoteSession::addTorrentFile(const QString &filename, const QByteArray &contents)
+{
+    addTorrentFile(filename, contents, {});
+}
+
+void RemoteSession::addTorrentFile(const QString &filename, const QByteArray &contents,
+                                   const AddTorrentOptions &options)
 {
     // A .torrent file contains bencoded metadata, not downloaded content.
     // Keep the payload bounded and never substitute a local save path.
@@ -694,7 +786,11 @@ void RemoteSession::addTorrentFile(const QString &filename, const QByteArray &co
     const QByteArray boundary = QByteArrayLiteral("qbtRemote-")
         + QUuid::createUuid().toString(QUuid::WithoutBraces).toLatin1();
     QByteArray body;
-    body.reserve(contents.size() + 512);
+    body.reserve(contents.size() + 2048);
+    QUrlQuery fields;
+    appendAddOptions(fields, options);
+    for (const auto &field : fields.queryItems(QUrl::FullyDecoded))
+        appendMultipartField(body, boundary, field.first.toLatin1(), field.second);
     body += QByteArrayLiteral("--") + boundary + QByteArrayLiteral("\r\n");
     body += QByteArrayLiteral("Content-Disposition: form-data; name=\"torrents\"; filename=\"")
         + cleanName.toUtf8() + QByteArrayLiteral("\"\r\n");

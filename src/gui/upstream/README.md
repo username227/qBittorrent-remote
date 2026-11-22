@@ -122,3 +122,15 @@ See the root LICENSE. The remote application is GPL-3.0-or-later.
 - Native preferences Speed icon: use upstream `speedometer.svg` with a
   modest 28 × 28 icon size. Preserve existing icon-and-label centering
   and inherited Qt fonts; do not change sidebar row spacing separately.
+
+## Native Add Torrent
+
+`src/gui/addnewtorrentdialog.ui` adapts upstream qBittorrent's
+`src/gui/addnewtorrentdialog.ui` under its original GPL license.
+Engine-bound file/path widgets use remote-specific Qt adapters **in their
+original upstream Designer positions**, not bare QComboBox/QTreeWidget
+substitutions. The path adapter preserves the compact combo/folder icon; the
+content adapter preserves QTreeView/model, file/folder icons and metadata
+filtering without binding the desktop libtorrent engine. Destinations are
+mapped through `PathMappingStore`; no local download engine is instantiated. See `docs/add-torrent-parity.md` for detailed
+feature and Web API limitation accounting.
