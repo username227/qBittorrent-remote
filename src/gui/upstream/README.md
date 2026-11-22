@@ -13,6 +13,27 @@ The source is the qBittorrent `upstream-source` branch at commit
   status-filter section widget, compiled without local-engine dependencies.
 - `proptabbar.{h,cpp}`: upstream icon-bearing properties-tab bar; adapted
   only to use our embedded Qt icons instead of upstream's theme manager.
+- `proptabbar`: native bottom-anchored tab strip; clicking the active tab
+  collapses only the detail pages, keeps the tabs fixed at the bottom of the
+  window, and restores the user's previous splitter size when reopened.
+- `trackerlist` presentation: use Qt's native hierarchical tracker rows
+  with the same eleven columns as upstream TrackerListModel. Populate the
+  DHT/PeX/LSD pseudo-trackers from the server Web API (never synthesize
+  missing values), display their tier and announce cells as blank, and
+  nest real announce endpoints under their tracker rows. Show Unix-epoch
+  announce timestamps as remaining intervals, matching native qBittorrent.
+  The local-engine-only tracker-tier arrows are visible but disabled until
+  a supported remote mutation API is available.
+- `remotepropertieswidget.ui` (in `src/gui/`): native copy of upstream
+  `layouts/properties/propertieswidget.ui`, replacing the local-engine-only
+  TorrentContentWidget with a Qt tree widget. Populated by Web API-backed
+  general, tracker, peer, HTTP-source and content views; Speed is drawn with
+  Qt from the selected remote session's actual historical rate samples.
+  General's comment hyperlinks are escaped and restricted to HTTP(S).
+  Content reproduces upstream's six columns, file/folder checkboxes,
+  themed icons, progress bars, tri-state folder inclusion, and filename
+  filter. Unchecking sends remote filePrio=0 (not filesystem deletion);
+  right-click Priority and Select All/None reuse the same authenticated API.
 - `progressbarpainter.{h,cpp}` and `transferlistdelegate.{h,cpp}`: adapted
   original Qt progress bars, percentages, and stable torrent row sizing.
   They read Web API-backed Qt models and the native Qt style without importing

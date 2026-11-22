@@ -6,6 +6,7 @@
 #include <QFileInfo>
 #include <QRegularExpression>
 #include <QUuid>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonParseError>
 #include <QHostAddress>
@@ -491,23 +492,104 @@ void RemoteSession::pumpOperations()
 
     const QueuedOperation operation = m_operations.dequeue();
     QNetworkRequest request = requestFor(operation.endpoint);
-    request.setHeader(QNetworkRequest::ContentTypeHeader,
-                      QString::fromLatin1(operation.contentType));
-    QNetworkReply *reply = m_network.post(request, operation.body);
+    if (!operation.detailsRequest)
+        request.setHeader(QNetworkRequest::ContentTypeHeader,
+                          QString::fromLatin1(operation.contentType));
+    QNetworkReply *reply = operation.detailsRequest
+        ? m_network.get(request) : m_network.post(request, operation.body);
     armReply(reply);
     connect(reply, &QNetworkReply::finished, this, [this, reply, operation]() {
         checkReply(reply, [this, operation](const QByteArray &response) {
-            if (operation.checkAccepted && response.trimmed() == QByteArrayLiteral("Fails."))
+            if (operation.detailsRequest)
+            {
+                QJsonParseError error;
+                const QJsonDocument json = QJsonDocument::fromJson(response, &error);
+                const bool expectsObject = (operation.detailTab == 0 || operation.detailTab == 2);
+                if (error.error != QJsonParseError::NoError
+                    || (expectsObject && !json.isObject())
+                    || (!expectsObject && !json.isArray()))
+                {
+                    emit torrentDetailsFailed(operation.detailHash, operation.detailTab,
+                                              tr("Unexpected torrent-details response."));
+                    return;
+                }
+                emit torrentDetailsReceived(operation.detailHash, operation.detailTab,
+                                             expectsObject ? QJsonValue(json.object())
+                                                           : QJsonValue(json.array()));
+            }
+            else if (operation.checkAccepted && response.trimmed() == QByteArrayLiteral("Fails."))
                 emit operationFailed(operation.description, tr("The server rejected the request."));
             else
                 emit operationSucceeded(operation.description);
         }, [this, operation](const QString &reason) {
-            emit operationFailed(operation.description, reason);
+            if (operation.detailsRequest)
+                emit torrentDetailsFailed(operation.detailHash, operation.detailTab, reason);
+            else
+                emit operationFailed(operation.description, reason);
         });
         // Continue the queue even when an individual command was rejected.
         if (m_connected && !m_pendingReply)
             QTimer::singleShot(0, this, &RemoteSession::pumpOperations);
     });
+}
+
+void RemoteSession::requestTorrentDetails(const QString &hash, int tab)
+{
+    static const QRegularExpression validHash(
+        QStringLiteral("^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$"));
+    if (!m_connected || !m_address || !validHash.match(hash).hasMatch()
+        || tab < 0 || tab > 4)
+        return;
+
+    static const QStringList endpoints {
+        QStringLiteral("torrents/properties"),
+        QStringLiteral("torrents/trackers"),
+        QStringLiteral("sync/torrentPeers"),
+        QStringLiteral("torrents/webseeds"),
+        QStringLiteral("torrents/files")
+    };
+    // Discard queued requests for old selections or inactive pages. Already
+    // running replies are still verified and discarded by the receiving pane.
+    for (int i = m_operations.size() - 1; i >= 0; --i)
+        if (m_operations.at(i).detailsRequest)
+            m_operations.removeAt(i);
+
+    const QString url = QStringLiteral("api/v2/%1?hash=%2%3")
+        .arg(endpoints.at(tab), QString::fromLatin1(QUrl::toPercentEncoding(hash)),
+             tab == 2 ? QStringLiteral("&rid=0") : QString());
+    m_operations.enqueue({url, {}, {}, {}, false, true, hash, tab});
+    pumpOperations();
+}
+
+void RemoteSession::setFilePriority(const QString &hash, const QList<int> &fileIds,
+                                    int priority)
+{
+    static const QRegularExpression validHash(
+        QStringLiteral("^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$"));
+    if (!validHash.match(hash).hasMatch() || fileIds.isEmpty()
+        || (priority != 0 && priority != 1 && priority != 6 && priority != 7))
+    {
+        emit operationFailed(tr("Set file priorities"), tr("Invalid hash, file IDs or priority."));
+        return;
+    }
+    QStringList ids;
+    for (int id : fileIds)
+    {
+        if (id < 0)
+        {
+            emit operationFailed(tr("Set file priorities"), tr("Invalid file index."));
+            return;
+        }
+        ids.append(QString::number(id));
+    }
+    QUrlQuery form;
+    form.addQueryItem(QStringLiteral("hash"), hash);
+    form.addQueryItem(QStringLiteral("id"), ids.join(QLatin1Char('|')));
+    form.addQueryItem(QStringLiteral("priority"), QString::number(priority));
+    queueOperation(QStringLiteral("api/v2/torrents/filePrio"),
+                   form.toString(QUrl::FullyEncoded).toUtf8(),
+                   QByteArrayLiteral("application/x-www-form-urlencoded"),
+                   tr("Set file priorities"), true);
 }
 
 void RemoteSession::commandTorrents(TorrentCommand command,

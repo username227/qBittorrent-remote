@@ -73,6 +73,9 @@ add_library(qbittorrent_remote_gui STATIC
     src/gui/FilterSidebar.h
     src/gui/TorrentModel.cpp
     src/gui/TorrentModel.h
+    src/gui/TorrentDetailsWidget.cpp
+    src/gui/TorrentDetailsWidget.h
+    src/gui/remotepropertieswidget.ui
     src/gui/ServerPane.cpp
     src/gui/ServerPane.h
     src/gui/upstream/transferlistfilterswidgetitem.cpp

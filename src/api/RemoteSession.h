@@ -8,6 +8,7 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QJsonObject>
+#include <QJsonValue>
 #include <QQueue>
 #include <QByteArray>
 #include <QStringList>
@@ -59,6 +60,8 @@ public:
                          bool deleteFiles = false);
     void addTorrentUrls(const QString &urls);
     void addTorrentFile(const QString &filename, const QByteArray &contents);
+    void requestTorrentDetails(const QString &hash, int tab);
+    void setFilePriority(const QString &hash, const QList<int> &fileIds, int priority);
 
 signals:
     void connected(const QString &version, const QString &apiVersion);
@@ -66,6 +69,8 @@ signals:
     void mainDataUpdated(const QJsonObject &data);
     void operationSucceeded(const QString &description);
     void operationFailed(const QString &description, const QString &reason);
+    void torrentDetailsReceived(const QString &hash, int tab, const QJsonValue &data);
+    void torrentDetailsFailed(const QString &hash, int tab, const QString &reason);
 
 private:
     QNetworkRequest requestFor(const QString &endpoint) const;
@@ -92,6 +97,9 @@ private:
         QByteArray contentType;
         QString description;
         bool checkAccepted = false;
+        bool detailsRequest = false;
+        QString detailHash;
+        int detailTab = -1;
     };
 
     QNetworkAccessManager m_network;
