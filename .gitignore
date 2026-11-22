@@ -1,0 +1,8 @@
+# CMake build trees and local IDE state
+/build/
+/cmake-build-*/
+CMakeUserPresets.json
+/.cache/
+.vscode/
+.idea/
+*.user
