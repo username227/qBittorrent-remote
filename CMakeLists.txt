@@ -15,6 +15,24 @@ include(CTest)
 
 find_package(Qt6 6.6 REQUIRED COMPONENTS Core Widgets Network)
 
+# Optional cross-platform OS credential vault: libsecret/Secret Service,
+# Windows Credential Manager or macOS Keychain. Never allow plaintext fallback.
+find_package(Qt6Keychain QUIET)
+# QtKeychain exports 'qt6keychain' on Arch and most distributions.
+# Some packages provide a namespaced target; support either without forcing
+# any particular Linux keyring provider or system library.
+if(Qt6Keychain_FOUND AND TARGET qt6keychain)
+    set(QBT_REMOTE_KEYCHAIN_TARGET qt6keychain)
+elseif(Qt6Keychain_FOUND AND TARGET Qt6Keychain::Qt6Keychain)
+    set(QBT_REMOTE_KEYCHAIN_TARGET Qt6Keychain::Qt6Keychain)
+endif()
+
+if(QBT_REMOTE_KEYCHAIN_TARGET)
+    message(STATUS "QtKeychain found: secure Remember password available")
+else()
+    message(STATUS "Secure QtKeychain target unavailable: Remember password disabled")
+endif()
+
 add_library(qbittorrent_remote_core STATIC
     src/api/ServerAddress.cpp
     src/api/ServerAddress.h
@@ -22,11 +40,18 @@ add_library(qbittorrent_remote_core STATIC
     src/api/ServerProfile.h
     src/api/RemoteSession.cpp
     src/api/RemoteSession.h
+    src/api/CredentialVault.cpp
+    src/api/CredentialVault.h
 )
 target_include_directories(qbittorrent_remote_core PUBLIC
     "${PROJECT_SOURCE_DIR}/src"
 )
 target_link_libraries(qbittorrent_remote_core PUBLIC Qt6::Core Qt6::Network)
+if(QBT_REMOTE_KEYCHAIN_TARGET)
+    target_link_libraries(qbittorrent_remote_core PUBLIC ${QBT_REMOTE_KEYCHAIN_TARGET})
+    target_compile_definitions(qbittorrent_remote_core PRIVATE
+        QBT_REMOTE_WITH_KEYCHAIN=1)
+endif()
 
 # Shared by the real application and CTest GUI workflows.
 add_library(qbittorrent_remote_gui STATIC
@@ -115,6 +140,8 @@ if(BUILD_TESTING)
         Qt6::Network
     )
     add_test(NAME certificate_trust_workflow COMMAND test_tls_trust_workflow)
+    # A stalled TLS handshake or modal UI must not hang the complete CTest run.
+    set_tests_properties(certificate_trust_workflow PROPERTIES TIMEOUT 90)
 
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         set_tests_properties(window_open_and_quit server_profile_management remote_connection_workflow certificate_trust_workflow PROPERTIES

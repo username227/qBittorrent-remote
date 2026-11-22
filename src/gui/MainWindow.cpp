@@ -20,6 +20,7 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QPointer>
 #include <QSslCertificate>
 #include <QSizePolicy>
 #include <QSplitter>
@@ -41,10 +42,12 @@ QIcon upstreamIcon(const char *name)
 
 } // namespace
 
-MainWindow::MainWindow(QWidget *parent, QSettings *settings)
+MainWindow::MainWindow(QWidget *parent, QSettings *settings,
+                       Remote::CredentialVault *vault)
     : QMainWindow(parent)
     , m_ui(std::make_unique<Ui::MainWindow>())
     , m_settings(settings ? settings : &m_defaultSettings)
+    , m_vault(vault ? vault : &m_defaultVault)
 {
     // Required when SVG resources live in a linked static library.
     Q_INIT_RESOURCE(qbittorrent_icons);
@@ -281,7 +284,7 @@ void MainWindow::setupActions()
         m_filterSidebar, &QWidget::setVisible);
 
     connect(m_connectAction, &QAction::triggered, this, [this]() {
-        ConnectionDialog dialog(*m_settings, this);
+        ConnectionDialog dialog(*m_settings, this, m_vault);
         if (dialog.exec() == QDialog::Accepted)
             connectToProfile(dialog.selectedProfile(), dialog.password());
     });
@@ -380,13 +383,34 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
     m_ui->statusBar->showMessage(tr("Connecting to %1...").arg(profile.name));
 
     connect(session, &Remote::RemoteSession::connected, this,
-        [this, session](const QString &version, const QString &apiVersion) {
+        [this, session, profile, password](
+            const QString &version, const QString &apiVersion) {
             if (m_session != session)
                 return;
             m_ui->statusBar->showMessage(
                 tr("Connected to %1 — qBittorrent %2 (Web API %3).")
                     .arg(m_currentServerName, version, apiVersion));
             setWindowTitle(tr("qBittorrent Remote — %1").arg(m_currentServerName));
+
+            if (!m_vault->available())
+                return;
+
+            // Opting out and profile removal erase credentials in the
+            // profile editor. Never launch a second asynchronous deletion
+            // on every successful passwordless or manual login.
+            if (profile.rememberPassword && !password.isEmpty())
+            {
+                // Only store a newly supplied password *after* successful
+                // server authentication. A blank password needs no secret.
+                QPointer<MainWindow> safeWindow(this);
+                m_vault->write(profile, password, [safeWindow](const QString &error) {
+                    if (safeWindow && !error.isEmpty())
+                        QMessageBox::warning(safeWindow,
+                            QObject::tr("Cannot Remember Password"),
+                            QObject::tr("Connected successfully, but the password was not saved: %1")
+                                .arg(error));
+                });
+            }
         });
     connect(session, &Remote::RemoteSession::failed, this,
         [this, session](const QString &reason) {
@@ -396,7 +420,33 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
                 tr("Connection to %1 failed: %2").arg(m_currentServerName, reason));
             m_disconnectAction->setEnabled(false);
         });
-    session->connectToServer(profile, password);
+    if (profile.rememberPassword && password.isEmpty() && m_vault->available())
+    {
+        // An empty input means 'use remembered password if one exists',
+        // otherwise send an empty password for servers permitting it.
+        QPointer<MainWindow> safeWindow(this);
+        QPointer<Remote::RemoteSession> safeSession(session);
+        m_vault->read(profile,
+            [safeWindow, safeSession, profile](const QString &savedPassword,
+                                               bool found, const QString &error) {
+                // A keyring operation can outlive a closed window or a
+                // disconnected session; never use stale QObject pointers.
+                if (!safeWindow || !safeSession
+                    || safeWindow->m_session != safeSession)
+                    return;
+                if (!error.isEmpty())
+                {
+                    safeWindow->m_disconnectAction->setEnabled(false);
+                    safeWindow->m_ui->statusBar->showMessage(
+                        QObject::tr("Could not read saved password: %1").arg(error));
+                    return;
+                }
+                safeSession->connectToServer(profile,
+                                             found ? savedPassword : QString());
+            });
+    }
+    else
+        session->connectToServer(profile, password);
 }
 
 void MainWindow::disconnectCurrentServer()

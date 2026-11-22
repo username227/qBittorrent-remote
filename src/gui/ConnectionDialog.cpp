@@ -4,18 +4,22 @@
 #include "api/ServerAddress.h"
 
 #include <QComboBox>
+#include <QCheckBox>
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <QPointer>
 #include <QPushButton>
 #include <QVBoxLayout>
 
-ConnectionDialog::ConnectionDialog(QSettings &settings, QWidget *parent)
+ConnectionDialog::ConnectionDialog(QSettings &settings, QWidget *parent,
+                                   Remote::CredentialVault *vault)
     : QDialog(parent)
     , m_store(settings)
+    , m_vault(vault)
 {
     setWindowTitle(tr("Connect to qBittorrent Server"));
     setMinimumWidth(440);
@@ -61,11 +65,19 @@ ConnectionDialog::ConnectionDialog(QSettings &settings, QWidget *parent)
     m_password->setEchoMode(QLineEdit::Password);
     form->addRow(tr("Password:"), m_password);
 
+    m_remember = new QCheckBox(tr("Remember password securely"), this);
+    m_remember->setObjectName(QStringLiteral("rememberPassword"));
+    m_remember->setEnabled(m_vault && m_vault->available());
+    if (!m_remember->isEnabled())
+        m_remember->setToolTip(tr("QtKeychain secure storage support was not built in."));
+    form->addRow(QString(), m_remember);
+
     layout->addLayout(form);
     auto *note = new QLabel(
-        tr("Passwords are used for this connection only and are never saved. "
-           "Untrusted HTTPS certificates require your explicit approval; "
-           "the trusted SHA-256 fingerprint is saved for this server only."), this);
+        tr("Passwords are never stored in profile settings. When Remember "
+           "password is selected, the operating system's protected credential "
+           "store is used. A blank password is allowed for servers configured "
+           "for passwordless access. HTTPS certificate trust remains separate."), this);
     note->setWordWrap(true);
     layout->addWidget(note);
 
@@ -101,6 +113,11 @@ QString ConnectionDialog::password() const
     return m_password->text();
 }
 
+bool ConnectionDialog::rememberPassword() const
+{
+    return m_remember->isEnabled() && m_remember->isChecked();
+}
+
 void ConnectionDialog::refreshProfiles(const QString &selectId)
 {
     const QList<Remote::ServerProfile> profiles = m_store.profiles();
@@ -132,6 +149,7 @@ void ConnectionDialog::loadSelectedProfile()
     m_username->setText(m_selected.username.isEmpty()
                         ? QStringLiteral("admin") : m_selected.username);
     m_password->clear();
+    m_remember->setChecked(m_selected.rememberPassword && m_remember->isEnabled());
     m_removeButton->setEnabled(!m_selected.id.isEmpty());
 }
 
@@ -143,6 +161,7 @@ void ConnectionDialog::clearForNewProfile()
     m_url->clear();
     m_username->setText(QStringLiteral("admin"));
     m_password->clear();
+    m_remember->setChecked(false);
     m_removeButton->setEnabled(false);
     m_name->setFocus();
 }
@@ -161,13 +180,28 @@ bool ConnectionDialog::saveCurrentProfile()
 
     Remote::ServerProfile edited {
         m_selected.id, name, address->baseUrl().toString(),
-        m_username->text().trimmed()
+        m_username->text().trimmed(), rememberPassword()
     };
+    const Remote::ServerProfile previous = m_selected;
     if (!m_store.save(edited))
     {
         QMessageBox::warning(this, tr("Cannot save server"),
                              tr("The server profile could not be saved."));
         return false;
+    }
+
+    // A changed endpoint or username must not leave an orphaned credential.
+    // Explicitly opting out also forgets the old password immediately,
+    // rather than waiting for another successful connection.
+    if (m_vault && m_vault->available() && !previous.id.isEmpty()
+        && (previous.url != edited.url || previous.username != edited.username
+            || (previous.rememberPassword && !edited.rememberPassword)))
+    {
+        QPointer<ConnectionDialog> self(this);
+        m_vault->erase(previous, [self](const QString &error) {
+            if (self && !error.isEmpty())
+                QMessageBox::warning(self, QObject::tr("Cannot Forget Password"), error);
+        });
     }
 
     // Selecting a newly saved profile must not wipe the entered password.
@@ -187,11 +221,20 @@ void ConnectionDialog::removeCurrentProfile()
         != QMessageBox::Yes)
         return;
 
+    const Remote::ServerProfile removed = m_selected;
     if (!m_store.remove(m_selected.id))
     {
         QMessageBox::warning(this, tr("Cannot remove server"),
                              tr("The saved server could not be removed."));
         return;
+    }
+    if (m_vault && m_vault->available())
+    {
+        QPointer<ConnectionDialog> self(this);
+        m_vault->erase(removed, [self](const QString &error) {
+            if (self && !error.isEmpty())
+                QMessageBox::warning(self, QObject::tr("Cannot Forget Password"), error);
+        });
     }
     refreshProfiles();
 }

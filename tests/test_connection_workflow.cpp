@@ -1,11 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/MainWindow.h"
 #include "gui/ConnectionDialog.h"
+#include "api/CredentialVault.h"
 
 #include <QAction>
 #include <QApplication>
+#include <QEvent>
+#include <QCheckBox>
+#include <QFile>
+#include <QHash>
 #include <QHostAddress>
 #include <QLineEdit>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QSettings>
 #include <QStatusBar>
@@ -23,9 +29,11 @@
 class DemoQbittorrentServer final : public QObject
 {
 public:
-    explicit DemoQbittorrentServer(bool acceptPassword, QObject *parent = nullptr)
+    explicit DemoQbittorrentServer(bool acceptPassword, QObject *parent = nullptr,
+                                   bool acceptBlank = false)
         : QObject(parent)
         , m_acceptPassword(acceptPassword)
+        , m_acceptBlank(acceptBlank)
     {
         connect(&m_server, &QTcpServer::newConnection, this, [this]() {
             while (m_server.hasPendingConnections())
@@ -63,7 +71,10 @@ public:
                             const QUrlQuery data(QString::fromUtf8(body));
                             const bool good = m_acceptPassword
                                 && data.queryItemValue(QStringLiteral("username")) == QStringLiteral("demo")
-                                && data.queryItemValue(QStringLiteral("password")) == QStringLiteral("demo-password");
+                                && (data.queryItemValue(QStringLiteral("password"))
+                                        == QStringLiteral("demo-password")
+                                    || (m_acceptBlank && data.queryItemValue(
+                                        QStringLiteral("password")).isEmpty()));
                             response = good ? QByteArrayLiteral("Ok.") : QByteArrayLiteral("Fails.");
                             if (good)
                                 cookieHeader = "Set-Cookie: QBT_SID=demo-session; Path=/; HttpOnly\r\n";
@@ -109,7 +120,72 @@ public:
 private:
     QTcpServer m_server;
     bool m_acceptPassword;
+    bool m_acceptBlank;
     int m_logouts = 0;
+};
+
+
+// Respond to the actual confirmation message when it is shown. A zero-delay
+// timer sent before modal activation is not reliable under offscreen Qt.
+class ConfirmProfileRemoval final : public QObject
+{
+public:
+    int prompts = 0;
+
+protected:
+    bool eventFilter(QObject *object, QEvent *event) override
+    {
+        if (event->type() == QEvent::Show)
+        {
+            auto *dialog = qobject_cast<QMessageBox *>(object);
+            if (dialog && dialog->windowTitle() == QStringLiteral("Remove server"))
+            {
+                ++prompts;
+                QTimer::singleShot(0, dialog, [dialog]() {
+                    if (auto *button = dialog->button(QMessageBox::Yes))
+                        button->click();
+                });
+            }
+        }
+        return QObject::eventFilter(object, event);
+    }
+};
+
+// Disposable secret-store stand-in for testing the *real* dialog-to-network
+// workflow without writing credentials into the OS keychain on CI machines.
+class DemoCredentialVault final : public Remote::CredentialVault
+{
+public:
+    using CredentialVault::keyFor;
+
+    bool available() const override { return true; }
+
+    void read(const Remote::ServerProfile &profile, ReadResult done) override
+    {
+        ++reads;
+        const QString key = keyFor(profile);
+        done(data.value(key), data.contains(key), {});
+    }
+
+    void write(const Remote::ServerProfile &profile, const QString &password,
+               Done done) override
+    {
+        ++writes;
+        data.insert(keyFor(profile), password);
+        done({});
+    }
+
+    void erase(const Remote::ServerProfile &profile, Done done) override
+    {
+        ++erases;
+        data.remove(keyFor(profile));
+        done({});
+    }
+
+    QHash<QString, QString> data;
+    int reads = 0;
+    int writes = 0;
+    int erases = 0;
 };
 
 class ConnectionWorkflowTest final : public QObject
@@ -117,9 +193,10 @@ class ConnectionWorkflowTest final : public QObject
     Q_OBJECT
 
 private:
-    void openConnectDialog(MainWindow &window, const QString &url)
+    void openConnectDialog(MainWindow &window, const QString &url,
+                           bool remember = false, bool enterPassword = true)
     {
-        QTimer::singleShot(0, [url]() {
+        QTimer::singleShot(0, [url, remember, enterPassword]() {
             auto *dialog = qobject_cast<ConnectionDialog *>(QApplication::activeModalWidget());
             if (!dialog)
                 return;
@@ -135,7 +212,11 @@ private:
             name->setText(QStringLiteral("Demo seedbox"));
             endpoint->setText(url);
             username->setText(QStringLiteral("demo"));
-            password->setText(QStringLiteral("demo-password"));
+            password->setText(enterPassword ? QStringLiteral("demo-password") : QString());
+            auto *rememberBox = dialog->findChild<QCheckBox *>(
+                QStringLiteral("rememberPassword"));
+            if (rememberBox && rememberBox->isEnabled())
+                rememberBox->setChecked(remember);
             QTest::mouseClick(connectButton, Qt::LeftButton);
         });
         if (auto *action = window.findChild<QAction *>(QStringLiteral("connectToServer")))
@@ -151,7 +232,8 @@ private slots:
         QTemporaryDir temp;
         QVERIFY(temp.isValid());
         QSettings settings(temp.filePath(QStringLiteral("profiles.ini")), QSettings::IniFormat);
-        MainWindow window(nullptr, &settings);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
         window.show();
         QTRY_VERIFY(window.isVisible());
 
@@ -166,6 +248,121 @@ private slots:
         QTRY_VERIFY(window.statusBar()->currentMessage()
             .contains(QStringLiteral("Not connected")));
         QTRY_COMPARE_WITH_TIMEOUT(server.logouts(), 1, 6000);
+        // Manual login must never launch any system-keyring operations.
+        QCOMPARE(vault.reads, 0);
+        QCOMPARE(vault.writes, 0);
+        QCOMPARE(vault.erases, 0);
+    }
+
+    void userCanRememberAndReusePasswordWithoutSavingPlaintext()
+    {
+        DemoQbittorrentServer server(true);
+        QVERIFY(server.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        const QString settingsPath = temp.filePath(QStringLiteral("profiles.ini"));
+        QSettings settings(settingsPath, QSettings::IniFormat);
+        DemoCredentialVault vault;
+
+        {
+            MainWindow first(nullptr, &settings, &vault);
+            first.show();
+            QTRY_VERIFY(first.isVisible());
+            openConnectDialog(first, server.url(), true, true);
+            QTRY_VERIFY_WITH_TIMEOUT(first.statusBar()->currentMessage()
+                .contains(QStringLiteral("Connected to Demo seedbox")), 6000);
+            QCOMPARE(vault.writes, 1);
+
+            settings.sync();
+            QFile stored(settingsPath);
+            QVERIFY(stored.open(QIODevice::ReadOnly));
+            QVERIFY(!stored.readAll().contains("demo-password"));
+        }
+
+        // A new app window with the same profile automatically retrieves the
+        // securely remembered password if its password field is left empty.
+        {
+            MainWindow next(nullptr, &settings, &vault);
+            next.show();
+            QTRY_VERIFY(next.isVisible());
+            openConnectDialog(next, server.url(), true, false);
+            QTRY_VERIFY_WITH_TIMEOUT(next.statusBar()->currentMessage()
+                .contains(QStringLiteral("Connected to Demo seedbox")), 6000);
+            QCOMPARE(vault.reads, 1);
+            QCOMPARE(vault.writes, 1);
+        }
+
+        // Opting out removes the remembered credential when the profile is saved.
+        {
+            MainWindow manual(nullptr, &settings, &vault);
+            manual.show();
+            QTRY_VERIFY(manual.isVisible());
+            openConnectDialog(manual, server.url(), false, true);
+            QTRY_VERIFY_WITH_TIMEOUT(manual.statusBar()->currentMessage()
+                .contains(QStringLiteral("Connected to Demo seedbox")), 6000);
+            QCOMPARE(vault.erases, 1);
+            QVERIFY(vault.data.isEmpty());
+        }
+    }
+
+    void removingSavedServerForgetsItsProtectedCredential()
+    {
+        DemoQbittorrentServer server(true);
+        QVERIFY(server.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("profiles.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+
+        {
+            MainWindow window(nullptr, &settings, &vault);
+            window.show();
+            QTRY_VERIFY(window.isVisible());
+            openConnectDialog(window, server.url(), true, true);
+            QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage()
+                .contains(QStringLiteral("Connected to Demo seedbox")), 6000);
+            QCOMPARE(vault.writes, 1);
+            QCOMPARE(vault.data.size(), 1);
+        }
+
+        // Remove a saved profile through the connection manager, including
+        // its keyring entry. It must not affect another server's credentials.
+        {
+            ConnectionDialog dialog(settings, nullptr, &vault);
+            dialog.show();
+            QTRY_VERIFY(dialog.isVisible());
+
+            auto *remove = dialog.findChild<QPushButton *>(
+                QStringLiteral("removeServer"));
+            QVERIFY(remove && remove->isEnabled());
+            ConfirmProfileRemoval confirm;
+            qApp->installEventFilter(&confirm);
+            QTest::mouseClick(remove, Qt::LeftButton);
+            qApp->removeEventFilter(&confirm);
+            QCOMPARE(confirm.prompts, 1);
+            QCOMPARE(vault.erases, 1);
+            QVERIFY(vault.data.isEmpty());
+        }
+    }
+
+    void userCanConnectWithBlankPasswordWhenServerPermitsIt()
+    {
+        DemoQbittorrentServer server(true, nullptr, true);
+        QVERIFY(server.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("profiles.ini")), QSettings::IniFormat);
+
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        QTRY_VERIFY(window.isVisible());
+        openConnectDialog(window, server.url(), false, false);
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage()
+            .contains(QStringLiteral("Connected to Demo seedbox")), 6000);
+        QCOMPARE(vault.reads, 0);
+        QCOMPARE(vault.writes, 0);
+        QCOMPARE(vault.erases, 0);
     }
 
     void userSeesAuthenticationFailure()
@@ -176,7 +373,8 @@ private slots:
         QTemporaryDir temp;
         QVERIFY(temp.isValid());
         QSettings settings(temp.filePath(QStringLiteral("profiles.ini")), QSettings::IniFormat);
-        MainWindow window(nullptr, &settings);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
         window.show();
         QTRY_VERIFY(window.isVisible());
 
@@ -184,6 +382,9 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage()
             .contains(QStringLiteral("Login failed")), 6000);
         QVERIFY(!window.windowTitle().contains(QStringLiteral("Demo seedbox")));
+        QCOMPARE(vault.reads, 0);
+        QCOMPARE(vault.writes, 0);
+        QCOMPARE(vault.erases, 0);
     }
 };
 

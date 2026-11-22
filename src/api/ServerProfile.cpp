@@ -44,7 +44,8 @@ QList<ServerProfile> ProfileStore::profiles() const
             m_settings.value(QStringLiteral("id")).toString(),
             m_settings.value(QStringLiteral("name")).toString(),
             m_settings.value(QStringLiteral("url")).toString(),
-            m_settings.value(QStringLiteral("username")).toString()
+            m_settings.value(QStringLiteral("username")).toString(),
+            m_settings.value(QStringLiteral("rememberPassword"), false).toBool()
         };
         if (!p.id.isEmpty() && !p.name.isEmpty() && ServerAddress::parse(p.url))
             result.append(p);
@@ -65,6 +66,7 @@ bool ProfileStore::write(const QList<ServerProfile> &profiles)
         m_settings.setValue(QStringLiteral("name"), p.name);
         m_settings.setValue(QStringLiteral("url"), p.url);
         m_settings.setValue(QStringLiteral("username"), p.username);
+        m_settings.setValue(QStringLiteral("rememberPassword"), p.rememberPassword);
     }
     m_settings.endArray();
     m_settings.sync();

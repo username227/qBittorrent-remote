@@ -14,6 +14,7 @@ struct ServerProfile
     QString name;
     QString url;
     QString username;
+    bool rememberPassword = false;
 };
 
 // Only nonsecret profile metadata is persisted. Passwords and session

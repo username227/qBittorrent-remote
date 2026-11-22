@@ -2,11 +2,13 @@
 #pragma once
 
 #include "api/ServerProfile.h"
+#include "api/CredentialVault.h"
 
 #include <QDialog>
 
 class QComboBox;
 class QLineEdit;
+class QCheckBox;
 class QPushButton;
 
 class ConnectionDialog final : public QDialog
@@ -14,10 +16,12 @@ class ConnectionDialog final : public QDialog
     Q_OBJECT
 
 public:
-    explicit ConnectionDialog(QSettings &settings, QWidget *parent = nullptr);
+    explicit ConnectionDialog(QSettings &settings, QWidget *parent = nullptr,
+                              Remote::CredentialVault *vault = nullptr);
 
     Remote::ServerProfile selectedProfile() const;
     QString password() const;
+    bool rememberPassword() const;
 
 private:
     void refreshProfiles(const QString &selectId = {});
@@ -27,12 +31,14 @@ private:
     void clearForNewProfile();
 
     Remote::ProfileStore m_store;
+    Remote::CredentialVault *m_vault = nullptr;
     Remote::ServerProfile m_selected;
     QComboBox *m_profiles = nullptr;
     QLineEdit *m_name = nullptr;
     QLineEdit *m_url = nullptr;
     QLineEdit *m_username = nullptr;
     QLineEdit *m_password = nullptr;
+    QCheckBox *m_remember = nullptr;
     QPushButton *m_removeButton = nullptr;
 };
 

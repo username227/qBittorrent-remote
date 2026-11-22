@@ -3,6 +3,7 @@
 
 #include <QMainWindow>
 #include <QSettings>
+#include "api/CredentialVault.h"
 
 #include <memory>
 
@@ -24,7 +25,8 @@ class MainWindow;
 class MainWindow final : public QMainWindow
 {
 public:
-    explicit MainWindow(QWidget *parent = nullptr, QSettings *settings = nullptr);
+    explicit MainWindow(QWidget *parent = nullptr, QSettings *settings = nullptr,
+                        Remote::CredentialVault *vault = nullptr);
     ~MainWindow() override;
 
 private:
@@ -37,6 +39,8 @@ private:
     FilterSidebar *m_filterSidebar = nullptr;
     QSettings m_defaultSettings;
     QSettings *m_settings = nullptr;
+    Remote::CredentialVault m_defaultVault;
+    Remote::CredentialVault *m_vault = nullptr;
     Remote::RemoteSession *m_session = nullptr;
     QAction *m_connectAction = nullptr;
     QAction *m_disconnectAction = nullptr;

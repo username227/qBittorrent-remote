@@ -62,10 +62,25 @@ filtering remain disabled until remote synchronization and management exist.
 ## Connect to a server (foundation)
 
 Use **File > Connect to Server...**. Enter a name, full HTTP(S) URL,
-username and password. **Save** stores only the name, URL and username in
-Qt's per-user settings; the password is never stored. **Connect** also
-saves/updates the profile and performs a real Web API login, followed by
+username and an optional password. **Save** stores nonsecret profile fields,
+including the optional Remember-password choice, in Qt's per-user settings.
+When built with QtKeychain, selecting **Remember password securely** saves
+the credential only through the operating system's protected store (GNOME
+Keyring/Secret Service, KWallet, Windows Credential Manager or macOS
+Keychain). The program never writes passwords into QSettings and never
+enables QtKeychain's plaintext fallback. If QtKeychain is not available at
+build time, the app still works and the Remember-password option is
+disabled. A blank password is valid for servers that permit passwordless
+access. **Connect** performs a real Web API login, followed by
 a request for the remote qBittorrent version and Web API version.
+
+On successful login, a newly entered password is saved only if Remember
+password is enabled. On the next manual connection, leaving the password
+field empty retrieves the protected password automatically. Unchecking
+Remember password forgets the old credential; removing a profile or
+changing its URL/username also invalidates the old credential. A locked
+or inaccessible keyring is reported as an error, not silently replaced
+with plaintext storage.
 
 The status bar reports the result. **File > Disconnect** releases the
 connection and attempts a nonblocking Web API logout.
@@ -102,6 +117,9 @@ the actual certificate approval UI, remembered trust, certificate changes
 and hostname mismatch rejection. Test-only certificates are generated at
 runtime and **no TLS private key is committed**. The test needs the
 `openssl` command-line utility available on `PATH`.
+A credential-storage CTest workflow exercises remembering, reuse, opting
+out and passwordless login through the actual application UI using a
+disposable fake vault; it never modifies your personal keyring.
 
 **Future multiple-instance behavior:** saved profiles and active sessions are
 distinct; there is no arbitrary connection limit. When remote connectivity
@@ -109,6 +127,14 @@ exists, zero active connections will show a connection screen, one active
 connection will use the regular interface without server tabs, and two or more
 active connections will show dynamic tabs. No premature welcome screen or
 placeholder server tabs are included in this GUI milestone.
+
+**Planned startup behavior (not implemented):** Profiles will have an
+independent **Connect automatically** option. On launch, connect to those
+profiles (not all saved profiles), using blank credentials when allowed or
+their protected stored passwords, and show the actual torrent view after
+synchronization. One connected server gets no tab strip; two or more get
+instance tabs. Startup failures must not prevent other saved servers from
+connecting. Do not mistake a saved profile for an active server.
 
 The remote API implementation will be developed in stages, aiming for full
 parity with server-exposed features. See [the Web API parity plan](docs/web-api-parity.md).
