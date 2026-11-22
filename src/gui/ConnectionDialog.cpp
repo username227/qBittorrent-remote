@@ -72,6 +72,10 @@ ConnectionDialog::ConnectionDialog(QSettings &settings, QWidget *parent,
         m_remember->setToolTip(tr("QtKeychain secure storage support was not built in."));
     form->addRow(QString(), m_remember);
 
+    m_autoConnect = new QCheckBox(tr("Connect automatically on startup"), this);
+    m_autoConnect->setObjectName(QStringLiteral("autoConnect"));
+    form->addRow(QString(), m_autoConnect);
+
     layout->addLayout(form);
     auto *note = new QLabel(
         tr("Passwords are never stored in profile settings. When Remember "
@@ -150,6 +154,7 @@ void ConnectionDialog::loadSelectedProfile()
                         ? QStringLiteral("admin") : m_selected.username);
     m_password->clear();
     m_remember->setChecked(m_selected.rememberPassword && m_remember->isEnabled());
+    m_autoConnect->setChecked(m_selected.autoConnect);
     m_removeButton->setEnabled(!m_selected.id.isEmpty());
 }
 
@@ -162,6 +167,7 @@ void ConnectionDialog::clearForNewProfile()
     m_username->setText(QStringLiteral("admin"));
     m_password->clear();
     m_remember->setChecked(false);
+    m_autoConnect->setChecked(false);
     m_removeButton->setEnabled(false);
     m_name->setFocus();
 }
@@ -180,7 +186,7 @@ bool ConnectionDialog::saveCurrentProfile()
 
     Remote::ServerProfile edited {
         m_selected.id, name, address->baseUrl().toString(),
-        m_username->text().trimmed(), rememberPassword()
+        m_username->text().trimmed(), rememberPassword(), m_autoConnect->isChecked()
     };
     const Remote::ServerProfile previous = m_selected;
     if (!m_store.save(edited))

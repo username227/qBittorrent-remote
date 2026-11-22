@@ -15,6 +15,8 @@
 #include <QPushButton>
 #include <QSettings>
 #include <QStatusBar>
+#include <QTabWidget>
+#include <QTabBar>
 #include <QTableView>
 #include <QAbstractItemModel>
 #include <QListWidget>
@@ -93,6 +95,7 @@ public:
                         }
                         else if (path.startsWith("/api/v2/sync/maindata?rid=") && hasCookie)
                         {
+                            ++m_syncRequests;
                             const QUrlQuery query(QString::fromLatin1(path.mid(path.indexOf('?') + 1)));
                             const int rid = query.queryItemValue(QStringLiteral("rid")).toInt();
                             if (!m_demoTorrents)
@@ -133,6 +136,7 @@ public:
     bool start() { return m_server.listen(QHostAddress::LocalHost, 0); }
     QString url() const { return QStringLiteral("http://127.0.0.1:%1").arg(m_server.serverPort()); }
     int logouts() const noexcept { return m_logouts; }
+    int syncRequests() const noexcept { return m_syncRequests; }
     void enableTorrentSyncDemo() { m_demoTorrents = true; }
 
 private:
@@ -141,6 +145,7 @@ private:
     bool m_acceptBlank;
     int m_logouts = 0;
     bool m_demoTorrents = false;
+    int m_syncRequests = 0;
 };
 
 
@@ -213,9 +218,11 @@ class ConnectionWorkflowTest final : public QObject
 
 private:
     void openConnectDialog(MainWindow &window, const QString &url,
-                           bool remember = false, bool enterPassword = true)
+                           bool remember = false, bool enterPassword = true,
+                           bool createNew = false,
+                           const QString &displayName = QStringLiteral("Demo seedbox"))
     {
-        QTimer::singleShot(0, [url, remember, enterPassword]() {
+        QTimer::singleShot(0, [url, remember, enterPassword, createNew, displayName]() {
             auto *dialog = qobject_cast<ConnectionDialog *>(QApplication::activeModalWidget());
             if (!dialog)
                 return;
@@ -228,7 +235,14 @@ private:
             if (!name || !endpoint || !username || !password || !connectButton)
                 return;
 
-            name->setText(QStringLiteral("Demo seedbox"));
+            if (createNew)
+            {
+                auto *newButton = dialog->findChild<QPushButton *>(QStringLiteral("newServer"));
+                if (!newButton)
+                    return;
+                QTest::mouseClick(newButton, Qt::LeftButton);
+            }
+            name->setText(displayName);
             endpoint->setText(url);
             username->setText(QStringLiteral("demo"));
             password->setText(enterPassword ? QStringLiteral("demo-password") : QString());
@@ -417,6 +431,115 @@ private slots:
                                   QStringLiteral("Updated Linux ISO"), 6000);
         QCOMPARE(table->model()->index(0, 2).data().toString().endsWith(QLatin1Char('%')), true);
         QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 0, 9000);
+    }
+
+    void startupConnectsOnlyOptedInProfilesUsingProtectedCredentials()
+    {
+        DemoQbittorrentServer selected(true);
+        DemoQbittorrentServer dormant(true);
+        QVERIFY(selected.start());
+        QVERIFY(dormant.start());
+
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("profiles.ini")), QSettings::IniFormat);
+        Remote::ProfileStore store(settings);
+        DemoCredentialVault vault;
+
+        Remote::ServerProfile automatic {
+            QString(), QStringLiteral("Automatic seedbox"), selected.url(),
+            QStringLiteral("demo"), true, true
+        };
+        Remote::ServerProfile manual {
+            QString(), QStringLiteral("Manual seedbox"), dormant.url(),
+            QStringLiteral("demo"), false, false
+        };
+        QVERIFY(store.save(automatic));
+        QVERIFY(store.save(manual));
+
+        vault.data.insert(vault.keyFor(automatic), QStringLiteral("demo-password"));
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        QTRY_VERIFY(window.isVisible());
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(
+            QStringLiteral("Connected to Automatic seedbox")), 6000);
+
+        auto *tabs = window.findChild<QTabWidget *>(QStringLiteral("serverTabs"));
+        QVERIFY(tabs);
+        QCOMPARE(tabs->count(), 1);
+        QVERIFY(!tabs->tabBar()->isVisible());
+        QCOMPARE(vault.reads, 1);
+        QCOMPARE(dormant.syncRequests(), 0);
+        QTRY_VERIFY_WITH_TIMEOUT(selected.syncRequests() > 0, 6000);
+
+        // No secret is stored in QSettings, and untouched profiles stay offline.
+        settings.sync();
+        QFile stored(temp.filePath(QStringLiteral("profiles.ini")));
+        QVERIFY(stored.open(QIODevice::ReadOnly));
+        QVERIFY(!stored.readAll().contains("demo-password"));
+    }
+
+    void simultaneousServersHaveIndependentTabsAndKeepPolling()
+    {
+        DemoQbittorrentServer first(true);
+        DemoQbittorrentServer second(true);
+        QVERIFY(first.start());
+        QVERIFY(second.start());
+
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("profiles.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        QTRY_VERIFY(window.isVisible());
+
+        openConnectDialog(window, first.url());
+        auto *tabs = window.findChild<QTabWidget *>(QStringLiteral("serverTabs"));
+        QVERIFY(tabs);
+        QTRY_COMPARE_WITH_TIMEOUT(tabs->count(), 1, 6000);
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(
+            QStringLiteral("Connected to Demo seedbox")), 6000);
+        QVERIFY2(!tabs->tabBar()->isVisible(), "Single server must not show a tab strip.");
+
+        openConnectDialog(window, second.url(), false, true, true,
+                          QStringLiteral("Red seedbox"));
+        QTRY_COMPARE_WITH_TIMEOUT(tabs->count(), 2, 6000);
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(
+            QStringLiteral("Connected to Red seedbox")), 6000);
+        QVERIFY2(tabs->tabBar()->isVisible(), "Two simultaneous servers need visible tabs.");
+
+        auto *firstTable = tabs->widget(0)->findChild<QTableView *>(QStringLiteral("torrentList"));
+        auto *secondTable = tabs->widget(1)->findChild<QTableView *>(QStringLiteral("torrentList"));
+        QVERIFY(firstTable && secondTable);
+        QVERIFY2(firstTable->model() != secondTable->model(),
+                 "Each server must own independent torrent models and cookie jars.");
+
+        auto *search = window.findChild<QLineEdit *>(QStringLiteral("torrentSearch"));
+        QVERIFY(search);
+        search->setText(QStringLiteral("red-isolated-filter"));
+        tabs->setCurrentIndex(0);
+        QCOMPARE(search->text(), QString());
+        tabs->setCurrentIndex(1);
+        QCOMPARE(search->text(), QStringLiteral("red-isolated-filter"));
+
+        const int priorFirst = first.syncRequests();
+        const int priorSecond = second.syncRequests();
+        QTRY_VERIFY_WITH_TIMEOUT(first.syncRequests() > priorFirst, 6000);
+        QTRY_VERIFY_WITH_TIMEOUT(second.syncRequests() > priorSecond, 6000);
+
+        auto *disconnect = window.findChild<QAction *>(QStringLiteral("disconnectServer"));
+        QVERIFY(disconnect);
+        disconnect->trigger();
+        QTRY_COMPARE(tabs->count(), 1);
+        QVERIFY2(!tabs->tabBar()->isVisible(), "Returning to one server hides tabs.");
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(
+            QStringLiteral("Connected to Demo seedbox")), 3000);
+        QTRY_COMPARE_WITH_TIMEOUT(second.logouts(), 1, 6000);
+
+        const int beforeLastPoll = first.syncRequests();
+        QTRY_VERIFY_WITH_TIMEOUT(first.syncRequests() > beforeLastPoll, 6000);
     }
 
     void userSeesAuthenticationFailure()

@@ -1,39 +1,32 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/MainWindow.h"
+#include "gui/ServerPane.h"
 #include "gui/FilterSidebar.h"
-#include "gui/TorrentModel.h"
 #include "gui/ConnectionDialog.h"
 #include "api/RemoteSession.h"
 #include "gui/upstream/hidabletabwidget.h"
-#include "gui/upstream/proptabbar.h"
 
 #include "ui_mainwindow.h"
 
-#include <QAbstractItemView>
-#include <QJsonObject>
-#include <QLocale>
 #include <QDialog>
 #include <QAction>
 #include <QComboBox>
-#include <QHeaderView>
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QLabel>
 #include <QLineEdit>
-#include <QMenu>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QPointer>
 #include <QSslCertificate>
 #include <QSizePolicy>
-#include <QSplitter>
-#include <QSortFilterProxyModel>
 #include <QStatusBar>
-#include <QStackedWidget>
-#include <QTableView>
 #include <QToolBar>
-#include <QVBoxLayout>
 #include <QWidget>
+#include <QSignalBlocker>
+#include <QTimer>
+#include <QTabWidget>
+#include <algorithm>
 
 namespace
 {
@@ -68,108 +61,54 @@ MainWindow::MainWindow(QWidget *parent, QSettings *settings,
     m_ui->statusBar->showMessage(tr("Not connected to a server"));
     m_ratesLabel = new QLabel(tr("D: —    U: —"), m_ui->statusBar);
     m_ui->statusBar->addPermanentWidget(m_ratesLabel);
+
+    // Opt-in startup connections run after the event loop begins. Each
+    // profile independently uses a blank-password login or secure vault
+    // retrieval; failures never prevent other selected profiles from opening.
+    QTimer::singleShot(0, this, [this]() {
+        Remote::ProfileStore store(*m_settings);
+        for (const auto &profile : store.profiles())
+        {
+            if (profile.autoConnect)
+                connectToProfile(profile, QString());
+        }
+    });
 }
 
 MainWindow::~MainWindow() = default;
 
+struct MainWindow::SessionContext
+{
+    Remote::ServerProfile profile;
+    Remote::RemoteSession *session = nullptr;
+    ServerPane *pane = nullptr;
+    QString version;
+    QString apiVersion;
+    bool connected = false;
+};
+
+void MainWindow::showEmptyPane()
+{
+    if (!m_emptyPane && m_views && m_connections.isEmpty())
+    {
+        m_emptyPane = new ServerPane(m_views);
+        m_views->addTab(m_emptyPane, upstreamIcon("folder-remote"), tr("Transfers"));
+        m_views->setCurrentWidget(m_emptyPane);
+    }
+}
+
 void MainWindow::setupMainArea()
 {
-    // No server tab bar yet. Later, connected instances will own dynamic
-    // views; one connection will still display without a tab strip.
-    auto *outer = new QSplitter(Qt::Horizontal, m_ui->centralWidget);
-    outer->setChildrenCollapsible(false);
+    m_views = new HidableTabWidget(m_ui->centralWidget);
+    m_views->setObjectName(QStringLiteral("serverTabs"));
+    m_ui->centralWidgetLayout->addWidget(m_views);
+    showEmptyPane();
 
-    // Actual qBittorrent-style filter sections with upstream icons.
-    m_filterSidebar = new FilterSidebar(outer);
-    m_filterSidebar->setMinimumWidth(185);
-    m_filterSidebar->setMaximumWidth(320);
+    connect(m_views, &QTabWidget::currentChanged, this,
+            [this](int) { updateActiveUi(); });
 
-    auto *vertical = new QSplitter(Qt::Vertical, outer);
-    vertical->setChildrenCollapsible(false);
-
-    auto *torrentTable = new QTableView(vertical);
-    torrentTable->setObjectName(QStringLiteral("torrentList"));
-    m_torrentModel = new TorrentModel(torrentTable);
-    m_torrentProxy = new QSortFilterProxyModel(torrentTable);
-    m_torrentProxy->setSourceModel(m_torrentModel);
-    m_torrentProxy->setSortRole(Qt::UserRole);
-    m_torrentProxy->setFilterCaseSensitivity(Qt::CaseInsensitive);
-    m_torrentProxy->setFilterKeyColumn(0);
-    torrentTable->setModel(m_torrentProxy);
-    torrentTable->setAlternatingRowColors(true);
-    torrentTable->setShowGrid(false);
-    torrentTable->setSelectionBehavior(QAbstractItemView::SelectRows);
-    torrentTable->setSelectionMode(QAbstractItemView::ExtendedSelection);
-    torrentTable->setSortingEnabled(true);
-    torrentTable->horizontalHeader()->setStretchLastSection(false);
-    torrentTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
-    torrentTable->verticalHeader()->hide();
-
-    for (int column = 13; column < m_torrentModel->columnCount(); ++column)
-        torrentTable->hideColumn(column);
-
-    auto *header = torrentTable->horizontalHeader();
-    header->setContextMenuPolicy(Qt::CustomContextMenu);
-    connect(header, &QWidget::customContextMenuRequested, torrentTable,
-        [torrentTable, header, this](const QPoint &position)
-        {
-            QMenu menu(header);
-            for (int column = 0; column < m_torrentModel->columnCount(); ++column)
-            {
-                QAction *action = menu.addAction(
-                    m_torrentModel->headerData(column, Qt::Horizontal).toString());
-                action->setCheckable(true);
-                action->setChecked(!torrentTable->isColumnHidden(column));
-                if (column == 0)
-                    action->setEnabled(false);
-                QObject::connect(action, &QAction::toggled, torrentTable,
-                    [torrentTable, column](bool checked)
-                    {
-                        torrentTable->setColumnHidden(column, !checked);
-                    });
-            }
-            menu.exec(header->mapToGlobal(position));
-        });
-
-    auto *details = new QWidget(vertical);
-    auto *detailsLayout = new QVBoxLayout(details);
-    detailsLayout->setContentsMargins(0, 0, 0, 0);
-    detailsLayout->setSpacing(0);
-
-    // Upstream qBittorrent properties-tab bar with right-aligned Speed.
-    auto *tabBar = new PropTabBar;
-    detailsLayout->addLayout(tabBar);
-
-    auto *propertyPages = new QStackedWidget(details);
-    for (int index = 0; index < 6; ++index)
-        propertyPages->addWidget(new QWidget(propertyPages));
-    detailsLayout->addWidget(propertyPages);
-
-    connect(tabBar, &PropTabBar::tabChanged,
-        propertyPages, &QStackedWidget::setCurrentIndex);
-    connect(tabBar, &PropTabBar::visibilityToggled,
-        propertyPages, &QWidget::setVisible);
-    tabBar->setCurrentIndex(0);
-
-    vertical->addWidget(torrentTable);
-    vertical->addWidget(details);
-    vertical->setStretchFactor(0, 3);
-    vertical->setStretchFactor(1, 0);
-    vertical->setSizes({650, 75});
-
-    outer->addWidget(m_filterSidebar);
-    outer->addWidget(vertical);
-    outer->setStretchFactor(0, 0);
-    outer->setStretchFactor(1, 1);
-
-    // qBittorrent's HidableTabWidget retains the pane border when the
-    // only view (Transfers) has its tab label hidden. The frame cleanly
-    // separates transfer controls from the status bar below.
-    auto *views = new HidableTabWidget(m_ui->centralWidget);
-    views->addTab(outer, upstreamIcon("folder-remote"), tr("Transfers"));
-    m_ui->centralWidgetLayout->addWidget(views);
-
-    // Original qBittorrent toolbar's right-aligned torrent filter.
+    // Keep the original, shared native qBittorrent toolbar search.
+    // Each server pane keeps its own search string and filter column.
     auto *filterPanel = new QWidget(m_ui->toolBar);
     auto *filterLayout = new QHBoxLayout(filterPanel);
     filterLayout->setContentsMargins(0, 0, 0, 0);
@@ -181,20 +120,24 @@ void MainWindow::setupMainArea()
     m_searchEdit->setFixedWidth(200);
     m_searchEdit->setEnabled(false);
     filterLayout->addWidget(m_searchEdit);
-
     filterLayout->addWidget(new QLabel(tr("Filter by:"), filterPanel));
+
     m_searchBy = new QComboBox(filterPanel);
     m_searchBy->addItems({tr("Name"), tr("Save Path"), tr("Info Hash v1")});
     m_searchBy->setEnabled(false);
     filterLayout->addWidget(m_searchBy);
-    connect(m_searchEdit, &QLineEdit::textChanged, m_torrentProxy,
-            &QSortFilterProxyModel::setFilterFixedString);
+
+    connect(m_searchEdit, &QLineEdit::textChanged, this,
+            [this](const QString &text) {
+                if (auto *pane = activePane())
+                    pane->setSearchTerm(text);
+            });
     connect(m_searchBy, &QComboBox::currentIndexChanged, this,
             [this](int index) {
-                m_torrentProxy->setFilterKeyColumn(index == 1 ? 25 : index == 2 ? 32 : 0);
+                if (auto *pane = activePane())
+                    pane->setSearchColumn(index);
             });
 
-    // The original lock action is the final toolbar action.
     filterPanel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     m_ui->toolBar->insertWidget(m_ui->actionLock, filterPanel);
 }
@@ -284,8 +227,11 @@ void MainWindow::setupActions()
         m_ui->toolBar, &QWidget::setVisible);
     connect(m_ui->actionShowStatusbar, &QAction::toggled,
         m_ui->statusBar, &QWidget::setVisible);
-    connect(m_ui->actionShowFiltersSidebar, &QAction::toggled,
-        m_filterSidebar, &QWidget::setVisible);
+    connect(m_ui->actionShowFiltersSidebar, &QAction::toggled, this,
+        [this](bool visible) {
+            if (auto *pane = activePane())
+                pane->sidebar()->setVisible(visible);
+        });
 
     connect(m_connectAction, &QAction::triggered, this, [this]() {
         ConnectionDialog dialog(*m_settings, this, m_vault);
@@ -303,22 +249,129 @@ void MainWindow::setupActions()
     });
 }
 
+std::shared_ptr<MainWindow::SessionContext> MainWindow::activeConnection() const
+{
+    if (!m_views)
+        return {};
+    QWidget *current = m_views->currentWidget();
+    for (const auto &connection : m_connections)
+    {
+        if (connection->pane == current)
+            return connection;
+    }
+    return {};
+}
+
+bool MainWindow::containsConnection(const std::shared_ptr<SessionContext> &connection) const
+{
+    return m_connections.contains(connection);
+}
+
+ServerPane *MainWindow::activePane() const
+{
+    return m_views ? static_cast<ServerPane *>(m_views->currentWidget()) : nullptr;
+}
+
+void MainWindow::updateActiveUi()
+{
+    if (!m_searchEdit || !m_searchBy || !m_disconnectAction || !m_ratesLabel)
+        return;
+
+    const auto connection = activeConnection();
+    auto *pane = activePane();
+
+    // Tab switches must not overwrite another server's search filter.
+    {
+        QSignalBlocker searchBlocker(m_searchEdit);
+        QSignalBlocker fieldBlocker(m_searchBy);
+        m_searchEdit->setText(pane ? pane->searchTerm() : QString());
+        m_searchBy->setCurrentIndex(pane ? pane->searchColumn() : 0);
+    }
+
+    const bool ready = connection && connection->connected;
+    m_searchEdit->setEnabled(ready);
+    m_searchBy->setEnabled(ready);
+    m_disconnectAction->setEnabled(static_cast<bool>(connection));
+    if (pane)
+        pane->sidebar()->setVisible(m_ui->actionShowFiltersSidebar->isChecked());
+    m_ratesLabel->setText(connection && ready && pane
+                          ? pane->rateText() : tr("D: —    U: —"));
+
+    if (!connection)
+    {
+        setWindowTitle(tr("qBittorrent Remote"));
+        m_ui->statusBar->showMessage(tr("Not connected to a server"));
+    }
+    else
+    {
+        setWindowTitle(tr("qBittorrent Remote — %1").arg(connection->profile.name));
+        if (ready)
+            m_ui->statusBar->showMessage(
+                tr("Connected to %1 — qBittorrent %2 (Web API %3).")
+                    .arg(connection->profile.name, connection->version, connection->apiVersion));
+        else
+            m_ui->statusBar->showMessage(
+                tr("Connecting to %1...").arg(connection->profile.name));
+    }
+}
+
+void MainWindow::removeConnection(const std::shared_ptr<SessionContext> &connection)
+{
+    if (!containsConnection(connection))
+        return;
+
+    const int tabIndex = m_views->indexOf(connection->pane);
+    if (tabIndex >= 0)
+        m_views->removeTab(tabIndex);
+
+    m_connections.removeOne(connection);
+    if (connection->session)
+        connection->session->disconnectFromServer();
+    if (connection->pane)
+        connection->pane->deleteLater();
+
+    showEmptyPane();
+    updateActiveUi();
+}
+
 void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
                                   const QString &password)
 {
-    // One visible connection during the foundation milestone. Each session
-    // has its own network manager; server-tab management comes in a later PR.
-    if (m_session)
-        m_session->disconnectFromServer();
+    // Re-selecting a live profile switches to its tab; edited endpoints must
+    // reconnect instead of retaining credentials/cookies from an old URL.
+    for (const auto &existing : m_connections)
+    {
+        if (existing->profile.id != profile.id)
+            continue;
+        if (existing->profile.url == profile.url
+            && existing->profile.username == profile.username)
+        {
+            m_views->setCurrentWidget(existing->pane);
+            return;
+        }
+        removeConnection(existing);
+        break;
+    }
 
-    m_session = new Remote::RemoteSession(this);
-    auto *session = m_session;
-    m_torrentModel->clear();
-    m_filterSidebar->updateCounts(m_torrentModel->torrents());
-    m_serverState = {};
-    m_ratesLabel->setText(tr("D: —    U: —"));
-    m_searchEdit->setEnabled(false);
-    m_searchBy->setEnabled(false);
+    if (m_emptyPane)
+    {
+        const int index = m_views->indexOf(m_emptyPane);
+        if (index >= 0)
+            m_views->removeTab(index);
+        delete m_emptyPane;
+        m_emptyPane = nullptr;
+    }
+
+    auto connection = std::make_shared<SessionContext>();
+    connection->profile = profile;
+    connection->pane = new ServerPane(m_views);
+    connection->session = new Remote::RemoteSession(this);
+    auto *session = connection->session;
+    m_connections.append(connection);
+
+    m_views->addTab(connection->pane, upstreamIcon("folder-remote"), profile.name);
+    m_views->setCurrentWidget(connection->pane);
+    updateActiveUi();
 
     // Inspect the actual server certificate before permitting TLS errors.
     // This callback runs synchronously from QNetworkReply::sslErrors.
@@ -388,32 +441,19 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
             return true;
         });
 
-    m_currentServerName = profile.name;
-    m_disconnectAction->setEnabled(true);
-    m_ui->statusBar->showMessage(tr("Connecting to %1...").arg(profile.name));
-
     connect(session, &Remote::RemoteSession::connected, this,
-        [this, session, profile, password](
-            const QString &version, const QString &apiVersion) {
-            if (m_session != session)
+        [this, connection, profile, password](const QString &version,
+                                               const QString &apiVersion) {
+            if (!containsConnection(connection))
                 return;
-            m_ui->statusBar->showMessage(
-                tr("Connected to %1 — qBittorrent %2 (Web API %3).")
-                    .arg(m_currentServerName, version, apiVersion));
-            setWindowTitle(tr("qBittorrent Remote — %1").arg(m_currentServerName));
-            m_searchEdit->setEnabled(true);
-            m_searchBy->setEnabled(true);
+            connection->connected = true;
+            connection->version = version;
+            connection->apiVersion = apiVersion;
+            if (activeConnection() == connection)
+                updateActiveUi();
 
-            if (!m_vault->available())
-                return;
-
-            // Opting out and profile removal erase credentials in the
-            // profile editor. Never launch a second asynchronous deletion
-            // on every successful passwordless or manual login.
-            if (profile.rememberPassword && !password.isEmpty())
+            if (profile.rememberPassword && !password.isEmpty() && m_vault->available())
             {
-                // Only store a newly supplied password *after* successful
-                // server authentication. A blank password needs no secret.
                 QPointer<MainWindow> safeWindow(this);
                 m_vault->write(profile, password, [safeWindow](const QString &error) {
                     if (safeWindow && !error.isEmpty())
@@ -425,93 +465,56 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
             }
         });
     connect(session, &Remote::RemoteSession::mainDataUpdated, this,
-        [this, session](const QJsonObject &payload) {
-            if (m_session == session)
-                applyServerUpdate(payload);
+        [this, connection](const QJsonObject &payload) {
+            if (!containsConnection(connection))
+                return;
+            connection->pane->applySync(payload);
+            if (activeConnection() == connection)
+                m_ratesLabel->setText(connection->pane->rateText());
         });
     connect(session, &Remote::RemoteSession::failed, this,
-        [this, session](const QString &reason) {
-            if (m_session != session)
+        [this, connection](const QString &reason) {
+            if (!containsConnection(connection))
                 return;
-            m_ui->statusBar->showMessage(
-                tr("Connection to %1 failed: %2").arg(m_currentServerName, reason));
-            m_disconnectAction->setEnabled(false);
-            m_searchEdit->setEnabled(false);
-            m_searchBy->setEnabled(false);
+            const bool wasActive = activeConnection() == connection;
+            const QString name = connection->profile.name;
+            removeConnection(connection);
+            if (wasActive)
+                m_ui->statusBar->showMessage(
+                    tr("Connection to %1 failed: %2").arg(name, reason));
         });
+
     if (profile.rememberPassword && password.isEmpty() && m_vault->available())
     {
-        // An empty input means 'use remembered password if one exists',
-        // otherwise send an empty password for servers permitting it.
         QPointer<MainWindow> safeWindow(this);
-        QPointer<Remote::RemoteSession> safeSession(session);
+        std::weak_ptr<SessionContext> weakConnection(connection);
         m_vault->read(profile,
-            [safeWindow, safeSession, profile](const QString &savedPassword,
-                                               bool found, const QString &error) {
-                // A keyring operation can outlive a closed window or a
-                // disconnected session; never use stale QObject pointers.
-                if (!safeWindow || !safeSession
-                    || safeWindow->m_session != safeSession)
+            [safeWindow, weakConnection, profile](const QString &savedPassword,
+                                                   bool found, const QString &error) {
+                const auto live = weakConnection.lock();
+                if (!safeWindow || !live || !safeWindow->containsConnection(live))
                     return;
                 if (!error.isEmpty())
                 {
-                    safeWindow->m_disconnectAction->setEnabled(false);
-                    safeWindow->m_ui->statusBar->showMessage(
-                        QObject::tr("Could not read saved password: %1").arg(error));
+                    const bool wasActive = safeWindow->activeConnection() == live;
+                    const QString name = live->profile.name;
+                    safeWindow->removeConnection(live);
+                    if (wasActive)
+                        safeWindow->m_ui->statusBar->showMessage(
+                            QObject::tr("Connection to %1 failed: Could not read saved password: %2")
+                                .arg(name, error));
                     return;
                 }
-                safeSession->connectToServer(profile,
-                                             found ? savedPassword : QString());
+                live->session->connectToServer(profile,
+                                                found ? savedPassword : QString());
             });
     }
     else
         session->connectToServer(profile, password);
 }
 
-void MainWindow::applyServerUpdate(const QJsonObject &payload)
-{
-    if (payload.value(QStringLiteral("full_update")).toBool())
-        m_serverState = {};
-
-    const QJsonObject changes = payload.value(QStringLiteral("server_state")).toObject();
-    for (auto it = changes.constBegin(); it != changes.constEnd(); ++it)
-        m_serverState.insert(it.key(), it.value());
-
-    m_torrentModel->applySync(payload);
-    m_filterSidebar->updateCounts(m_torrentModel->torrents());
-
-    const double down = m_serverState.value(QStringLiteral("dl_info_speed")).toDouble(-1);
-    const double up = m_serverState.value(QStringLiteral("up_info_speed")).toDouble(-1);
-    const auto rate = [](double bytes) {
-        if (bytes < 0)
-            return QStringLiteral("—");
-        const char *units[] = {"B/s", "KiB/s", "MiB/s", "GiB/s"};
-        int unit = 0;
-        while (bytes >= 1024 && unit < 3)
-        {
-            bytes /= 1024;
-            ++unit;
-        }
-        return QLocale().toString(bytes, 'f', unit == 0 ? 0 : 1)
-            + QLatin1Char(' ') + QString::fromLatin1(units[unit]);
-    };
-    m_ratesLabel->setText(tr("D: %1    U: %2").arg(rate(down), rate(up)));
-}
-
 void MainWindow::disconnectCurrentServer()
 {
-    if (!m_session)
-        return;
-    m_session->disconnectFromServer();
-    m_session = nullptr;
-    m_torrentModel->clear();
-    m_filterSidebar->updateCounts(m_torrentModel->torrents());
-    m_serverState = {};
-    m_ratesLabel->setText(tr("D: —    U: —"));
-    m_searchEdit->setEnabled(false);
-    m_searchBy->setEnabled(false);
-    m_currentServerName.clear();
-    m_disconnectAction->setEnabled(false);
-    setWindowTitle(tr("qBittorrent Remote"));
-    m_ui->statusBar->showMessage(tr("Not connected to a server"));
+    if (auto connection = activeConnection())
+        removeConnection(connection);
 }

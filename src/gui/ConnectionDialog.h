@@ -39,6 +39,7 @@ private:
     QLineEdit *m_username = nullptr;
     QLineEdit *m_password = nullptr;
     QCheckBox *m_remember = nullptr;
+    QCheckBox *m_autoConnect = nullptr;
     QPushButton *m_removeButton = nullptr;
 };
 

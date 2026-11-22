@@ -15,6 +15,8 @@ struct ServerProfile
     QString url;
     QString username;
     bool rememberPassword = false;
+    // Opt-in only: saved servers do not connect automatically by default.
+    bool autoConnect = false;
 };
 
 // Only nonsecret profile metadata is persisted. Passwords and session

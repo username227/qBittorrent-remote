@@ -1,33 +1,24 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "api/CredentialVault.h"
+#include "api/ServerProfile.h"
+
+#include <QList>
 #include <QMainWindow>
 #include <QSettings>
-#include <QJsonObject>
-#include "api/CredentialVault.h"
-
 #include <memory>
 
-class FilterSidebar;
 class QAction;
 class QLabel;
 class QLineEdit;
 class QComboBox;
-class QSortFilterProxyModel;
-class TorrentModel;
-namespace Remote
-{
-class RemoteSession;
-struct ServerProfile;
-}
+class HidableTabWidget;
+class ServerPane;
 
-namespace Ui
-{
-class MainWindow;
-}
+namespace Remote { class RemoteSession; }
+namespace Ui { class MainWindow; }
 
-// Qt Designer's upstream qBittorrent main-window chrome is intentionally
-// kept separate from our remote-specific central content and future sessions.
 class MainWindow final : public QMainWindow
 {
 public:
@@ -36,26 +27,31 @@ public:
     ~MainWindow() override;
 
 private:
+    struct SessionContext;
+
     void setupMainArea();
     void setupActions();
+    void showEmptyPane();
     void connectToProfile(const Remote::ServerProfile &profile, const QString &password);
     void disconnectCurrentServer();
-    void applyServerUpdate(const QJsonObject &payload);
+    void removeConnection(const std::shared_ptr<SessionContext> &connection);
+    bool containsConnection(const std::shared_ptr<SessionContext> &connection) const;
+    std::shared_ptr<SessionContext> activeConnection() const;
+    ServerPane *activePane() const;
+    void updateActiveUi();
 
     std::unique_ptr<Ui::MainWindow> m_ui;
-    FilterSidebar *m_filterSidebar = nullptr;
-    TorrentModel *m_torrentModel = nullptr;
-    QSortFilterProxyModel *m_torrentProxy = nullptr;
-    QLabel *m_ratesLabel = nullptr;
-    QLineEdit *m_searchEdit = nullptr;
-    QComboBox *m_searchBy = nullptr;
-    QJsonObject m_serverState;
     QSettings m_defaultSettings;
     QSettings *m_settings = nullptr;
     Remote::CredentialVault m_defaultVault;
     Remote::CredentialVault *m_vault = nullptr;
-    Remote::RemoteSession *m_session = nullptr;
+
+    HidableTabWidget *m_views = nullptr;
+    ServerPane *m_emptyPane = nullptr;
+    QList<std::shared_ptr<SessionContext>> m_connections;
+    QLabel *m_ratesLabel = nullptr;
+    QLineEdit *m_searchEdit = nullptr;
+    QComboBox *m_searchBy = nullptr;
     QAction *m_connectAction = nullptr;
     QAction *m_disconnectAction = nullptr;
-    QString m_currentServerName;
 };
