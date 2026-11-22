@@ -54,7 +54,7 @@ bool mappingEditor(QWidget *parent, Remote::PathMapping &mapping)
     auto *form = new QFormLayout;
     auto *local = new QLineEdit(&dialog);
     local->setObjectName(QStringLiteral("mappingLocalPath"));
-    local->setText(mapping.localRoot);
+    local->setText(QDir::toNativeSeparators(mapping.localRoot));
     local->setPlaceholderText(QObject::tr("Locally mounted NAS directory"));
 
     auto *localRow = new QWidget(&dialog);
@@ -68,7 +68,7 @@ bool mappingEditor(QWidget *parent, Remote::PathMapping &mapping)
         const QString dir = QFileDialog::getExistingDirectory(
             &dialog, QObject::tr("Choose locally mounted NAS directory"), local->text());
         if (!dir.isEmpty())
-            local->setText(dir);
+            local->setText(QDir::toNativeSeparators(dir));
     });
     form->addRow(QObject::tr("Local directory:"), localRow);
 
@@ -93,7 +93,8 @@ bool mappingEditor(QWidget *parent, Remote::PathMapping &mapping)
                      &dialog, &QDialog::reject);
     QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog,
                      [&dialog, local, remote, &mapping]() {
-        const Remote::PathMapping candidate {local->text(), remote->text()};
+        const Remote::PathMapping candidate {
+            QDir::fromNativeSeparators(local->text()), remote->text()};
         QString error;
         if (!Remote::PathMappingStore::validate({candidate}, &error))
         {
@@ -497,7 +498,7 @@ QList<Remote::PathMapping> RemotePreferencesDialog::tableMappings() const
     QList<Remote::PathMapping> entries;
     for (int i = 0; i < m_mappings->rowCount(); ++i)
         entries.append({
-            m_mappings->item(i, 0)->text(),
+            QDir::fromNativeSeparators(m_mappings->item(i, 0)->text()),
             m_mappings->item(i, 1)->text()
         });
     return entries;
@@ -512,7 +513,8 @@ void RemotePreferencesDialog::displayMappings(
     {
         const int row = m_mappings->rowCount();
         m_mappings->insertRow(row);
-        m_mappings->setItem(row, 0, new QTableWidgetItem(entry.localRoot));
+        m_mappings->setItem(row, 0, new QTableWidgetItem(
+            QDir::toNativeSeparators(entry.localRoot)));
         m_mappings->setItem(row, 1, new QTableWidgetItem(entry.remoteRoot));
     }
     m_mappings->clearSelection();

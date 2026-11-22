@@ -11,7 +11,17 @@ namespace
 {
 QString localPath(const QString &path)
 {
-    return QDir::cleanPath(QDir::fromNativeSeparators(path.trimmed()));
+    const QString normalized = QDir::fromNativeSeparators(path.trimmed());
+#ifdef Q_OS_WIN
+    // The old code saved Z:/ as Z:. Unlike Z:/, Z: is drive-relative
+    // (the current directory on Z:), so repair that legacy form as well.
+    if (normalized.size() >= 2 && normalized.at(0).isLetter()
+        && normalized.at(1) == QLatin1Char(':')
+        && (normalized.size() == 2
+            || (normalized.size() == 3 && normalized.at(2) == QLatin1Char('/'))))
+        return normalized.left(2) + QLatin1Char('/');
+#endif
+    return QDir::cleanPath(normalized);
 }
 QString remotePath(const QString &path)
 {
@@ -19,6 +29,12 @@ QString remotePath(const QString &path)
 }
 QString stripTrailingSlash(QString path)
 {
+    // A Windows drive root is Z:/, never Z:. The trailing separator
+    // makes it absolute and must be preserved through validation/storage.
+    if (path.size() == 3 && path.at(0).isLetter()
+        && path.at(1) == QLatin1Char(':')
+        && path.at(2) == QLatin1Char('/'))
+        return path;
     while (path.endsWith(QLatin1Char('/')) && path.size() > 1)
         path.chop(1);
     return path;
@@ -27,11 +43,18 @@ bool matchesRoot(const QString &path, const QString &root)
 {
     return path == root
         || (root != QLatin1String("/")
-            && path.startsWith(root + QLatin1Char('/')));
+            && path.startsWith(root.endsWith(QLatin1Char('/'))
+                ? root : root + QLatin1Char('/')));
 }
 QString joinedPath(const QString &root, const QString &suffix)
 {
-    return QDir::cleanPath(root + suffix);
+    // A drive root already ends with '/'; ordinary directory roots do not.
+    // Join either kind without losing or duplicating the path boundary.
+    const QString tail = suffix.startsWith(QLatin1Char('/'))
+        ? suffix.mid(1) : suffix;
+    return QDir::cleanPath(root
+        + (root.endsWith(QLatin1Char('/')) ? QString() : QStringLiteral("/"))
+        + tail);
 }
 }
 
@@ -63,7 +86,7 @@ QList<PathMapping> PathMappingStore::mappings(const QString &profileId) const
         const QString local = row.value(QStringLiteral("local")).toString();
         const QString remote = row.value(QStringLiteral("remote")).toString();
         if (!local.isEmpty() && !remote.isEmpty())
-            entries.append({local, remote});
+            entries.append({localPath(local), remote});
     }
     return entries;
 }

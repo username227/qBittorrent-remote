@@ -90,6 +90,113 @@ private slots:
         QCOMPARE(maps.mappings(QStringLiteral("server-b")).size(), 1);
     }
 
+#ifdef Q_OS_WIN
+    void windowsDriveRootMappingPreservesAbsoluteRoot()
+    {
+        QTemporaryDir tmp;
+        QVERIFY(tmp.isValid());
+        QSettings settings(tmp.filePath(QStringLiteral("windows.ini")),
+                           QSettings::IniFormat);
+        Remote::PathMappingStore maps(settings);
+        const QString profile = QStringLiteral("Windows drive root");
+        const QString remote = QStringLiteral("/share/CACHEDEV1_DATA/Public");
+        QString error;
+        QVERIFY2(maps.replace(profile, {{QStringLiteral("Z:\\"), remote}}, &error),
+                 qPrintable(error));
+        const auto saved = maps.mappings(profile);
+        QCOMPARE(saved.size(), 1);
+        QCOMPARE(saved.first().localRoot, QStringLiteral("Z:/"));
+        QCOMPARE(Remote::PathMappingStore::toRemote(
+            QStringLiteral("Z:/"), saved), remote);
+        QCOMPARE(Remote::PathMappingStore::toRemote(
+            QStringLiteral("Z:/Music/track.flac"), saved),
+            remote + QStringLiteral("/Music/track.flac"));
+        QCOMPARE(Remote::PathMappingStore::toLocal(
+            remote, saved), QStringLiteral("Z:/"));
+        QCOMPARE(Remote::PathMappingStore::toLocal(
+            remote + QStringLiteral("/Music/track.flac"), saved),
+            QStringLiteral("Z:/Music/track.flac"));
+
+        // Older builds stored the root as drive-relative "Z:". The next
+        // read should repair it without requiring the user to re-enter it.
+        QString key;
+        for (const QString &candidate : settings.allKeys())
+            if (candidate.startsWith(QStringLiteral("RemotePaths/Servers/")))
+                key = candidate;
+        QVERIFY(!key.isEmpty());
+        QVariantList rows = settings.value(key).toList();
+        QCOMPARE(rows.size(), 1);
+        QVariantMap row = rows.at(0).toMap();
+        row[QStringLiteral("local")] = QStringLiteral("Z:");
+        rows[0] = row;
+        settings.setValue(key, rows);
+
+        const auto repaired = maps.mappings(profile);
+        QCOMPARE(repaired.size(), 1);
+        QCOMPARE(repaired.first().localRoot, QStringLiteral("Z:/"));
+        QCOMPARE(Remote::PathMappingStore::toRemote(
+            QStringLiteral("Z:/Music"), repaired),
+            remote + QStringLiteral("/Music"));
+
+        // Replacing the repaired record persists the absolute root again.
+        QVERIFY2(maps.replace(profile, repaired, &error), qPrintable(error));
+        QCOMPARE(settings.value(key).toList().first().toMap()
+                     .value(QStringLiteral("local")).toString(),
+                 QStringLiteral("Z:/"));
+    }
+
+    void windowsPreferencesDisplayLocalDriveRootNatively()
+    {
+        QTemporaryDir tmp;
+        QVERIFY(tmp.isValid());
+        QSettings settings(tmp.filePath(QStringLiteral("windows-ui.ini")),
+                           QSettings::IniFormat);
+        Remote::ProfileStore profiles(settings);
+        Remote::ServerProfile server{
+            {}, QStringLiteral("Windows NAS"), QStringLiteral("http://127.0.0.1:6364"),
+            QStringLiteral("demo"), false, false
+        };
+        QVERIFY(profiles.save(server));
+        Remote::PathMappingStore maps(settings);
+        QString error;
+        QVERIFY2(maps.replace(server.id, {{
+            QStringLiteral("Z:/"), QStringLiteral("/share/CACHEDEV1_DATA/Public")}}, &error),
+            qPrintable(error));
+        RemotePreferencesDialog dialog(settings, server.id);
+        auto *table = dialog.findChild<QTableWidget *>(
+            QStringLiteral("remotePathMappings"));
+        QVERIFY(table);
+        QCOMPARE(table->rowCount(), 1);
+        QCOMPARE(table->item(0, 0)->text(), QStringLiteral("Z:\\"));
+        QCOMPARE(table->item(0, 1)->text(),
+                 QStringLiteral("/share/CACHEDEV1_DATA/Public"));
+        // The Edit dialog must display a native drive root too.
+        table->selectRow(0);
+        bool opened = false;
+        QTimer::singleShot(0, [&]() {
+            auto *modal = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+            if (!modal || modal->objectName() != QStringLiteral("mappingEditor"))
+                return;
+            auto *local = modal->findChild<QLineEdit *>(
+                QStringLiteral("mappingLocalPath"));
+            auto *remote = modal->findChild<QLineEdit *>(
+                QStringLiteral("mappingRemotePath"));
+            if (local && remote)
+            {
+                opened = true;
+                QCOMPARE(local->text(), QStringLiteral("Z:\\"));
+                QCOMPARE(remote->text(), QStringLiteral("/share/CACHEDEV1_DATA/Public"));
+            }
+            modal->reject();
+        });
+        auto *edit = dialog.findChild<QPushButton *>(
+            QStringLiteral("editPathMapping"));
+        QVERIFY(edit && edit->isEnabled());
+        edit->click();
+        QVERIFY(opened);
+    }
+#endif
+
     void changingSavedServerEndpointInvalidatesOldFilesystemMappings()
     {
         QTemporaryDir tmp;
@@ -337,6 +444,10 @@ private slots:
             QCOMPARE(selector->currentData().toString(), first.id);
             addViaDialog(dialog);
             QCOMPARE(table->rowCount(), 1);
+            // Local paths follow the client's native style; remote paths
+            // remain POSIX on Windows as well as Linux.
+            QCOMPARE(table->item(0, 0)->text(), QDir::toNativeSeparators(local));
+            QCOMPARE(table->item(0, 1)->text(), remote);
             QVERIFY(apply->isEnabled());
             selector->setCurrentIndex(selector->findData(second.id));
             QCOMPARE(table->rowCount(), 0);
