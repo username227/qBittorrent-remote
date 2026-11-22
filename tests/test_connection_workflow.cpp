@@ -776,6 +776,17 @@ private slots:
         QVERIFY(table && table->model());
         QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 2, 6000);
 
+        // Selection and sorting must never temporarily embolden headings.
+        auto *torrentHeader = table->horizontalHeader();
+        QVERIFY(torrentHeader);
+        QVERIFY(!torrentHeader->highlightSections());
+        table->selectRow(0);
+        QCoreApplication::processEvents();
+        QVERIFY(!torrentHeader->highlightSections());
+        table->sortByColumn(1, Qt::DescendingOrder);
+        QCoreApplication::processEvents();
+        QVERIFY(!torrentHeader->highlightSections());
+
         // This is the real native Qt painter installed in the live remote
         // table, not a plain-text-only progress cell or a mock item model.
         auto *delegate = qobject_cast<TransferListDelegate *>(table->itemDelegate());
@@ -907,6 +918,7 @@ private slots:
         QVERIFY(trackers);
         QTRY_COMPARE_WITH_TIMEOUT(trackers->topLevelItemCount(), 4, 6000);
         QCOMPARE(trackers->columnCount(), 11);
+        QVERIFY(!trackers->header()->highlightSections());
         QCOMPARE(trackers->headerItem()->text(0), QStringLiteral("URL/Announce Endpoint"));
         QCOMPARE(trackers->headerItem()->text(1), QStringLiteral("Tier"));
         QCOMPARE(trackers->headerItem()->text(2), QStringLiteral("BT Protocol"));
@@ -968,6 +980,7 @@ private slots:
         auto *peers = window.findChild<QTableWidget *>(QStringLiteral("torrentPeers"));
         QVERIFY(peers);
         QTRY_COMPARE_WITH_TIMEOUT(peers->rowCount(), 1, 6000);
+        QVERIFY(!peers->horizontalHeader()->highlightSections());
         QCOMPARE(peers->item(0, 2)->text(), QStringLiteral("qBittorrent"));
 
         tabBar->setCurrentIndex(3);
@@ -982,6 +995,7 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(contents->topLevelItemCount() > 0, 6000);
         QTRY_VERIFY_WITH_TIMEOUT(contents->topLevelItem(0)->childCount() == 2, 6000);
         QCOMPARE(contents->columnCount(), 6);
+        QVERIFY(!contents->header()->highlightSections());
         QCOMPARE(contents->headerItem()->text(3), QStringLiteral("Download Priority"));
         auto *rootFolder = contents->topLevelItem(0);
         auto *fileOne = rootFolder->child(0);

@@ -62,6 +62,9 @@ ServerPane::ServerPane(QWidget *parent) : QWidget(parent)
     m_table->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_table->setSortingEnabled(true);
     m_table->horizontalHeader()->setStretchLastSection(false);
+    // Qt highlights selected columns by default; some desktop styles
+    // render that state as intermittent bold header labels.
+    m_table->horizontalHeader()->setHighlightSections(false);
     m_table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
     m_table->verticalHeader()->hide();
 

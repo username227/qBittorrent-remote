@@ -73,3 +73,52 @@ Upstream project: https://github.com/qbittorrent/qBittorrent
 
 All reused components retain their original copyright and GPL license terms.
 See the root LICENSE. The remote application is GPL-3.0-or-later.
+
+
+## Preferences UI parity (native desktop)
+
+- `src/gui/optionsdialog.ui` is adapted from qBittorrent's GPL-3.0-or-later
+  `src/gui/optionsdialog.ui` at upstream master commit 133c6f24fd5bf6c2c432dc10a0cf2c2f2523425e.
+  It preserves all nine original vertical navigation sections, scrollable
+  option pages, the native layout and Apply/Cancel/OK controls.
+- The original Advanced page is dynamically populated upstream; this
+  adaptation retains all 92 named Advanced rows in a native two-column,
+  scrollable, noneditable table with disabled-value placeholders.
+- `FileSystemPathLineEdit` (which depends on the local torrent engine) was
+  replaced by stock `QLineEdit` while keeping its labels, properties and
+  layout. Unsupported options are displayed but disabled individually;
+  their hardcoded native defaults must **not** be mistaken for settings
+  read from a remote qBittorrent server.
+- One remote-client-only **first** section, **Servers**, contains the
+  saved-server selector and its local-to-remote directory mappings together.
+  The remaining nine native categories keep their upstream order. Vertical
+  navigation tiles resize to the inherited application font without
+  clipping; on smaller screens a native vertical scrollbar remains available.
+  Legacy Preferences/LastPage settings are migrated to the new tab order.
+  This supports QNAP-mounted directories without pretending that the
+  Web API has a remote filesystem browser.
+- Save/cancel state is local QSettings, with no password, cookie or per-torrent
+  data stored. Future server settings must come from the selected session's
+  authenticated `/api/v2/app/preferences` and be modified only through
+  supported `/api/v2/app/setPreferences` keys.
+
+- Consistent table header typography: disable Qt's selection-dependent
+  `QHeaderView::highlightSections` on the torrent list and native Trackers,
+  Peers, Content and Preferences grids. Sorting, resize and column layout
+  persistence are unchanged; global font settings remain intact.
+- Dialog position: initial Preferences placement (and the one-time migration
+  from PR #9's earlier offset) is centered over the main window and clamped
+  to the available screen. Later manual positions and sizes are preserved in
+  QSettings, subject to Wayland compositor positioning rules.
+
+- Visual fidelity: upstream `OptionsDialog` gives each IconMode navigation
+  entry a full-width `QListWidgetItem::setSizeHint(QSize(INT_MAX, h))`.
+  Use the same pattern, not a fixed-width grid or text alignment alone,
+  to center both the icon and label at any sidebar width. The dialog
+  remains freely resizable, and warning text lives on tooltips instead of
+  occupying a permanent extra footer row. Preserve the user-selected
+  Qt font without forcing smaller text for parity.
+
+- Native preferences Speed icon: use upstream `speedometer.svg` with a
+  modest 28 × 28 icon size. Preserve existing icon-and-label centering
+  and inherited Qt fonts; do not change sidebar row spacing separately.

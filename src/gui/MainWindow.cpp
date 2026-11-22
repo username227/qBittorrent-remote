@@ -4,6 +4,7 @@
 #include "gui/TorrentModel.h"
 #include "gui/FilterSidebar.h"
 #include "gui/ConnectionDialog.h"
+#include "gui/RemotePreferencesDialog.h"
 #include "api/RemoteSession.h"
 #include "gui/upstream/hidabletabwidget.h"
 
@@ -11,6 +12,8 @@
 
 #include <QDialog>
 #include <QCloseEvent>
+#include <QGuiApplication>
+#include <QScreen>
 #include <QApplication>
 #include <QFont>
 #include <QFontInfo>
@@ -307,6 +310,18 @@ void MainWindow::setupActions()
     m_ui->menuOptions->clear();
     m_ui->menuOptions->addAction(m_ui->actionCreateTorrent);
     m_ui->menuOptions->addAction(m_ui->actionOptions);
+    m_ui->actionOptions->setEnabled(true);
+
+    // Native vertical Preferences pages are always reachable, even without
+    // a currently connected server: local path mappings belong to saved
+    // server profiles and never require an authenticated session.
+    connect(m_ui->actionOptions, &QAction::triggered, this, [this]() {
+        const auto server = activeConnection();
+        const QString profileId = server ? server->profile.id : m_preferredServerId;
+        RemotePreferencesDialog dialog(*m_settings, profileId, this);
+        trackDialogGeometry(dialog, QStringLiteral("Preferences"));
+        dialog.exec();
+    });
 
     m_ui->menuHelp->clear();
     m_ui->menuHelp->addAction(m_ui->actionAbout);
@@ -858,9 +873,37 @@ void MainWindow::trackDialogGeometry(QDialog &dialog, const QString &name)
     const QByteArray saved = m_settings->value(key).toByteArray();
     if (!saved.isEmpty())
         dialog.restoreGeometry(saved);
-    // Store geometry only; never the contents of dialogs or credentials.
-    connect(&dialog, &QDialog::finished, &dialog, [this, &dialog, key](int) {
+
+    // Native qBittorrent centers Preferences over the parent window.
+    // Migrate the old offset Preferences placement once, then preserve
+    // the position the user deliberately chooses on subsequent launches.
+    const QString centeredKey = key + QStringLiteral("/CenterVersion");
+    const bool migratePreferences = name == QLatin1String("Preferences")
+        && m_settings->value(centeredKey, 0).toInt() < 1;
+    if (saved.isEmpty() || migratePreferences)
+    {
+        const QPoint parentCenter = mapToGlobal(rect().center());
+        QPoint topLeft = parentCenter - QPoint(dialog.width() / 2, dialog.height() / 2);
+        const QScreen *screen = QGuiApplication::screenAt(parentCenter);
+        if (!screen)
+            screen = QGuiApplication::primaryScreen();
+        if (screen)
+        {
+            const QRect available = screen->availableGeometry();
+            const int maxX = qMax(available.left(), available.right() + 1 - dialog.width());
+            const int maxY = qMax(available.top(), available.bottom() + 1 - dialog.height());
+            topLeft.setX(qBound(available.left(), topLeft.x(), maxX));
+            topLeft.setY(qBound(available.top(), topLeft.y(), maxY));
+        }
+        dialog.move(topLeft);
+    }
+
+    // Only geometry is stored, never credentials or dialog contents.
+    connect(&dialog, &QDialog::finished, &dialog,
+            [this, &dialog, key, centeredKey, name](int) {
         m_settings->setValue(key, dialog.saveGeometry());
+        if (name == QLatin1String("Preferences"))
+            m_settings->setValue(centeredKey, 1);
     });
 }
 

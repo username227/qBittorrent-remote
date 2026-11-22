@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "api/ServerProfile.h"
 #include "api/ServerAddress.h"
+#include "api/PathMappingStore.h"
 
 #include <QCryptographicHash>
 #include <QRegularExpression>
@@ -106,6 +107,10 @@ bool ProfileStore::save(ServerProfile &profile)
     if (addressChanged)
     {
         m_settings.remove(QStringLiteral("certificateTrust/") + trustKey(profile.id));
+        // Mapping roots describe a *particular server's* filesystem.
+        // Redirecting this saved profile to a new endpoint must never
+        // inherit paths belonging to the previous NAS.
+        PathMappingStore(m_settings).remove(profile.id);
         m_settings.sync();
         return m_settings.status() == QSettings::NoError;
     }
@@ -123,6 +128,7 @@ bool ProfileStore::remove(const QString &id)
             if (!write(items))
                 return false;
             m_settings.remove(QStringLiteral("certificateTrust/") + trustKey(id));
+            PathMappingStore(m_settings).remove(id);
             m_settings.sync();
             return m_settings.status() == QSettings::NoError;
         }

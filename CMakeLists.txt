@@ -48,6 +48,8 @@ add_library(qbittorrent_remote_core STATIC
     src/api/ServerAddress.h
     src/api/ServerProfile.cpp
     src/api/ServerProfile.h
+    src/api/PathMappingStore.cpp
+    src/api/PathMappingStore.h
     src/api/RemoteSession.cpp
     src/api/RemoteSession.h
     src/api/CredentialVault.cpp
@@ -69,6 +71,9 @@ add_library(qbittorrent_remote_gui STATIC
     src/gui/MainWindow.h
     src/gui/ConnectionDialog.cpp
     src/gui/ConnectionDialog.h
+    src/gui/RemotePreferencesDialog.cpp
+    src/gui/RemotePreferencesDialog.h
+    src/gui/optionsdialog.ui
     src/gui/FilterSidebar.cpp
     src/gui/FilterSidebar.h
     src/gui/TorrentModel.cpp
@@ -140,6 +145,15 @@ if(BUILD_TESTING)
     )
     add_test(NAME server_profile_management COMMAND test_profile_workflow)
 
+    add_executable(test_preferences_workflow
+        tests/test_preferences_workflow.cpp
+    )
+    target_link_libraries(test_preferences_workflow PRIVATE
+        qbittorrent_remote_gui
+        Qt6::Test
+    )
+    add_test(NAME native_preferences_and_remote_paths COMMAND test_preferences_workflow)
+
     add_executable(test_connection_workflow
         tests/test_connection_workflow.cpp
     )
@@ -165,7 +179,7 @@ if(BUILD_TESTING)
     set_tests_properties(certificate_trust_workflow PROPERTIES TIMEOUT 90)
 
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        set_tests_properties(window_open_and_quit server_profile_management remote_connection_workflow certificate_trust_workflow PROPERTIES
+        set_tests_properties(window_open_and_quit server_profile_management native_preferences_and_remote_paths remote_connection_workflow certificate_trust_workflow PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         )
     endif()

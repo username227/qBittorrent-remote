@@ -381,6 +381,7 @@ TorrentDetailsWidget::TorrentDetailsWidget(QWidget *parent)
     m_trackers->setItemsExpandable(true);
     m_trackers->setSortingEnabled(false); // native pseudo-tracker rows stay first
     m_trackers->header()->setStretchLastSection(false);
+    m_trackers->header()->setHighlightSections(false);
     m_trackers->header()->setSectionsMovable(true);
     m_trackers->setColumnWidth(0, 285);
     m_trackers->setColumnWidth(1, 52);
@@ -416,6 +417,7 @@ TorrentDetailsWidget::TorrentDetailsWidget(QWidget *parent)
     m_peers->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_peers->setAlternatingRowColors(true);
     m_peers->horizontalHeader()->setStretchLastSection(true);
+    m_peers->horizontalHeader()->setHighlightSections(false);
     m_ui->vBoxLayoutPeerPage->addWidget(m_peers);
 
     m_ui->listWebSeeds->setObjectName(QStringLiteral("torrentWebSeeds"));
@@ -428,6 +430,7 @@ TorrentDetailsWidget::TorrentDetailsWidget(QWidget *parent)
         tr("Download Priority"), tr("Remaining"), tr("Availability")
     });
     tree->header()->setStretchLastSection(false);
+    tree->header()->setHighlightSections(false);
     tree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
     tree->setColumnWidth(1, 105);
     tree->setColumnWidth(2, 112);
