@@ -3,8 +3,11 @@
 #include "gui/FilterSidebar.h"
 #include "gui/TorrentModel.h"
 
+#include <QHeaderView>
 #include <QJsonDocument>
 #include <QListWidget>
+#include <QSettings>
+#include <QTemporaryDir>
 #include <QSortFilterProxyModel>
 #include <QTableView>
 #include <QtTest/QtTest>
@@ -55,6 +58,70 @@ class SidebarWorkflowTest final : public QObject
 {
     Q_OBJECT
 private slots:
+    void torrentNameColumnIsResizableAndRemembersUserWidth()
+    {
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        QSettings settings(temporary.filePath(QStringLiteral("layout.ini")),
+                           QSettings::IniFormat);
+        const QString profile = QStringLiteral("windows-name-width");
+
+        ServerPane pane;
+        pane.resize(1350, 700);
+        pane.show();
+        auto *header = pane.table()->horizontalHeader();
+        QCOMPARE(header->sectionResizeMode(0), QHeaderView::Interactive);
+        QVERIFY2(header->sectionSize(0) >= 320,
+                 "Name must not collapse when other columns fill the window.");
+
+        // A real manual section width must survive per-server layout restore.
+        header->resizeSection(0, 450);
+        QCOMPARE(header->sectionSize(0), 450);
+        pane.saveLayout(settings, profile);
+
+        ServerPane restored;
+        restored.resize(1350, 700);
+        restored.restoreLayout(settings, profile);
+        auto *restoredHeader = restored.table()->horizontalHeader();
+        QCOMPARE(restoredHeader->sectionResizeMode(0), QHeaderView::Interactive);
+        QCOMPARE(restoredHeader->sectionSize(0), 450);
+
+        // Users may intentionally shrink the column after this fix.
+        restoredHeader->resizeSection(0, 170);
+        restored.saveLayout(settings, profile);
+        ServerPane reopened;
+        reopened.restoreLayout(settings, profile);
+        QCOMPARE(reopened.table()->horizontalHeader()->sectionResizeMode(0),
+                 QHeaderView::Interactive);
+        QCOMPARE(reopened.table()->horizontalHeader()->sectionSize(0), 170);
+    }
+
+    void narrowLegacyTorrentNameColumnMigratesOnce()
+    {
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        QSettings settings(temporary.filePath(QStringLiteral("old.ini")),
+                           QSettings::IniFormat);
+        const QString profile = QStringLiteral("pre-fix-layout");
+
+        ServerPane legacy;
+        auto *oldHeader = legacy.table()->horizontalHeader();
+        oldHeader->resizeSection(0, 38);
+        legacy.saveLayout(settings, profile);
+        // Simulate header data written by the old, stretch-based release,
+        // before the one-time migration flag was introduced.
+        for (const QString &key : settings.allKeys())
+            if (key.endsWith(QStringLiteral("/nameColumnResizableV1")))
+                settings.remove(key);
+
+        ServerPane migrated;
+        migrated.restoreLayout(settings, profile);
+        auto *newHeader = migrated.table()->horizontalHeader();
+        QCOMPARE(newHeader->sectionResizeMode(0), QHeaderView::Interactive);
+        QVERIFY2(newHeader->sectionSize(0) >= 320,
+                 "Legacy Windows layout should receive a usable Name width.");
+    }
+
     void combineStatusCategoryTagTrackerAndSearch();
     void independentServerTabsKeepIndependentSidebarStates();
 };
