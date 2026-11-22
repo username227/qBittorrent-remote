@@ -185,6 +185,17 @@ if(BUILD_TESTING)
     )
     add_test(NAME combined_sidebar_filter_workflow COMMAND test_sidebar_filter_workflow)
 
+    # Interactive Content, Peers and Trackers sorting must work in the actual
+    # Qt detail widgets, including hierarchy and numeric raw-value ordering.
+    add_executable(test_details_sorting_workflow
+        tests/test_details_sorting_workflow.cpp
+    )
+    target_link_libraries(test_details_sorting_workflow PRIVATE
+        qbittorrent_remote_gui
+        Qt6::Test
+    )
+    add_test(NAME detail_tables_sorting_workflow COMMAND test_details_sorting_workflow)
+
     add_executable(test_connection_workflow
         tests/test_connection_workflow.cpp
     )
@@ -213,7 +224,7 @@ if(BUILD_TESTING)
     set_tests_properties(certificate_trust_workflow PROPERTIES TIMEOUT 90)
 
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        set_tests_properties(window_open_and_quit server_profile_management native_preferences_and_remote_paths native_add_torrent_and_path_mapping combined_sidebar_filter_workflow remote_connection_workflow certificate_trust_workflow PROPERTIES
+        set_tests_properties(window_open_and_quit server_profile_management native_preferences_and_remote_paths native_add_torrent_and_path_mapping combined_sidebar_filter_workflow detail_tables_sorting_workflow remote_connection_workflow certificate_trust_workflow PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         )
     endif()
