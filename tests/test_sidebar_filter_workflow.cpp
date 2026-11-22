@@ -111,6 +111,61 @@ private slots:
         }
     }
 
+    void restoringLegacyHeaderLayoutCannotReenableBoldSelectionHeadings()
+    {
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        QSettings settings(temporary.filePath(QStringLiteral("layout.ini")),
+                           QSettings::IniFormat);
+        const QString profile = QStringLiteral("legacy-highlighted-transfer-header");
+
+        // Simulate real persisted layouts created while highlighting was on.
+        // QHeaderView::saveState() stores highlightSections, not just widths.
+        ServerPane legacy;
+        auto *legacyHeader = legacy.table()->horizontalHeader();
+        legacyHeader->setHighlightSections(true);
+        QVERIFY(legacyHeader->highlightSections());
+        legacyHeader->resizeSection(0, 430);
+        legacy.saveLayout(settings, profile);
+
+        ServerPane restored;
+        restored.resize(1300, 700);
+        restored.restoreLayout(settings, profile);
+        auto *header = restored.table()->horizontalHeader();
+        QVERIFY2(!header->highlightSections(),
+                 "Restoring the saved header must not reactivate bold selected-column labels.");
+        QCOMPARE(header->font().weight(), QFont::Normal);
+        QCOMPARE(header->sectionSize(0), 430);
+
+        restored.applySync(payload(R"JSON({
+          "full_update": true,
+          "torrents": {
+            "aa": {"name":"Album 2","state":"uploading","progress":1},
+            "bb": {"name":"Album 10","state":"uploading","progress":1}
+          }
+        })JSON"));
+        restored.show();
+        auto *table = restored.table();
+        QTRY_VERIFY(table->isVisible());
+
+        const QRect selectedRect = table->visualRect(table->model()->index(0, 0));
+        QVERIFY(selectedRect.isValid());
+        QTest::mouseClick(table->viewport(), Qt::LeftButton,
+                          Qt::NoModifier, selectedRect.center());
+        QVERIFY(table->selectionModel()->hasSelection());
+        table->sortByColumn(0, Qt::DescendingOrder);
+        QVERIFY(!header->highlightSections());
+        QCOMPARE(header->font().weight(), QFont::Normal);
+
+        // Re-saving must migrate the old preference so reconnects/restarts
+        // cannot resurrect the original problem, even for this same profile.
+        restored.saveLayout(settings, profile);
+        ServerPane reopened;
+        reopened.restoreLayout(settings, profile);
+        QVERIFY(!reopened.table()->horizontalHeader()->highlightSections());
+        QCOMPARE(reopened.table()->horizontalHeader()->sectionSize(0), 430);
+    }
+
     void torrentNameColumnIsResizableAndRemembersUserWidth()
     {
         QTemporaryDir temporary;

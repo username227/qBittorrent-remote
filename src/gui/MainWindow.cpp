@@ -843,6 +843,27 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
             session, &Remote::RemoteSession::requestTorrentDetails);
     connect(connection->pane, &ServerPane::filePriorityRequested,
             session, &Remote::RemoteSession::setFilePriority);
+    connect(connection->pane, &ServerPane::torrentContextActionRequested,
+            this, [this, connection](ServerPane::TorrentContextAction action) {
+        // Context-menu operations must never cross remote server tabs.
+        // Reuse the existing toolbar QAction implementations, especially
+        // the destructive Remove confirmation and delete-files checkbox.
+        if (!containsConnection(connection) || !connection->connected
+            || activeConnection() != connection)
+            return;
+        switch (action)
+        {
+        case ServerPane::TorrentContextAction::Start:
+            m_ui->actionStart->trigger();
+            break;
+        case ServerPane::TorrentContextAction::Stop:
+            m_ui->actionStop->trigger();
+            break;
+        case ServerPane::TorrentContextAction::Remove:
+            m_ui->actionDelete->trigger();
+            break;
+        }
+    });
     connect(session, &Remote::RemoteSession::torrentDetailsReceived,
             connection->pane, &ServerPane::displayTorrentDetails);
     connect(session, &Remote::RemoteSession::torrentDetailsFailed,

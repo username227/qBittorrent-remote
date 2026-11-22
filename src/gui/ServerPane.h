@@ -24,6 +24,9 @@ class ServerPane final : public QWidget
 {
     Q_OBJECT
 public:
+    enum class TorrentContextAction { Start, Stop, Remove };
+    Q_ENUM(TorrentContextAction)
+
     explicit ServerPane(QWidget *parent = nullptr);
 
     FilterSidebar *sidebar() const noexcept { return m_sidebar; }
@@ -45,10 +48,14 @@ public:
     void restoreLayout(QSettings &settings, const QString &profileId);
 
 signals:
+    // Native torrent-list context menu delegates existing actions to the
+    // owning MainWindow; the active server and its selection remain isolated.
+    void torrentContextActionRequested(TorrentContextAction action);
     void torrentDetailsRequested(const QString &hash, int tab);
     void filePriorityRequested(const QString &hash, const QList<int> &ids, int priority);
 
 private:
+    void showTorrentContextMenu(const QPoint &position);
     void updateSelectedTorrent();
     void requestSelectedDetails();
     FilterSidebar *m_sidebar = nullptr;
