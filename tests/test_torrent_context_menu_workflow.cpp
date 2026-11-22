@@ -65,6 +65,7 @@ private slots:
     void rightClickSelectedRowPreservesMultipleSelectionAndCopiesNames();
     void mixedSelectionOffersBothStartAndStop();
     void forceActionsRespectTorrentStatesAndSelections();
+    void queueSubmenuReflectsRemoteQueueingAndIncompleteSelections();
     void copySubmenuCopiesRealRemoteFieldsAndDisablesUnavailableMetadata();
 };
 
@@ -469,6 +470,141 @@ void TorrentContextMenuWorkflowTest::forceActionsRespectTorrentStatesAndSelectio
         Qt::DirectConnection, Q_ARG(QPoint, table->visualRect(forced).center())));
     QVERIFY2(error.isEmpty(), qPrintable(error));
     QCOMPARE(selection->selectedRows().size(), 3);
+}
+
+
+void TorrentContextMenuWorkflowTest::queueSubmenuReflectsRemoteQueueingAndIncompleteSelections()
+{
+    // Verify the actual native right-click menu against the server's sync
+    // information, not a hand-built QAction or an internal helper function.
+    ServerPane pane;
+    pane.resize(1200, 740);
+    pane.applySync(payload(R"JSON({
+      "full_update":true,
+      "server_state":{"queueing":true},
+      "torrents":{
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa":{
+          "name":"Incomplete album","state":"downloading","progress":0.4
+        },
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb":{
+          "name":"Completed album","state":"uploading","progress":1
+        }
+      }
+    })JSON"));
+    pane.show();
+    auto *table = pane.table();
+    QList<ServerPane::TorrentContextAction> triggered;
+    connect(&pane, &ServerPane::torrentContextActionRequested, &pane,
+        [&](ServerPane::TorrentContextAction action) { triggered.append(action); });
+
+    const auto checkMenu = [&](const QModelIndex &index,
+                               bool expectedVisible, const char *invoke = nullptr) {
+        QString error;
+        QTimer::singleShot(0, &pane, [&]() {
+            auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+            if (!menu)
+            {
+                error = QStringLiteral("Right click did not open the native torrent menu");
+                return;
+            }
+            QAction *queueEntry = actionNamed(menu, QStringLiteral("torrentContextQueueMenu"));
+            QMenu *queue = queueEntry ? queueEntry->menu() : nullptr;
+            if (static_cast<bool>(queue) != expectedVisible)
+                error = QStringLiteral("Queue menu visibility disagrees with remote server state");
+            if (queue && error.isEmpty())
+            {
+                if (queue->objectName() != QLatin1String("torrentContextQueueMenu")
+                    || queue->title() != QStringLiteral("Queue"))
+                    error = QStringLiteral("Not the original native Queue submenu");
+
+                const QHash<QString, QString> expectedIcons {
+                    {QStringLiteral("torrentContextQueueMenu"), QStringLiteral("queued")},
+                    {QStringLiteral("torrentQueueTop"), QStringLiteral("go-top")},
+                    {QStringLiteral("torrentQueueUp"), QStringLiteral("go-up")},
+                    {QStringLiteral("torrentQueueDown"), QStringLiteral("go-down")},
+                    {QStringLiteral("torrentQueueBottom"), QStringLiteral("go-bottom")}
+                };
+                const QStringList expectedActions {
+                    QStringLiteral("torrentQueueTop"), QStringLiteral("torrentQueueUp"),
+                    QStringLiteral("torrentQueueDown"), QStringLiteral("torrentQueueBottom")
+                };
+                if (queue->actions().size() != 4)
+                    error = QStringLiteral("Queue submenu does not contain exactly four commands");
+                for (int i = 0; i < expectedActions.size() && error.isEmpty(); ++i)
+                {
+                    QAction *a = actionNamed(queue, expectedActions.at(i));
+                    const QString expectedIcon = expectedIcons.value(expectedActions.at(i));
+                    const QPixmap actual = a ? a->icon().pixmap(16, 16) : QPixmap();
+                    const QPixmap expected = QIcon(QStringLiteral(":/icons/") + expectedIcon
+                        + QStringLiteral(".svg")).pixmap(16, 16);
+                    if (!a || queue->actions().at(i) != a || !a->isEnabled()
+                        || !a->isIconVisibleInMenu() || actual.isNull()
+                        || expected.isNull() || actual.toImage() != expected.toImage())
+                        error = QStringLiteral("Incorrect Queue action, order or native icon: ")
+                            + expectedActions.at(i);
+                }
+                const QPixmap queueIcon = queueEntry->icon().pixmap(16, 16);
+                const QPixmap expectedQueueIcon = QIcon(
+                    QStringLiteral(":/icons/queued.svg")).pixmap(16, 16);
+                if (queueIcon.isNull() || expectedQueueIcon.isNull()
+                    || queueIcon.toImage() != expectedQueueIcon.toImage()
+                    || !queueEntry->isIconVisibleInMenu())
+                    error = QStringLiteral("Incorrect Queue submenu icon");
+
+                if (invoke && error.isEmpty())
+                {
+                    QAction *action = actionNamed(queue, QString::fromLatin1(invoke));
+                    if (action) action->trigger();
+                }
+            }
+            menu->close();
+        });
+        if (!QMetaObject::invokeMethod(table, "customContextMenuRequested",
+                Qt::DirectConnection, Q_ARG(QPoint, table->visualRect(index).center())))
+            error = QStringLiteral("Could not open torrent context menu");
+        return error;
+    };
+
+    const QModelIndex incomplete = indexForName(table, QStringLiteral("Incomplete album"));
+    const QModelIndex completed = indexForName(table, QStringLiteral("Completed album"));
+    QVERIFY(incomplete.isValid());
+    QVERIFY(completed.isValid());
+
+    table->selectionModel()->select(incomplete,
+        QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    QVERIFY2(checkMenu(incomplete, true, "torrentQueueTop").isEmpty(),
+        "Enabled server with an incomplete torrent must expose working Queue actions.");
+    QCOMPARE(triggered.size(), 1);
+    QCOMPARE(triggered.last(), ServerPane::TorrentContextAction::QueueTop);
+
+    table->selectionModel()->select(completed,
+        QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    const QString completedError = checkMenu(completed, false);
+    QVERIFY2(completedError.isEmpty(), qPrintable(completedError));
+
+    // A mixed selection must preserve both rows and offer queue operations.
+    table->selectionModel()->select(incomplete,
+        QItemSelectionModel::Select | QItemSelectionModel::Rows);
+    QCOMPARE(table->selectionModel()->selectedRows().size(), 2);
+    const QString mixedError = checkMenu(completed, true, "torrentQueueBottom");
+    QVERIFY2(mixedError.isEmpty(), qPrintable(mixedError));
+    QCOMPARE(triggered.last(), ServerPane::TorrentContextAction::QueueBottom);
+    QCOMPARE(table->selectionModel()->selectedRows().size(), 2);
+
+    // A live /sync/maindata change must hide the menu immediately, without
+    // changing selection, reconnecting or restarting the application.
+    pane.applySync(payload(R"JSON({
+      "full_update":false,"server_state":{"queueing":false}
+    })JSON"));
+    const QString disabledError = checkMenu(completed, false);
+    QVERIFY2(disabledError.isEmpty(), qPrintable(disabledError));
+
+    pane.applySync(payload(R"JSON({
+      "full_update":false,"server_state":{"queueing":true}
+    })JSON"));
+    const QString enabledAgainError = checkMenu(completed, true, "torrentQueueUp");
+    QVERIFY2(enabledAgainError.isEmpty(), qPrintable(enabledAgainError));
+    QCOMPARE(triggered.last(), ServerPane::TorrentContextAction::QueueUp);
 }
 
 void TorrentContextMenuWorkflowTest::copySubmenuCopiesRealRemoteFieldsAndDisablesUnavailableMetadata()
