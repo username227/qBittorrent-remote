@@ -263,6 +263,22 @@ public:
     bool operator<(const QTreeWidgetItem &other) const override
     {
         const int column = treeWidget() ? treeWidget()->sortColumn() : 0;
+        if (column == 0)
+        {
+            // DHT, PeX and LSD are fixed native pseudo-trackers, not
+            // ordinary announce URLs. Preserve their traditional order
+            // instead of alphabetically moving LSD ahead of PeX.
+            const auto pseudoRank = [](const QString &name) {
+                if (name == QLatin1String("** [DHT] **")) return 0;
+                if (name == QLatin1String("** [PeX] **")) return 1;
+                if (name == QLatin1String("** [LSD] **")) return 2;
+                return 3;
+            };
+            const int leftRank = pseudoRank(text(0));
+            const int rightRank = pseudoRank(other.text(0));
+            if (leftRank != rightRank)
+                return leftRank < rightRank;
+        }
         if (column > 0)
         {
             const QVariant left = data(column, Qt::UserRole);
