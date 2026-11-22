@@ -16,6 +16,7 @@
 #include <QFile>
 #include <QFontInfo>
 #include <QHash>
+#include <QHeaderView>
 #include <QHostAddress>
 #include <QLineEdit>
 #include <QMessageBox>
@@ -382,6 +383,132 @@ private:
     }
 
 private slots:
+    void mainWindowAndEachServerRestoreNativeLayout()
+    {
+        DemoQbittorrentServer alpha(true, nullptr, true);
+        DemoQbittorrentServer beta(true, nullptr, true);
+        QVERIFY(alpha.start());
+        QVERIFY(beta.start());
+
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("layout.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        Remote::ProfileStore store(settings);
+        Remote::ServerProfile first {
+            QStringLiteral("alpha-profile"), QStringLiteral("Alpha"),
+            alpha.url(), QStringLiteral("demo"), false, true
+        };
+        Remote::ServerProfile second {
+            QStringLiteral("beta-profile"), QStringLiteral("Beta"),
+            beta.url(), QStringLiteral("demo"), false, true
+        };
+        QVERIFY(store.save(first));
+        QVERIFY(store.save(second));
+        QByteArray originalGeometry;
+
+        {
+            MainWindow window(nullptr, &settings, &vault);
+            window.show();
+            QTRY_VERIFY(window.isVisible());
+            auto *servers = window.findChild<QTabWidget *>(QStringLiteral("serverTabs"));
+            QVERIFY(servers);
+            QTRY_COMPARE_WITH_TIMEOUT(servers->count(), 2, 8000);
+
+            servers->setCurrentIndex(1);
+            QVERIFY(qobject_cast<ServerPane *>(servers->currentWidget()));
+            QCOMPARE(servers->tabText(servers->currentIndex()), QStringLiteral("Beta"));
+            auto *pane = qobject_cast<ServerPane *>(servers->currentWidget());
+            QVERIFY(pane);
+            auto *torrentHeader = pane->table()->horizontalHeader();
+            QVERIFY(torrentHeader);
+            torrentHeader->resizeSection(1, 173);
+            QCOMPARE(torrentHeader->sectionSize(1), 173);
+            auto *tabs = pane->findChild<PropTabBar *>();
+            QVERIFY(tabs);
+            tabs->setCurrentIndex(4); // Content page
+            QCOMPARE(tabs->currentIndex(), 4);
+            tabs->setCurrentIndex(4); // collapse, keeping last page
+            QCOMPARE(tabs->currentIndex(), -1);
+
+            // Also change the other server's header to ensure layouts are
+            // kept independently, not shared between session tabs.
+            servers->setCurrentIndex(0);
+            auto *firstPane = qobject_cast<ServerPane *>(servers->currentWidget());
+            QVERIFY(firstPane);
+            firstPane->table()->horizontalHeader()->resizeSection(1, 124);
+            servers->setCurrentIndex(1);
+            window.resize(1230, 790);
+            QCoreApplication::processEvents();
+            originalGeometry = window.saveGeometry();
+            QVERIFY(window.close());
+            settings.sync();
+        }
+
+        QVERIFY(settings.contains(QStringLiteral("Layout/MainWindow/Geometry")));
+        QVERIFY(settings.contains(QStringLiteral("Layout/MainWindow/State")));
+        QVERIFY(settings.contains(QStringLiteral("Layout/MainWindow/Maximized")));
+        QVERIFY(settings.contains(QStringLiteral("Layout/MainWindow/Minimized")));
+        QCOMPARE(settings.value(QStringLiteral("Layout/ActiveServer")).toString(),
+                 QStringLiteral("beta-profile"));
+        QVERIFY(!settings.value(QStringLiteral("Layout/MainWindow/Geometry"))
+                       .toByteArray().isEmpty());
+
+        {
+            MainWindow window(nullptr, &settings, &vault);
+            window.show();
+            QTRY_VERIFY(window.isVisible());
+            auto *servers = window.findChild<QTabWidget *>(QStringLiteral("serverTabs"));
+            QVERIFY(servers);
+            QTRY_COMPARE_WITH_TIMEOUT(servers->count(), 2, 8000);
+            QCOMPARE(servers->tabText(servers->currentIndex()), QStringLiteral("Beta"));
+
+            auto *pane = qobject_cast<ServerPane *>(servers->currentWidget());
+            QVERIFY(pane);
+            QTRY_COMPARE(pane->table()->horizontalHeader()->sectionSize(1), 173);
+            auto *tabs = pane->findChild<PropTabBar *>();
+            QVERIFY(tabs);
+            QTRY_COMPARE(tabs->currentIndex(), -1);
+            tabs->setCurrentIndex(4);
+            QCOMPARE(tabs->currentIndex(), 4);
+            QVERIFY(pane->findChild<QWidget *>(
+                QStringLiteral("remoteTorrentProperties"))->isVisible());
+
+            servers->setCurrentIndex(0);
+            auto *firstPane = qobject_cast<ServerPane *>(servers->currentWidget());
+            QVERIFY(firstPane);
+            QCOMPARE(firstPane->table()->horizontalHeader()->sectionSize(1), 124);
+            QVERIFY(window.close());
+        }
+    }
+
+    void connectionDialogGeometryUsesSameQSettingsFile()
+    {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("layout.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        {
+            ConnectionDialog dialog(settings, nullptr, &vault);
+            dialog.show();
+            QTRY_VERIFY(dialog.isVisible());
+            dialog.resize(620, 475);
+            QCoreApplication::processEvents();
+            dialog.reject();
+            settings.sync();
+        }
+        const QByteArray stored = settings.value(
+            QStringLiteral("Layout/Dialogs/Connection")).toByteArray();
+        QVERIFY(!stored.isEmpty());
+        {
+            ConnectionDialog dialog(settings, nullptr, &vault);
+            dialog.show();
+            QTRY_VERIFY(dialog.isVisible());
+            QVERIFY(dialog.size().width() >= 600);
+            dialog.reject();
+        }
+    }
+
     void globalFontSizeKeepsTorrentListAsFloorAndPersists()
     {
         QTemporaryDir temp;

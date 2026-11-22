@@ -18,9 +18,11 @@
 ConnectionDialog::ConnectionDialog(QSettings &settings, QWidget *parent,
                                    Remote::CredentialVault *vault)
     : QDialog(parent)
+    , m_settings(&settings)
     , m_store(settings)
     , m_vault(vault)
 {
+    setObjectName(QStringLiteral("connectionDialog"));
     setWindowTitle(tr("Connect to qBittorrent Server"));
     setMinimumWidth(440);
 
@@ -105,6 +107,10 @@ ConnectionDialog::ConnectionDialog(QSettings &settings, QWidget *parent,
     });
 
     refreshProfiles();
+    const QByteArray restored =
+        settings.value(QStringLiteral("Layout/Dialogs/Connection")).toByteArray();
+    if (!restored.isEmpty())
+        restoreGeometry(restored);
 }
 
 Remote::ServerProfile ConnectionDialog::selectedProfile() const
@@ -243,4 +249,12 @@ void ConnectionDialog::removeCurrentProfile()
         });
     }
     refreshProfiles();
+}
+
+void ConnectionDialog::done(int result)
+{
+    if (m_settings)
+        m_settings->setValue(QStringLiteral("Layout/Dialogs/Connection"),
+                             saveGeometry());
+    QDialog::done(result);
 }

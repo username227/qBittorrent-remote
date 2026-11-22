@@ -10,6 +10,7 @@
 #include "ui_mainwindow.h"
 
 #include <QDialog>
+#include <QCloseEvent>
 #include <QApplication>
 #include <QFont>
 #include <QFontInfo>
@@ -81,6 +82,16 @@ constexpr auto fontSettingsKey = "Appearance/FontPointSize";
 
 } // namespace
 
+struct MainWindow::SessionContext
+{
+    Remote::ServerProfile profile;
+    Remote::RemoteSession *session = nullptr;
+    ServerPane *pane = nullptr;
+    QString version;
+    QString apiVersion;
+    bool connected = false;
+};
+
 MainWindow::MainWindow(QWidget *parent, QSettings *settings,
                        Remote::CredentialVault *vault)
     : QMainWindow(parent)
@@ -113,31 +124,31 @@ MainWindow::MainWindow(QWidget *parent, QSettings *settings,
     m_ui->statusBar->showMessage(tr("Not connected to a server"));
     m_ratesLabel = new QLabel(tr("D: —    U: —"), m_ui->statusBar);
     m_ui->statusBar->addPermanentWidget(m_ratesLabel);
+    restoreWindowLayout();
 
     // Opt-in startup connections run after the event loop begins. Each
     // profile independently uses a blank-password login or secure vault
     // retrieval; failures never prevent other selected profiles from opening.
     QTimer::singleShot(0, this, [this]() {
+        m_restoringStartup = true;
         Remote::ProfileStore store(*m_settings);
         for (const auto &profile : store.profiles())
-        {
             if (profile.autoConnect)
                 connectToProfile(profile, QString());
-        }
+        m_restoringStartup = false;
+        for (const auto &connection : m_connections)
+            if (connection->profile.id == m_preferredServerId)
+            {
+                // Switching tabs is allowed. Starting a connection just
+                // because it was selected last session is NOT allowed.
+                m_views->setCurrentWidget(connection->pane);
+                break;
+            }
+        updateActiveUi();
     });
 }
 
 MainWindow::~MainWindow() = default;
-
-struct MainWindow::SessionContext
-{
-    Remote::ServerProfile profile;
-    Remote::RemoteSession *session = nullptr;
-    ServerPane *pane = nullptr;
-    QString version;
-    QString apiVersion;
-    bool connected = false;
-};
 
 void MainWindow::showEmptyPane()
 {
@@ -155,6 +166,8 @@ void MainWindow::setupMainArea()
     m_views->setObjectName(QStringLiteral("serverTabs"));
     m_ui->centralWidgetLayout->addWidget(m_views);
     showEmptyPane();
+    if (m_emptyPane)
+        m_emptyPane->restoreLayout(*m_settings, QStringLiteral("empty-pane"));
 
     connect(m_views, &QTabWidget::currentChanged, this,
             [this](int) { updateActiveUi(); });
@@ -321,9 +334,13 @@ void MainWindow::setupActions()
     connect(m_ui->actionExit, &QAction::triggered, this, &QWidget::close);
     connect(m_ui->actionAbout, &QAction::triggered, this, [this]()
     {
-        QMessageBox::about(this, tr("About qBittorrent Remote"),
+        QMessageBox dialog(QMessageBox::Information, tr("About qBittorrent Remote"),
             tr("A native Qt desktop client for remote qBittorrent servers.\n"
-               "Live torrent synchronization uses each connected server's Web API."));
+               "Live torrent synchronization uses each connected server's Web API."),
+            QMessageBox::Ok, this);
+        dialog.setObjectName(QStringLiteral("aboutDialog"));
+        trackDialogGeometry(dialog, QStringLiteral("About"));
+        dialog.exec();
     });
     const auto bindCommand = [this](QAction *action,
                                    Remote::RemoteSession::TorrentCommand command)
@@ -372,14 +389,18 @@ void MainWindow::setupActions()
         const auto server = activeConnection();
         if (!server || !server->connected)
             return;
-        bool accepted = false;
-        const QString urls = QInputDialog::getMultiLineText(this,
-            tr("Add torrent link to %1").arg(server->profile.name),
-            tr("Paste magnet or HTTP(S) links, one per line.\n"
-               "The remote server will use its own default download location."),
-            QString(), &accepted);
-        if (accepted && !urls.trimmed().isEmpty()
-            && containsConnection(server) && server->connected)
+        QInputDialog dialog(this);
+        dialog.setObjectName(QStringLiteral("addTorrentUrlDialog"));
+        dialog.setWindowTitle(tr("Add torrent link to %1").arg(server->profile.name));
+        dialog.setLabelText(tr("Paste magnet or HTTP(S) links, one per line.\n"
+                               "The remote server will use its own default download location."));
+        dialog.setInputMode(QInputDialog::TextInput);
+        dialog.setOption(QInputDialog::UsePlainTextEditForTextInput);
+        trackDialogGeometry(dialog, QStringLiteral("AddTorrentURL"));
+        if (dialog.exec() != QDialog::Accepted)
+            return;
+        const QString urls = dialog.textValue();
+        if (!urls.trimmed().isEmpty() && containsConnection(server) && server->connected)
             server->session->addTorrentUrls(urls);
     });
 
@@ -387,9 +408,14 @@ void MainWindow::setupActions()
         const auto server = activeConnection();
         if (!server || !server->connected)
             return;
-        const QString filename = QFileDialog::getOpenFileName(
-            this, tr("Add .torrent to %1").arg(server->profile.name), QString(),
-            tr("Torrent files (*.torrent);;All files (*)"));
+        QFileDialog dialog(this, tr("Add .torrent to %1").arg(server->profile.name));
+        dialog.setObjectName(QStringLiteral("addTorrentFileDialog"));
+        dialog.setFileMode(QFileDialog::ExistingFile);
+        dialog.setNameFilters({tr("Torrent files (*.torrent)"), tr("All files (*)")});
+        trackDialogGeometry(dialog, QStringLiteral("AddTorrentFile"));
+        if (dialog.exec() != QDialog::Accepted)
+            return;
+        const QString filename = dialog.selectedFiles().value(0);
         if (filename.isEmpty() || !containsConnection(server) || !server->connected)
             return;
         QFile file(filename);
@@ -500,6 +526,12 @@ void MainWindow::updateActiveUi()
     m_ratesLabel->setText(connection && ready && pane
                           ? pane->rateText() : tr("D: —    U: —"));
 
+    if (connection && !m_restoringStartup && !connection->profile.id.isEmpty())
+    {
+        m_preferredServerId = connection->profile.id;
+        m_settings->setValue(QStringLiteral("Layout/ActiveServer"), m_preferredServerId);
+    }
+
     if (!connection)
     {
         setWindowTitle(tr("qBittorrent Remote"));
@@ -523,6 +555,8 @@ void MainWindow::removeConnection(const std::shared_ptr<SessionContext> &connect
     if (!containsConnection(connection))
         return;
 
+    if (connection->pane)
+        connection->pane->saveLayout(*m_settings, connection->profile.id);
     const int tabIndex = m_views->indexOf(connection->pane);
     if (tabIndex >= 0)
         m_views->removeTab(tabIndex);
@@ -561,6 +595,7 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
         const int index = m_views->indexOf(m_emptyPane);
         if (index >= 0)
             m_views->removeTab(index);
+        m_emptyPane->saveLayout(*m_settings, QStringLiteral("empty-pane"));
         delete m_emptyPane;
         m_emptyPane = nullptr;
     }
@@ -568,6 +603,7 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
     auto connection = std::make_shared<SessionContext>();
     connection->profile = profile;
     connection->pane = new ServerPane(m_views);
+    connection->pane->restoreLayout(*m_settings, profile.id);
     connection->session = new Remote::RemoteSession(this);
     auto *session = connection->session;
     m_connections.append(connection);
@@ -814,4 +850,65 @@ void MainWindow::updateFontActionStates()
         m_decreaseFontAction->setEnabled(m_fontPointSize > m_baseFontPointSize);
     if (m_resetFontAction)
         m_resetFontAction->setEnabled(m_fontPointSize != m_baseFontPointSize);
+}
+
+void MainWindow::trackDialogGeometry(QDialog &dialog, const QString &name)
+{
+    const QString key = QStringLiteral("Layout/Dialogs/") + name;
+    const QByteArray saved = m_settings->value(key).toByteArray();
+    if (!saved.isEmpty())
+        dialog.restoreGeometry(saved);
+    // Store geometry only; never the contents of dialogs or credentials.
+    connect(&dialog, &QDialog::finished, &dialog, [this, &dialog, key](int) {
+        m_settings->setValue(key, dialog.saveGeometry());
+    });
+}
+
+void MainWindow::restoreWindowLayout()
+{
+    m_preferredServerId =
+        m_settings->value(QStringLiteral("Layout/ActiveServer")).toString();
+    const QByteArray geometry =
+        m_settings->value(QStringLiteral("Layout/MainWindow/Geometry")).toByteArray();
+    if (!geometry.isEmpty())
+        restoreGeometry(geometry);
+    const QByteArray state =
+        m_settings->value(QStringLiteral("Layout/MainWindow/State")).toByteArray();
+    if (!state.isEmpty())
+        restoreState(state, 1);
+
+    if (m_settings->value(QStringLiteral("Layout/MainWindow/Maximized"), false).toBool()
+        && !isMaximized())
+        setWindowState(windowState() | Qt::WindowMaximized);
+    m_ui->actionTopToolBar->setChecked(
+        m_settings->value(QStringLiteral("Layout/ToolbarVisible"), true).toBool());
+    m_ui->actionShowStatusbar->setChecked(
+        m_settings->value(QStringLiteral("Layout/StatusbarVisible"), true).toBool());
+    m_ui->actionShowFiltersSidebar->setChecked(
+        m_settings->value(QStringLiteral("Layout/SidebarVisible"), true).toBool());
+
+    if (m_settings->value(QStringLiteral("Layout/MainWindow/Minimized"), false).toBool())
+        QTimer::singleShot(0, this, [this]() { showMinimized(); });
+}
+
+void MainWindow::closeEvent(QCloseEvent *event)
+{
+    for (const auto &connection : m_connections)
+        if (connection->pane)
+            connection->pane->saveLayout(*m_settings, connection->profile.id);
+    if (m_emptyPane)
+        m_emptyPane->saveLayout(*m_settings, QStringLiteral("empty-pane"));
+
+    m_settings->setValue(QStringLiteral("Layout/MainWindow/Geometry"), saveGeometry());
+    m_settings->setValue(QStringLiteral("Layout/MainWindow/State"), saveState(1));
+    m_settings->setValue(QStringLiteral("Layout/MainWindow/Minimized"), isMinimized());
+    m_settings->setValue(QStringLiteral("Layout/MainWindow/Maximized"), isMaximized());
+    m_settings->setValue(QStringLiteral("Layout/ToolbarVisible"), m_ui->toolBar->isVisible());
+    m_settings->setValue(QStringLiteral("Layout/StatusbarVisible"), m_ui->statusBar->isVisible());
+    m_settings->setValue(QStringLiteral("Layout/SidebarVisible"),
+                         m_ui->actionShowFiltersSidebar->isChecked());
+    if (!m_preferredServerId.isEmpty())
+        m_settings->setValue(QStringLiteral("Layout/ActiveServer"), m_preferredServerId);
+    m_settings->sync();
+    QMainWindow::closeEvent(event);
 }
