@@ -236,8 +236,10 @@ void DetailsSortingWorkflowTest::trackersSortStatusAndNumericColumnsWithoutFlatt
         }));
         working->setExpanded(true);
         tree->sortItems(3, Qt::DescendingOrder);
+        // Status descending puts Working before Not working, regardless
+        // of each endpoint's filename-like number.
         QCOMPARE(childNames(working), (QStringList{
-            QStringLiteral("server 10"), QStringLiteral("server 2")
+            QStringLiteral("server 2"), QStringLiteral("server 10")
         }));
         widget.displayDetails(QStringLiteral("test-hash"), 1, reply);
         QCOMPARE(tree->sortColumn(), 3);
@@ -246,7 +248,7 @@ void DetailsSortingWorkflowTest::trackersSortStatusAndNumericColumnsWithoutFlatt
         QVERIFY(working);
         QVERIFY(working->isExpanded());
         QCOMPARE(childNames(working), (QStringList{
-            QStringLiteral("server 10"), QStringLiteral("server 2")
+            QStringLiteral("server 2"), QStringLiteral("server 10")
         }));
 }
 
