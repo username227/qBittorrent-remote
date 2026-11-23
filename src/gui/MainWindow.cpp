@@ -234,8 +234,28 @@ MainWindow::MainWindow(QWidget *parent, QSettings *settings,
     setupActions();
     updateFontActionStates();
 
+    // Retain server identity/version as the default left-hand status text.
+    // Qt briefly replaces status messages with hovered action tips or
+    // time-limited connection errors; restore the default when they expire.
+    connect(m_ui->statusBar, &QStatusBar::messageChanged, this,
+            [this](const QString &message) {
+        if (!message.isEmpty())
+            return;
+        QTimer::singleShot(0, this, [this]() {
+            if (m_ui->statusBar->currentMessage().isEmpty())
+                updateActiveUi();
+        });
+    });
     m_ui->statusBar->showMessage(tr("Not connected to a server"));
+    // Permanently visible widgets are inserted left to right. The displayed
+    // torrent count belongs left of the existing download/upload rates and
+    // any future connectivity/alternate-bandwidth indicators.
+    m_torrentCountLabel = new QLabel(tr("Torrents: —"), m_ui->statusBar);
+    m_torrentCountLabel->setObjectName(QStringLiteral("visibleTorrentCount"));
+    m_torrentCountLabel->setToolTip(tr("Torrents visible after all filters / total on the selected server"));
+    m_ui->statusBar->addPermanentWidget(m_torrentCountLabel);
     m_ratesLabel = new QLabel(tr("D: —    U: —"), m_ui->statusBar);
+    m_ratesLabel->setObjectName(QStringLiteral("remoteTransferRates"));
     m_ui->statusBar->addPermanentWidget(m_ratesLabel);
     restoreWindowLayout();
 
@@ -1017,9 +1037,28 @@ ServerPane *MainWindow::activePane() const
     return m_views ? static_cast<ServerPane *>(m_views->currentWidget()) : nullptr;
 }
 
+void MainWindow::updateTorrentCount()
+{
+    if (!m_torrentCountLabel)
+        return;
+    const auto connection = activeConnection();
+    if (!connection || !connection->connected || !connection->pane)
+    {
+        m_torrentCountLabel->setText(tr("Torrents: —"));
+        return;
+    }
+    const auto *pane = connection->pane;
+    // The proxy applies directory/status/category/tag/tracker/search filters;
+    // the source owns every synchronized torrent, even if currently hidden.
+    m_torrentCountLabel->setText(tr("Torrents: %1 / %2")
+        .arg(pane->proxy()->rowCount())
+        .arg(pane->model()->rowCount()));
+}
+
 void MainWindow::updateActiveUi()
 {
-    if (!m_searchEdit || !m_searchBy || !m_disconnectAction || !m_ratesLabel)
+    if (!m_searchEdit || !m_searchBy || !m_disconnectAction
+        || !m_ratesLabel || !m_torrentCountLabel)
         return;
 
     const auto connection = activeConnection();
@@ -1040,6 +1079,7 @@ void MainWindow::updateActiveUi()
     if (pane)
         pane->sidebar()->setVisible(m_ui->actionShowFiltersSidebar->isChecked());
     updateTorrentActionState();
+    updateTorrentCount();
     m_ratesLabel->setText(connection && ready && pane
                           ? pane->rateText() : tr("D: —    U: —"));
 
@@ -1235,6 +1275,22 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
                     updateTorrentActionState();
             });
 
+    // Listen to the real Qt source and filtered proxy models, not to a
+    // separate count derived from individual sidebar labels. Qt emits these
+    // signals for live sync additions/removals and combined filter changes.
+    const auto updateCount = [this, connection]() {
+        if (activeConnection() == connection)
+            updateTorrentCount();
+    };
+    for (auto *model : {static_cast<QAbstractItemModel *>(connection->pane->model()),
+                        static_cast<QAbstractItemModel *>(connection->pane->proxy())})
+    {
+        connect(model, &QAbstractItemModel::rowsInserted, this, updateCount);
+        connect(model, &QAbstractItemModel::rowsRemoved, this, updateCount);
+        connect(model, &QAbstractItemModel::modelReset, this, updateCount);
+        connect(model, &QAbstractItemModel::layoutChanged, this, updateCount);
+    }
+
     m_views->addTab(connection->pane, upstreamIcon("folder-remote"), profile.name);
     m_views->setCurrentWidget(connection->pane);
     updateActiveUi();
@@ -1338,15 +1394,15 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
             if (activeConnection() == connection)
             {
                 m_ratesLabel->setText(connection->pane->rateText());
+                updateTorrentCount();
                 updateTorrentActionState();
             }
         });
     connect(session, &Remote::RemoteSession::operationSucceeded, this,
         [this, connection](const QString &description) {
-            if (containsConnection(connection) && activeConnection() == connection)
-                m_ui->statusBar->showMessage(
-                    tr("%1: %2 request accepted; awaiting server synchronization.")
-                        .arg(connection->profile.name, description));
+            // HTTP request acceptance is not completion. Do not leave stale
+            // "awaiting synchronization" banners over the server/version label.
+            // A future activity log can show each server operation.
             if (containsConnection(connection)
                 && description == tr("Set file priorities"))
             {
@@ -1378,7 +1434,7 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
             removeConnection(connection);
             if (wasActive)
                 m_ui->statusBar->showMessage(
-                    tr("Connection to %1 failed: %2").arg(name, reason));
+                    tr("Connection to %1 failed: %2").arg(name, reason), 8000);
         });
 
     if (profile.rememberPassword && password.isEmpty() && m_vault->available())
@@ -1399,7 +1455,7 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
                     if (wasActive)
                         safeWindow->m_ui->statusBar->showMessage(
                             QObject::tr("Connection to %1 failed: Could not read saved password: %2")
-                                .arg(name, error));
+                                .arg(name, error), 8000);
                     return;
                 }
                 live->session->connectToServer(profile,

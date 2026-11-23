@@ -46,6 +46,7 @@
 #include <QProgressBar>
 #include <QTableWidget>
 #include <QTreeWidget>
+#include <QTreeWidgetItemIterator>
 #include <QPainter>
 #include <QStyleOptionViewItem>
 #include <QSplitter>
@@ -116,11 +117,11 @@ public:
                         }
                         else if (path == "/api/v2/app/version" && hasCookie)
                         {
-                            response = "v5.1.4";
+                            response = m_reportedQbtVersion;
                         }
                         else if (path == "/api/v2/app/webapiVersion" && hasCookie)
                         {
-                            response = "2.11.3";
+                            response = m_reportedApiVersion;
                         }
                         else if (path.startsWith("/api/v2/sync/maindata?rid=") && hasCookie)
                         {
@@ -240,6 +241,13 @@ public:
     int logouts() const noexcept { return m_logouts; }
     int syncRequests() const noexcept { return m_syncRequests; }
     void enableTorrentSyncDemo() { m_demoTorrents = true; }
+    void setReportedVersions(const QString &qbtVersion, const QString &apiVersion)
+    {
+        m_reportedQbtVersion = qbtVersion.toUtf8();
+        m_reportedApiVersion = apiVersion.toUtf8();
+    }
+    QString reportedQbtVersion() const { return QString::fromUtf8(m_reportedQbtVersion); }
+    QString reportedApiVersion() const { return QString::fromUtf8(m_reportedApiVersion); }
     void enableQueueingDemo() { m_queueingEnabled = true; }
     void setExistingTorrentHash(const QString &hash) { m_existingTorrentHash = hash; }
     void setExistingTorrentPrivate(bool value) { m_existingTorrentPrivate = value; }
@@ -280,6 +288,8 @@ private:
     QTcpServer m_server;
     bool m_acceptPassword;
     bool m_acceptBlank;
+    QByteArray m_reportedQbtVersion = QByteArrayLiteral("v5.1.4");
+    QByteArray m_reportedApiVersion = QByteArrayLiteral("2.11.3");
     int m_logouts = 0;
     bool m_demoTorrents = false;
     bool m_queueingEnabled = false;
@@ -809,16 +819,22 @@ private slots:
         window.show();
         QTRY_VERIFY(window.isVisible());
 
+        auto *count = window.statusBar()->findChild<QLabel *>(
+            QStringLiteral("visibleTorrentCount"));
+        QVERIFY(count);
+        QCOMPARE(count->text(), QStringLiteral("Torrents: —"));
         openConnectDialog(window, server.url());
         QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage()
             .contains(QStringLiteral("Connected to Demo seedbox")), 6000);
         QVERIFY(window.windowTitle().contains(QStringLiteral("Demo seedbox")));
+        QTRY_COMPARE(count->text(), QStringLiteral("Torrents: 0 / 0"));
 
         QAction *disconnect = window.findChild<QAction *>(QStringLiteral("disconnectServer"));
         QVERIFY(disconnect && disconnect->isEnabled());
         disconnect->trigger();
         QTRY_VERIFY(window.statusBar()->currentMessage()
             .contains(QStringLiteral("Not connected")));
+        QCOMPARE(count->text(), QStringLiteral("Torrents: —"));
         QTRY_COMPARE_WITH_TIMEOUT(server.logouts(), 1, 6000);
         // Manual login must never launch any system-keyring operations.
         QCOMPARE(vault.reads, 0);
@@ -941,6 +957,8 @@ private slots:
     {
         DemoQbittorrentServer server(true);
         server.enableTorrentSyncDemo();
+        server.enableMappedFolderDemo(); // Live remote save_path drives directory filtering.
+        server.setReportedVersions(QStringLiteral("v7.5.30"), QStringLiteral("4.9.2"));
         QVERIFY(server.start());
 
         QTemporaryDir temp;
@@ -957,19 +975,67 @@ private slots:
 
         QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 1, 6000);
         QCOMPARE(table->model()->index(0, 0).data().toString(), QStringLiteral("Demo Linux ISO"));
-        QVERIFY(window.statusBar()->findChildren<QLabel *>().size() > 0);
+        auto *count = window.statusBar()->findChild<QLabel *>(
+            QStringLiteral("visibleTorrentCount"));
+        auto *rates = window.statusBar()->findChild<QLabel *>(
+            QStringLiteral("remoteTransferRates"));
+        QVERIFY(count && rates);
+        QCOMPARE(count->text(), QStringLiteral("Torrents: 1 / 1"));
+        // A permanent torrent counter belongs before the D/U rates.
+        QVERIFY(count->geometry().right() < rates->geometry().left());
+        const QString identity = window.statusBar()->currentMessage();
+        QVERIFY(identity.contains(QStringLiteral("Demo seedbox")));
+        QVERIFY(identity.contains(server.reportedQbtVersion()));
+        QVERIFY(identity.contains(server.reportedApiVersion()));
 
         auto *search = window.findChild<QLineEdit *>(QStringLiteral("torrentSearch"));
         QVERIFY2(search && search->isEnabled(), "Live torrent search should be enabled.");
         search->setText(QStringLiteral("does-not-exist"));
         QTRY_COMPARE(table->model()->rowCount(), 0);
+        QTRY_COMPARE(count->text(), QStringLiteral("Torrents: 0 / 1"));
         search->clear();
+        QTRY_COMPARE(table->model()->rowCount(), 1);
+        QTRY_COMPARE(count->text(), QStringLiteral("Torrents: 1 / 1"));
+
+        // Exercise the real Directories Qt tree on synchronized save_path:
+        // selecting an ancestor with no direct torrents hides the row,
+        // while selecting the leaf restores it. Total remains server-wide.
+        auto *directories = window.findChild<QTreeWidget *>(
+            QStringLiteral("directoryFilterTree"));
+        QVERIFY(directories);
+        QTreeWidgetItem *ancestor = nullptr;
+        QTreeWidgetItem *leaf = nullptr;
+        for (QTreeWidgetItemIterator it(directories); *it; ++it)
+        {
+            const QString path = (*it)->data(0, Qt::UserRole).toString();
+            if (path == QLatin1String("/share/NAS"))
+                ancestor = *it;
+            else if (path == QLatin1String("/share/NAS/Music"))
+                leaf = *it;
+        }
+        QVERIFY(ancestor && leaf);
+        directories->setCurrentItem(ancestor);
+        QTRY_COMPARE(table->model()->rowCount(), 0);
+        QTRY_COMPARE(count->text(), QStringLiteral("Torrents: 0 / 1"));
+        directories->setCurrentItem(leaf);
+        QTRY_COMPARE(table->model()->rowCount(), 1);
+        QTRY_COMPARE(count->text(), QStringLiteral("Torrents: 1 / 1"));
+        directories->setCurrentItem(directories->topLevelItem(0));
         QTRY_COMPARE(table->model()->rowCount(), 1);
 
         QTRY_COMPARE_WITH_TIMEOUT(table->model()->index(0, 0).data().toString(),
                                   QStringLiteral("Updated Linux ISO"), 6000);
+        QCOMPARE(count->text(), QStringLiteral("Torrents: 1 / 1"));
         QCOMPARE(table->model()->index(0, 2).data().toString().endsWith(QLatin1Char('%')), true);
         QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 0, 9000);
+        QTRY_COMPARE(count->text(), QStringLiteral("Torrents: 0 / 0"));
+        // Qt clears a timed status tip; the default server identity returns.
+        window.statusBar()->showMessage(QStringLiteral("Temporary status"), 60);
+        QCOMPARE(window.statusBar()->currentMessage(), QStringLiteral("Temporary status"));
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage()
+            .contains(server.reportedQbtVersion()), 1500);
+        QVERIFY(window.statusBar()->currentMessage().contains(server.reportedApiVersion()));
+        QVERIFY(window.statusBar()->currentMessage().contains(QStringLiteral("Demo seedbox")));
     }
 
     void nativeTransferPresentationShowsUpstreamProgressAndAvailability()
@@ -990,6 +1056,37 @@ private slots:
         auto *table = window.findChild<QTableView *>(QStringLiteral("torrentList"));
         QVERIFY(table && table->model());
         QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 2, 6000);
+        auto *count = window.statusBar()->findChild<QLabel *>(
+            QStringLiteral("visibleTorrentCount"));
+        QVERIFY(count);
+        QTRY_COMPARE(count->text(), QStringLiteral("Torrents: 2 / 2"));
+        // Apply real, composable Status + text search filters and observe the
+        // permanent status label, not merely a proxy's internal rowCount.
+        auto *statuses = window.findChild<QListWidget *>(QStringLiteral("filterList"));
+        auto *search = window.findChild<QLineEdit *>(QStringLiteral("torrentSearch"));
+        QVERIFY(statuses && search);
+        const auto chooseStatus = [statuses](const QString &key) {
+            for (int row = 0; row < statuses->count(); ++row)
+                if (statuses->item(row)->data(Qt::UserRole).toString() == key)
+                {
+                    statuses->setCurrentRow(row);
+                    return true;
+                }
+            return false;
+        };
+        QVERIFY(chooseStatus(QStringLiteral("seeding")));
+        QTRY_COMPARE(table->model()->rowCount(), 1);
+        QTRY_COMPARE(count->text(), QStringLiteral("Torrents: 1 / 2"));
+        search->setText(QStringLiteral("Partial download"));
+        QTRY_COMPARE(table->model()->rowCount(), 0);
+        QTRY_COMPARE(count->text(), QStringLiteral("Torrents: 0 / 2"));
+        QVERIFY(chooseStatus(QStringLiteral("downloading")));
+        QTRY_COMPARE(table->model()->rowCount(), 1);
+        QTRY_COMPARE(count->text(), QStringLiteral("Torrents: 1 / 2"));
+        search->clear();
+        QVERIFY(chooseStatus(QStringLiteral("all")));
+        QTRY_COMPARE(table->model()->rowCount(), 2);
+        QTRY_COMPARE(count->text(), QStringLiteral("Torrents: 2 / 2"));
 
         // Selection and sorting must never temporarily embolden headings.
         auto *torrentHeader = table->horizontalHeader();
@@ -1314,6 +1411,15 @@ private slots:
     {
         DemoQbittorrentServer first(true);
         DemoQbittorrentServer second(true);
+        first.enableTorrentSyncDemo();
+        first.keepDemoTorrents();
+        second.enableNativePresentationDemo();
+        // Distinct fake versions catch cross-server label leakage; assertions
+        // use each server's actual configured responses, not fixed UI strings.
+        first.setReportedVersions(QStringLiteral("v9.15-alpha"),
+                                  QStringLiteral("3.1"));
+        second.setReportedVersions(QStringLiteral("v8.6-beta"),
+                                   QStringLiteral("7.4"));
         QVERIFY(first.start());
         QVERIFY(second.start());
 
@@ -1333,6 +1439,12 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(
             QStringLiteral("Connected to Demo seedbox")), 6000);
         QVERIFY2(!tabs->tabBar()->isVisible(), "Single server must not show a tab strip.");
+        auto *count = window.statusBar()->findChild<QLabel *>(
+            QStringLiteral("visibleTorrentCount"));
+        QVERIFY(count);
+        QTRY_COMPARE_WITH_TIMEOUT(count->text(), QStringLiteral("Torrents: 1 / 1"), 6000);
+        QVERIFY(window.statusBar()->currentMessage().contains(first.reportedQbtVersion()));
+        QVERIFY(window.statusBar()->currentMessage().contains(first.reportedApiVersion()));
 
         openConnectDialog(window, second.url(), false, true, true,
                           QStringLiteral("Red seedbox"));
@@ -1340,6 +1452,10 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(
             QStringLiteral("Connected to Red seedbox")), 6000);
         QVERIFY2(tabs->tabBar()->isVisible(), "Two simultaneous servers need visible tabs.");
+        QTRY_COMPARE_WITH_TIMEOUT(count->text(), QStringLiteral("Torrents: 2 / 2"), 6000);
+        QVERIFY(window.statusBar()->currentMessage().contains(second.reportedQbtVersion()));
+        QVERIFY(window.statusBar()->currentMessage().contains(second.reportedApiVersion()));
+        QVERIFY(!window.statusBar()->currentMessage().contains(first.reportedQbtVersion()));
 
         auto *firstTable = tabs->widget(0)->findChild<QTableView *>(QStringLiteral("torrentList"));
         auto *secondTable = tabs->widget(1)->findChild<QTableView *>(QStringLiteral("torrentList"));
@@ -1350,10 +1466,17 @@ private slots:
         auto *search = window.findChild<QLineEdit *>(QStringLiteral("torrentSearch"));
         QVERIFY(search);
         search->setText(QStringLiteral("red-isolated-filter"));
+        QTRY_COMPARE_WITH_TIMEOUT(count->text(), QStringLiteral("Torrents: 0 / 2"), 2000);
         tabs->setCurrentIndex(0);
         QCOMPARE(search->text(), QString());
+        QTRY_COMPARE(count->text(), QStringLiteral("Torrents: 1 / 1"));
+        QVERIFY(window.statusBar()->currentMessage().contains(first.reportedQbtVersion()));
+        QVERIFY(window.statusBar()->currentMessage().contains(first.reportedApiVersion()));
+        QVERIFY(!window.statusBar()->currentMessage().contains(second.reportedQbtVersion()));
         tabs->setCurrentIndex(1);
         QCOMPARE(search->text(), QStringLiteral("red-isolated-filter"));
+        QTRY_COMPARE(count->text(), QStringLiteral("Torrents: 0 / 2"));
+        QVERIFY(window.statusBar()->currentMessage().contains(second.reportedQbtVersion()));
 
         const int priorFirst = first.syncRequests();
         const int priorSecond = second.syncRequests();
@@ -1367,6 +1490,9 @@ private slots:
         QVERIFY2(!tabs->tabBar()->isVisible(), "Returning to one server hides tabs.");
         QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(
             QStringLiteral("Connected to Demo seedbox")), 3000);
+        QTRY_COMPARE(count->text(), QStringLiteral("Torrents: 1 / 1"));
+        QVERIFY(window.statusBar()->currentMessage().contains(first.reportedQbtVersion()));
+        QVERIFY(!window.statusBar()->currentMessage().contains(second.reportedQbtVersion()));
         QTRY_COMPARE_WITH_TIMEOUT(second.logouts(), 1, 6000);
 
         const int beforeLastPoll = first.syncRequests();
@@ -2254,6 +2380,13 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor("/api/v2/torrents/start"), 1, 5000);
         QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor("/api/v2/torrents/stop"), 1, 5000);
         QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor("/api/v2/torrents/topPrio"), 1, 5000);
+        // HTTP operation acceptance must not displace the default identity.
+        // Wait for the actual acknowledged requests, then inspect the status.
+        QVERIFY(window.statusBar()->currentMessage().contains(QStringLiteral("Demo seedbox")));
+        QVERIFY(window.statusBar()->currentMessage().contains(server.reportedQbtVersion()));
+        QVERIFY(window.statusBar()->currentMessage().contains(server.reportedApiVersion()));
+        QVERIFY(!window.statusBar()->currentMessage().contains(
+            QStringLiteral("awaiting server synchronization")));
         QCOMPARE(QUrlQuery(QString::fromUtf8(server.lastCommandBody(
             "/api/v2/torrents/start"))).queryItemValue(QStringLiteral("hashes")),
             QStringLiteral("0123456789abcdef0123456789abcdef01234567"));

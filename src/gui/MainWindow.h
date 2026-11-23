@@ -49,6 +49,7 @@ private:
     QList<Remote::ServerProfile> connectedServerProfiles() const;
     ServerPane *activePane() const;
     void updateActiveUi();
+    void updateTorrentCount();
     void updateTorrentActionState();
     QStringList selectedTorrentHashes() const;
     void openSelectedTorrentDestinations();
@@ -63,6 +64,7 @@ private:
     HidableTabWidget *m_views = nullptr;
     ServerPane *m_emptyPane = nullptr;
     QList<std::shared_ptr<SessionContext>> m_connections;
+    QLabel *m_torrentCountLabel = nullptr;
     QLabel *m_ratesLabel = nullptr;
     QLineEdit *m_searchEdit = nullptr;
     QComboBox *m_searchBy = nullptr;
