@@ -1172,6 +1172,36 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
             session, &Remote::RemoteSession::requestTorrentDetails);
     connect(connection->pane, &ServerPane::filePriorityRequested,
             session, &Remote::RemoteSession::setFilePriority);
+    connect(connection->pane, &ServerPane::torrentModeRequested,
+            this, [this, connection](ServerPane::TorrentContextAction action, bool enabled) {
+        if (!containsConnection(connection) || !connection->connected
+            || activeConnection() != connection)
+            return;
+        const QStringList selected = selectedTorrentHashes();
+        if (selected.isEmpty())
+            return;
+        if (action == ServerPane::TorrentContextAction::SuperSeeding)
+        {
+            connection->session->setSuperSeeding(selected, enabled);
+            return;
+        }
+        const QString property = (action == ServerPane::TorrentContextAction::SequentialDownload)
+            ? QStringLiteral("seq_dl") : QStringLiteral("f_l_piece_prio");
+        if (action != ServerPane::TorrentContextAction::SequentialDownload
+            && action != ServerPane::TorrentContextAction::FirstLastPieces)
+            return;
+        QStringList changed;
+        const auto &torrents = connection->pane->model()->torrents();
+        for (const QString &hash : selected)
+        {
+            const QJsonValue value = torrents.value(hash).value(property);
+            if (value.isBool() && value.toBool() != enabled)
+                changed.append(hash);
+        }
+        if (!changed.isEmpty())
+            connection->session->toggleTorrentMode(
+                changed, action == ServerPane::TorrentContextAction::SequentialDownload);
+    });
     connect(connection->pane, &ServerPane::torrentContextActionRequested,
             this, [this, connection](ServerPane::TorrentContextAction action) {
         // Context-menu operations must never cross remote server tabs.
@@ -1256,6 +1286,14 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
             connection->session->renameTorrent(hash, name);
             break;
         }
+        case ServerPane::TorrentContextAction::ManageContent:
+        case ServerPane::TorrentContextAction::TorrentOptions:
+        case ServerPane::TorrentContextAction::ExportTorrent:
+        case ServerPane::TorrentContextAction::SuperSeeding:
+        case ServerPane::TorrentContextAction::SequentialDownload:
+        case ServerPane::TorrentContextAction::FirstLastPieces:
+            // Completed in subsequent commits on this branch.
+            break;
         case ServerPane::TorrentContextAction::EditTrackers:
         {
             const QStringList hashes = selectedTorrentHashes();

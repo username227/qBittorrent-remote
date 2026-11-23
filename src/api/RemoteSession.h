@@ -91,6 +91,8 @@ public:
     void changeTorrentTags(const QStringList &hashes, const QStringList &tags, bool add);
     void createAndAddTorrentTags(const QStringList &hashes, const QStringList &tags);
     void setTorrentAutoManagement(const QStringList &hashes, bool enabled);
+    void setSuperSeeding(const QStringList &hashes, bool enabled);
+    void toggleTorrentMode(const QStringList &hashes, bool sequential);
     void addTorrentUrls(const QString &urls);
     void addTorrentUrls(const QString &urls, const AddTorrentOptions &options);
     void addTorrentFile(const QString &filename, const QByteArray &contents);

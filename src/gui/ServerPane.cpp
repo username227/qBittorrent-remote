@@ -506,6 +506,12 @@ void ServerPane::showTorrentContextMenu(const QPoint &position)
         connect(rename, &QAction::triggered, this, [this]() {
             emit torrentContextActionRequested(TorrentContextAction::Rename);
         });
+        QAction *manage = menu.addAction(icon("edit-rename"), tr("Manage content..."));
+        manage->setObjectName(QStringLiteral("torrentContextManageContent"));
+        manage->setIconVisibleInMenu(true);
+        connect(manage, &QAction::triggered, this, [this]() {
+            emit torrentContextActionRequested(TorrentContextAction::ManageContent);
+        });
     }
 
     QAction *editTrackers = menu.addAction(icon("edit-rename"), tr("Edit trackers..."));
@@ -616,6 +622,61 @@ void ServerPane::showTorrentContextMenu(const QPoint &position)
         emit torrentAutoManagementRequested(!allAuto);
     });
     menu.addSeparator();
+
+    QAction *options = menu.addAction(icon("configure"), tr("Torrent options..."));
+    options->setObjectName(QStringLiteral("torrentContextTorrentOptions"));
+    options->setIconVisibleInMenu(true);
+    connect(options, &QAction::triggered, this, [this]() {
+        emit torrentContextActionRequested(TorrentContextAction::TorrentOptions);
+    });
+    const bool allFinished = std::all_of(torrents.cbegin(), torrents.cend(),
+        [](const SelectedTorrent &t) {
+            return t.record.value(QStringLiteral("progress")).toDouble(-1) >= 1.0;
+        });
+    if (allFinished && hasMetadata)
+    {
+        const bool allSuper = std::all_of(torrents.cbegin(), torrents.cend(),
+            [](const SelectedTorrent &t) {
+                return t.record.value(QStringLiteral("super_seeding")).toBool();
+            });
+        QAction *super = menu.addAction(tr("Super seeding mode"));
+        super->setObjectName(QStringLiteral("torrentContextSuperSeeding"));
+        super->setCheckable(true);
+        super->setChecked(allSuper);
+        connect(super, &QAction::triggered, this, [this, allSuper]() {
+            emit torrentModeRequested(TorrentContextAction::SuperSeeding, !allSuper);
+        });
+    }
+    menu.addSeparator();
+    const bool anyIncomplete = std::any_of(torrents.cbegin(), torrents.cend(),
+        [](const SelectedTorrent &t) {
+            return t.record.value(QStringLiteral("progress")).toDouble(1) < 1.0;
+        });
+    if (anyIncomplete)
+    {
+        const auto modeItem = [this, &menu, &torrents](
+            const QString &label, const QString &objectName,
+            const QString &field, TorrentContextAction action) {
+            const bool allEnabled = std::all_of(torrents.cbegin(), torrents.cend(),
+                [&field](const SelectedTorrent &t) {
+                    return t.record.value(field).toBool();
+                });
+            QAction *item = menu.addAction(label);
+            item->setObjectName(objectName);
+            item->setCheckable(true);
+            item->setChecked(allEnabled);
+            connect(item, &QAction::triggered, this, [this, action, allEnabled]() {
+                emit torrentModeRequested(action, !allEnabled);
+            });
+        };
+        modeItem(tr("Download in sequential order"),
+            QStringLiteral("torrentContextSequentialDownload"),
+            QStringLiteral("seq_dl"), TorrentContextAction::SequentialDownload);
+        modeItem(tr("Download first and last pieces first"),
+            QStringLiteral("torrentContextFirstLastPieces"),
+            QStringLiteral("f_l_piece_prio"), TorrentContextAction::FirstLastPieces);
+        menu.addSeparator();
+    }
 
     if (hasMetadata)
     {
@@ -734,6 +795,13 @@ void ServerPane::showTorrentContextMenu(const QPoint &position)
             // NAS mapping is only applicable to opening the path later.
             return t.record.value(QStringLiteral("content_path")).toString();
         });
+
+    QAction *exportTorrent = menu.addAction(icon("edit-copy"), tr("Export .torrent..."));
+    exportTorrent->setObjectName(QStringLiteral("torrentContextExportTorrent"));
+    exportTorrent->setIconVisibleInMenu(true);
+    connect(exportTorrent, &QAction::triggered, this, [this]() {
+        emit torrentContextActionRequested(TorrentContextAction::ExportTorrent);
+    });
 
     // Every displayed action works; values not present in /sync/maindata
     // remain disabled rather than guessing metadata or local file paths.

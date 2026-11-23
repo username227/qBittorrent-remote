@@ -812,6 +812,38 @@ void RemoteSession::setTorrentAutoManagement(const QStringList &hashes, bool ena
                    tr("Automatic Torrent Management"));
 }
 
+void RemoteSession::setSuperSeeding(const QStringList &hashes, bool enabled)
+{
+    if (!validSelectedTorrentHashes(hashes))
+    {
+        emit operationFailed(tr("Super seeding mode"), tr("Invalid torrent selection."));
+        return;
+    }
+    QUrlQuery form;
+    form.addQueryItem(QStringLiteral("hashes"), hashes.join(QLatin1Char('|')));
+    form.addQueryItem(QStringLiteral("value"), enabled ? QStringLiteral("true") : QStringLiteral("false"));
+    queueOperation(QStringLiteral("api/v2/torrents/setSuperSeeding"),
+        form.toString(QUrl::FullyEncoded).toUtf8(),
+        QByteArrayLiteral("application/x-www-form-urlencoded"), tr("Super seeding mode"), true);
+}
+
+void RemoteSession::toggleTorrentMode(const QStringList &hashes, bool sequential)
+{
+    if (!validSelectedTorrentHashes(hashes))
+    {
+        emit operationFailed(tr("Torrent download mode"), tr("Invalid torrent selection."));
+        return;
+    }
+    QUrlQuery form;
+    form.addQueryItem(QStringLiteral("hashes"), hashes.join(QLatin1Char('|')));
+    queueOperation(QStringLiteral("api/v2/torrents/")
+            + (sequential ? QStringLiteral("toggleSequentialDownload")
+                          : QStringLiteral("toggleFirstLastPiecePrio")),
+        form.toString(QUrl::FullyEncoded).toUtf8(),
+        QByteArrayLiteral("application/x-www-form-urlencoded"),
+        sequential ? tr("Download in sequential order") : tr("Download first and last pieces first"), true);
+}
+
 void RemoteSession::renameTorrent(const QString &hash, const QString &name)
 {
     static const QRegularExpression validHash(
