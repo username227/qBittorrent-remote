@@ -35,6 +35,8 @@
 #include <QWindowStateChangeEvent>
 #include <QFont>
 #include <QFontInfo>
+#include <QFontMetrics>
+#include <QLocale>
 #include <QGuiApplication>
 #include <QScreen>
 #include <QKeySequence>
@@ -323,14 +325,27 @@ MainWindow::MainWindow(QWidget *parent, QSettings *settings,
     m_torrentCountLabel->setObjectName(QStringLiteral("visibleTorrentCount"));
     m_torrentCountLabel->setToolTip(tr("Torrents visible after all filters / total on the selected server"));
     m_ui->statusBar->addPermanentWidget(m_torrentCountLabel);
-    m_ratesLabel = new QLabel(tr("D: —    U: —"), m_ui->statusBar);
-    m_ratesLabel->setObjectName(QStringLiteral("remoteTransferRates"));
-    m_ui->statusBar->addPermanentWidget(m_ratesLabel);
+    const auto separator = [this](const char *name) {
+        auto *label = new QLabel(QStringLiteral("|"), m_ui->statusBar);
+        label->setObjectName(QString::fromLatin1(name));
+        m_ui->statusBar->addPermanentWidget(label);
+        return label;
+    };
+    separator("torrentCountSeparator");
+    m_downloadRateLabel = new QLabel(tr("D: —"), m_ui->statusBar);
+    m_downloadRateLabel->setObjectName(QStringLiteral("remoteDownloadRate"));
+    m_ui->statusBar->addPermanentWidget(m_downloadRateLabel);
+    separator("transferRateSeparator");
+    m_uploadRateLabel = new QLabel(tr("U: —"), m_ui->statusBar);
+    m_uploadRateLabel->setObjectName(QStringLiteral("remoteUploadRate"));
+    m_ui->statusBar->addPermanentWidget(m_uploadRateLabel);
+    m_freeSpaceSeparator = separator("freeSpaceSeparator");
     m_serverFreeSpaceLabel = new QLabel(tr("Free: —"), m_ui->statusBar);
     m_serverFreeSpaceLabel->setObjectName(QStringLiteral("remoteServerFreeSpace"));
     m_serverFreeSpaceLabel->setToolTip(tr(
         "Free space on the selected server's default save drive, not this computer."));
     m_ui->statusBar->addPermanentWidget(m_serverFreeSpaceLabel);
+    updateStatusBarFieldWidths();
     restoreWindowLayout();
     applyLocalBehaviorPreferences();
 
@@ -1442,6 +1457,53 @@ void MainWindow::changeEvent(QEvent *event)
     if (event->type() == QEvent::PaletteChange
         || event->type() == QEvent::ApplicationPaletteChange)
         updateTraySettings();
+    if (event->type() == QEvent::FontChange
+        || event->type() == QEvent::ApplicationFontChange
+        || event->type() == QEvent::StyleChange)
+        updateStatusBarFieldWidths();
+}
+
+void MainWindow::updateStatusBarFieldWidths()
+{
+    if (!m_downloadRateLabel || !m_uploadRateLabel || !m_serverFreeSpaceLabel)
+        return;
+
+    // Reserve space using the actual label font and locale, not padded
+    // strings (which shift with proportional fonts) or hard-coded pixels.
+    // All rates have at most four integer digits before unit promotion.
+    // The free-space PiB unit also covers the entire signed 64-bit range.
+    const QLocale locale;
+    const auto reserve = [&locale](QLabel *label, const QString &pattern,
+                                 const QStringList &units) {
+        const QFontMetrics metrics(label->font());
+        int width = metrics.horizontalAdvance(label->text());
+        for (int digit = 1; digit <= 9; ++digit)
+        {
+            const QString number = locale.toString(digit * 1111.1, 'f', 1);
+            for (const QString &unit : units)
+                width = qMax(width, metrics.horizontalAdvance(
+                    pattern.arg(number + QLatin1Char(' ') + unit)));
+        }
+        // QLabel's own margins are normally zero; allow for its style/frame.
+        label->setFixedWidth(width + 2 * label->margin() + 2 * label->frameWidth() + 2);
+        label->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    };
+    const QStringList speedUnits{QStringLiteral("B/s"), QStringLiteral("KiB/s"),
+        QStringLiteral("MiB/s"), QStringLiteral("GiB/s"), QStringLiteral("TiB/s"),
+        QStringLiteral("PiB/s"), QStringLiteral("EiB/s")};
+    reserve(m_downloadRateLabel, tr("D: %1"), speedUnits);
+    reserve(m_uploadRateLabel, tr("U: %1"), speedUnits);
+    reserve(m_serverFreeSpaceLabel, tr("Free: %1"),
+        {QStringLiteral("B"), QStringLiteral("KiB"), QStringLiteral("MiB"),
+         QStringLiteral("GiB"), QStringLiteral("TiB"), QStringLiteral("PiB")});
+}
+
+void MainWindow::updateTransferRates(const ServerPane *pane)
+{
+    m_downloadRateLabel->setText(tr("D: %1").arg(
+        pane ? pane->downloadRateText() : QStringLiteral("—")));
+    m_uploadRateLabel->setText(tr("U: %1").arg(
+        pane ? pane->uploadRateText() : QStringLiteral("—")));
 }
 
 void MainWindow::updateServerFreeSpace()
@@ -1451,6 +1513,7 @@ void MainWindow::updateServerFreeSpace()
     const bool show = m_settings->value(
         QStringLiteral("Preferences/Behavior/ShowServerFreeSpace"), false).toBool();
     m_serverFreeSpaceLabel->setVisible(show);
+    m_freeSpaceSeparator->setVisible(show);
     if (show)
     {
         const auto connection = activeConnection();
@@ -1462,7 +1525,7 @@ void MainWindow::updateServerFreeSpace()
 void MainWindow::updateActiveUi()
 {
     if (!m_searchEdit || !m_searchBy || !m_disconnectAction
-        || !m_ratesLabel || !m_torrentCountLabel)
+        || !m_downloadRateLabel || !m_uploadRateLabel || !m_torrentCountLabel)
         return;
 
     const auto connection = activeConnection();
@@ -1485,8 +1548,7 @@ void MainWindow::updateActiveUi()
     updateTorrentActionState();
     updateTrayActionState();
     updateTorrentCount();
-    m_ratesLabel->setText(connection && ready && pane
-                          ? pane->rateText() : tr("D: —    U: —"));
+    updateTransferRates(connection && ready ? pane : nullptr);
     updateServerFreeSpace();
 
     if (connection && !m_restoringStartup && !connection->profile.id.isEmpty())
@@ -2165,7 +2227,7 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
             }
             if (activeConnection() == connection)
             {
-                m_ratesLabel->setText(connection->pane->rateText());
+                updateTransferRates(connection->pane);
                 updateServerFreeSpace();
                 updateTorrentCount();
                 updateTorrentActionState();
@@ -2277,6 +2339,7 @@ void MainWindow::applyFontPointSize(int points)
         for (auto *pane : findChildren<ServerPane *>())
             pane->refreshFontMetrics();
 
+    updateStatusBarFieldWidths();
     updateFontActionStates();
 }
 

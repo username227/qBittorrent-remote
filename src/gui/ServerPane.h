@@ -42,7 +42,8 @@ public:
     QSortFilterProxyModel *proxy() const noexcept { return m_proxy; }
 
     void applySync(const QJsonObject &payload);
-    QString rateText() const;
+    QString downloadRateText() const;
+    QString uploadRateText() const;
     QString freeSpaceText() const;
     void setProgressFollowsStateColors(bool enabled);
     void setContentPathMappings(const QList<Remote::PathMapping> &mappings);

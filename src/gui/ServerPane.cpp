@@ -328,25 +328,32 @@ void ServerPane::applySync(const QJsonObject &payload)
     }
 }
 
-QString ServerPane::rateText() const
+namespace
 {
-    const auto rate = [](double bytes) {
-        if (bytes < 0)
-            return QStringLiteral("—");
-        static const char *units[] = {"B/s", "KiB/s", "MiB/s", "GiB/s"};
-        int unit = 0;
-        while (bytes >= 1024 && unit < 3)
-        {
-            bytes /= 1024;
-            ++unit;
-        }
-        return QLocale().toString(bytes, 'f', unit == 0 ? 0 : 1)
-            + QLatin1Char(' ') + QString::fromLatin1(units[unit]);
-    };
+QString formatTransferRate(double bytes)
+{
+    if (bytes < 0)
+        return QStringLiteral("—");
+    static const char *units[] = {"B/s", "KiB/s", "MiB/s", "GiB/s", "TiB/s", "PiB/s", "EiB/s"};
+    int unit = 0;
+    while (bytes >= 1024 && unit < 6)
+    {
+        bytes /= 1024;
+        ++unit;
+    }
+    return QLocale().toString(bytes, 'f', unit == 0 ? 0 : 1)
+        + QLatin1Char(' ') + QString::fromLatin1(units[unit]);
+}
+}
 
-    const double down = m_serverState.value(QStringLiteral("dl_info_speed")).toDouble(-1);
-    const double up = m_serverState.value(QStringLiteral("up_info_speed")).toDouble(-1);
-    return tr("D: %1    U: %2").arg(rate(down), rate(up));
+QString ServerPane::downloadRateText() const
+{
+    return formatTransferRate(m_serverState.value(QStringLiteral("dl_info_speed")).toDouble(-1));
+}
+
+QString ServerPane::uploadRateText() const
+{
+    return formatTransferRate(m_serverState.value(QStringLiteral("up_info_speed")).toDouble(-1));
 }
 
 QString ServerPane::freeSpaceText() const
