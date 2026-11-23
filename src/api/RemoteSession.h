@@ -93,6 +93,10 @@ public:
     void setTorrentAutoManagement(const QStringList &hashes, bool enabled);
     void setSuperSeeding(const QStringList &hashes, bool enabled);
     void toggleTorrentMode(const QStringList &hashes, bool sequential);
+    void setTorrentSavePath(const QStringList &hashes, const QString &path);
+    void setTorrentDownloadPath(const QStringList &hashes, const QString &path);
+    void setTorrentRateLimit(const QStringList &hashes, bool upload, qint64 bytesPerSec);
+    void setTorrentShareLimits(const QString &hash, const QJsonObject &shareLimits);
     void renameTorrentContent(const QString &hash, const QString &oldPath,
                               const QString &newPath);
     void addTorrentUrls(const QString &urls);

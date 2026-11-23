@@ -8,6 +8,7 @@
 #include "gui/RemoteAddTorrentDialog.h"
 #include "gui/RemoteTrackerEntriesDialog.h"
 #include "gui/RemoteTorrentContentLayoutDialog.h"
+#include "gui/RemoteTorrentOptionsDialog.h"
 #include "gui/RemoteFileSystemPathComboEdit.h"
 #include "api/RemoteSession.h"
 #include "api/TorrentMetadataReader.h"
@@ -1308,6 +1309,33 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
             break;
         }
         case ServerPane::TorrentContextAction::TorrentOptions:
+        {
+            const QStringList selected = selectedTorrentHashes();
+            if (selected.isEmpty())
+                break;
+            const auto valid = [this, connection, selected]() {
+                if (!containsConnection(connection) || !connection->connected
+                    || activeConnection() != connection
+                    || selectedTorrentHashes() != selected)
+                    return false;
+                const auto &all = connection->pane->model()->torrents();
+                return std::all_of(selected.cbegin(), selected.cend(),
+                    [&all](const QString &hash) { return all.contains(hash); });
+            };
+            if (!valid())
+                break;
+            QVector<QPair<QString, QJsonObject>> torrents;
+            const auto &all = connection->pane->model()->torrents();
+            for (const QString &hash : selected)
+                torrents.append({hash, all.value(hash)});
+            const Remote::PathMappingStore paths(*m_settings);
+            RemoteTorrentOptionsDialog dialog(connection->session, torrents,
+                connection->pane->categories(), paths.mappings(connection->profile.id),
+                valid, this);
+            trackDialogGeometry(dialog, QStringLiteral("TorrentOptions"));
+            dialog.exec();
+            break;
+        }
         case ServerPane::TorrentContextAction::ExportTorrent:
         case ServerPane::TorrentContextAction::SuperSeeding:
         case ServerPane::TorrentContextAction::SequentialDownload:
