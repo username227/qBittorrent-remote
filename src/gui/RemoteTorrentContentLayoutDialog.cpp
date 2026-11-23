@@ -12,7 +12,7 @@
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPushButton>
-#include <QSignalBlocker>
+#include <QScopedValueRollback>
 #include <QStandardItem>
 #include <QStandardItemModel>
 #include <QTimer>
@@ -114,8 +114,10 @@ void RemoteTorrentContentLayoutDialog::received(
 {
     if (tab != 4 || hash != m_hash || !m_loading)
         return;
-    m_loading = false;
-    const QSignalBlocker block(m_model);
+    // The view MUST receive begin/end reset and row insertion signals.
+    // Suppressing model signals here leaves QTreeView holding invalid
+    // QModelIndexes after clear(), which crashes during paint.
+    // m_loading keeps itemChanged from treating population as user edits.
     m_model->clear();
     m_model->setHorizontalHeaderLabels({tr("Index"), tr("Path")});
     m_original.clear();
@@ -139,6 +141,7 @@ void RemoteTorrentContentLayoutDialog::received(
             m_model->index(0, 1),
             QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
     updateCommonPath();
+    m_loading = false;
     updateApply();
 }
 
@@ -146,10 +149,9 @@ void RemoteTorrentContentLayoutDialog::updateApply()
 {
     if (m_loading || m_pending)
         return;
-    // Marking an edited path in italics changes the model's FontRole;
-    // without blocking those signals, itemChanged recursively re-enters
-    // this slot and overflows the stack.
-    const QSignalBlocker block(m_model);
+    // Allow Qt's dataChanged notifications to reach the view, while
+    // preventing itemChanged from recursively recalculating appearance.
+    const QScopedValueRollback<bool> renderingGuard(m_loading, true);
     bool modified = false;
     for (int row = 0; row < m_model->rowCount(); ++row)
     {

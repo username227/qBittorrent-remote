@@ -32,10 +32,3 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: ctest --preset dev --output-on-failure
-      - name: Diagnose Manage Content crash (temporary, remove after fix)
-        if: failure()
-        env:
-          QT_QPA_PLATFORM: offscreen
-        run: |
-          pacman -S --noconfirm --needed gdb
-          gdb --quiet --batch -ex 'set pagination off' -ex run -ex 'thread apply all bt 35' --args ./build/dev/test_connection_workflow nativeManageContentAndTorrentOptionsChangeServerState
