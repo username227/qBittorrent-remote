@@ -15,6 +15,7 @@
 #include <QSslConfiguration>
 #include <QUrlQuery>
 
+#include <algorithm>
 #include <utility>
 
 namespace
@@ -648,6 +649,31 @@ void RemoteSession::commandTorrents(TorrentCommand command,
     queueOperation(QStringLiteral("api/v2/torrents/") + endpoint,
                    form.toString(QUrl::FullyEncoded).toUtf8(),
                    QByteArrayLiteral("application/x-www-form-urlencoded"), description);
+}
+
+void RemoteSession::setTorrentLocation(const QStringList &hashes, const QString &remotePath)
+{
+    static const QRegularExpression validHash(
+        QStringLiteral("^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$"));
+    if (hashes.isEmpty() || std::any_of(hashes.cbegin(), hashes.cend(),
+            [&validHash](const QString &hash) { return !validHash.match(hash).hasMatch(); })
+        || remotePath.isEmpty() || remotePath == QLatin1String("/")
+        || !remotePath.startsWith(QLatin1Char('/'))
+        || remotePath.contains(QLatin1Char('\\'))
+        || remotePath.contains(QLatin1Char('\n'))
+        || remotePath.contains(QLatin1Char('\r')))
+    {
+        emit operationFailed(tr("Set torrent location"),
+            tr("Select valid torrents and a non-root absolute remote POSIX folder."));
+        return;
+    }
+    QUrlQuery form;
+    form.addQueryItem(QStringLiteral("hashes"), hashes.join(QLatin1Char('|')));
+    form.addQueryItem(QStringLiteral("location"), remotePath);
+    queueOperation(QStringLiteral("api/v2/torrents/setLocation"),
+                   form.toString(QUrl::FullyEncoded).toUtf8(),
+                   QByteArrayLiteral("application/x-www-form-urlencoded"),
+                   tr("Set torrent location"));
 }
 
 namespace

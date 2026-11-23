@@ -1758,6 +1758,116 @@ private slots:
         QCOMPARE(server.commandsFor("/api/v2/torrents/setLocation"), 0);
     }
 
+
+    void userSetsRemoteLocationUsingActualTorrentContextMenu()
+    {
+        DemoQbittorrentServer server(true);
+        server.enableTorrentSyncDemo();
+        server.enableMappedFolderDemo();
+        server.keepDemoTorrents();
+        QVERIFY(server.start());
+
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QVERIFY(QDir().mkpath(temp.filePath(QStringLiteral("NAS/New Location"))));
+        QSettings settings(temp.filePath(QStringLiteral("profiles.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        QTRY_VERIFY(window.isVisible());
+        openConnectDialog(window, server.url());
+
+        auto *table = window.findChild<QTableView *>(QStringLiteral("torrentList"));
+        QVERIFY(table);
+        QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 1, 6000);
+        const auto saved = Remote::ProfileStore(settings).profiles();
+        QCOMPARE(saved.size(), 1);
+        Remote::PathMappingStore mappings(settings);
+        QVERIFY(mappings.replace(saved.first().id,
+            {{temp.filePath(QStringLiteral("NAS")), QStringLiteral("/share/NAS")}}));
+
+        table->selectRow(0);
+        const QModelIndex row = table->selectionModel()->selectedRows(0).value(0);
+        QVERIFY(row.isValid());
+        QString error;
+        int locationDialogs = 0;
+
+        // Exercise the actual native menu and dialog with its path widget,
+        // not a direct call to the backend or an internal signal.
+        class LocationDialogDriver final : public QObject {
+        public:
+            int count = 0;
+            QString error;
+            bool eventFilter(QObject *obj, QEvent *event) override
+            {
+                if (event->type() != QEvent::Show)
+                    return QObject::eventFilter(obj, event);
+                auto *dialog = qobject_cast<QDialog *>(obj);
+                if (!dialog || dialog->objectName() != QLatin1String("setTorrentLocationDialog"))
+                    return QObject::eventFilter(obj, event);
+                ++count;
+                QTimer::singleShot(0, dialog, [this, dialog]() {
+                    auto *selector = dialog->findChild<QComboBox *>(
+                        QStringLiteral("remoteSetLocationPath"));
+                    auto *buttons = dialog->findChild<QDialogButtonBox *>(
+                        QStringLiteral("setTorrentLocationButtons"));
+                    if (!selector || !buttons || !buttons->button(QDialogButtonBox::Ok)
+                        || selector->currentText() != QStringLiteral("/share/NAS/Music"))
+                    {
+                        error = QStringLiteral("Set Location dialog did not reflect remote save path");
+                        dialog->reject();
+                        return;
+                    }
+                    // User enters a mapped local folder; the application
+                    // must translate it to the selected NAS's remote path.
+                    selector->setEditText(property("localPath").toString());
+                    buttons->button(QDialogButtonBox::Ok)->click();
+                });
+                return QObject::eventFilter(obj, event);
+            }
+        } driver;
+        QApplication::instance()->installEventFilter(&driver);
+        const QString localLocation = temp.filePath(QStringLiteral("NAS/New Location"));
+        // Use per-instance data on the driver to avoid static global paths.
+        driver.setProperty("localPath", localLocation);
+        QTimer::singleShot(0, &window, [&]() {
+            auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+            if (!menu || menu->objectName() != QLatin1String("torrentListContextMenu"))
+            {
+                error = QStringLiteral("No native torrent context menu");
+                if (menu) menu->close();
+                return;
+            }
+            QAction *action = nullptr;
+            for (QAction *a : menu->actions())
+                if (a->objectName() == QLatin1String("torrentContextSetLocation"))
+                    action = a;
+            const QPixmap expected = QIcon(
+                QStringLiteral(":/icons/set-location.svg")).pixmap(16, 16);
+            if (!action || !action->isEnabled() || !action->isIconVisibleInMenu()
+                || action->icon().pixmap(16, 16).toImage() != expected.toImage())
+                error = QStringLiteral("Native Set Location action is absent or has wrong icon");
+            else
+                action->trigger();
+            menu->close();
+        });
+        QVERIFY(QMetaObject::invokeMethod(table, "customContextMenuRequested",
+            Qt::DirectConnection, Q_ARG(QPoint, table->visualRect(row).center())));
+        QApplication::instance()->removeEventFilter(&driver);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QVERIFY2(driver.error.isEmpty(), qPrintable(driver.error));
+        QCOMPARE(driver.count, 1);
+
+        QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor("/api/v2/torrents/setLocation"), 1, 6000);
+        const QUrlQuery post(QString::fromUtf8(
+            server.lastCommandBody("/api/v2/torrents/setLocation")));
+        QCOMPARE(post.queryItemValue(QStringLiteral("hashes")),
+                 QStringLiteral("0123456789abcdef0123456789abcdef01234567"));
+        QCOMPARE(post.queryItemValue(QStringLiteral("location")),
+                 QStringLiteral("/share/NAS/New Location"));
+        QCOMPARE(server.commandsFor("/api/v2/torrents/rename"), 0);
+    }
+
     void userQueueSubmenuSendsSelectedTorrentCommandsToAuthenticatedServer()
     {
         // The user opens the actual main window, logs into a disposable

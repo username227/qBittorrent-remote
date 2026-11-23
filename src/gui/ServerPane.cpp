@@ -473,6 +473,12 @@ void ServerPane::showTorrentContextMenu(const QPoint &position)
         emit torrentContextActionRequested(TorrentContextAction::Remove);
     });
     menu.addSeparator();
+    QAction *setLocation = menu.addAction(icon("set-location"), tr("Set Location..."));
+    setLocation->setObjectName(QStringLiteral("torrentContextSetLocation"));
+    setLocation->setIconVisibleInMenu(true);
+    connect(setLocation, &QAction::triggered, this, [this]() {
+        emit torrentContextActionRequested(TorrentContextAction::SetLocation);
+    });
 
     // Upstream places these after category/options controls, which can be
     // inserted above them by subsequent focused context-menu PRs.

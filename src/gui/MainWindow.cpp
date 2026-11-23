@@ -6,6 +6,7 @@
 #include "gui/ConnectionDialog.h"
 #include "gui/RemotePreferencesDialog.h"
 #include "gui/RemoteAddTorrentDialog.h"
+#include "gui/RemoteFileSystemPathComboEdit.h"
 #include "api/RemoteSession.h"
 #include "api/TorrentMetadataReader.h"
 #include "api/PathMappingStore.h"
@@ -14,6 +15,8 @@
 #include "ui_mainwindow.h"
 
 #include <QDialog>
+#include <QDialogButtonBox>
+#include <QVBoxLayout>
 #include <QDesktopServices>
 #include <QDir>
 #include <QCloseEvent>
@@ -747,6 +750,126 @@ void MainWindow::setupActions()
 }
 
 
+
+void MainWindow::setSelectedTorrentLocation()
+{
+    const auto connection = activeConnection();
+    if (!connection || !connection->connected)
+        return;
+    const QStringList hashes = selectedTorrentHashes();
+    if (hashes.isEmpty())
+        return;
+
+    // Present only a destination belonging to this server. Several torrents
+    // with different old paths intentionally have no misleading default.
+    QString previousPath;
+    bool first = true;
+    for (const QString &hash : hashes)
+    {
+        const QString path = connection->pane->model()->torrents().value(hash)
+            .value(QStringLiteral("save_path")).toString();
+        if (first)
+        {
+            previousPath = path;
+            first = false;
+        }
+        else if (previousPath != path)
+        {
+            previousPath.clear();
+            break;
+        }
+    }
+
+    const Remote::PathMappingStore store(*m_settings);
+    const auto mappings = store.mappings(connection->profile.id);
+
+    // Unlike the original local qBittorrent, we cannot browse the NAS's
+    // filesystem directly. Accept an absolute server path, or browse a
+    // configured local mount and translate it to a remote POSIX path.
+    QDialog dialog(this);
+    dialog.setObjectName(QStringLiteral("setTorrentLocationDialog"));
+    dialog.setWindowTitle(tr("Set Location"));
+    dialog.setMinimumWidth(480);
+    auto *layout = new QVBoxLayout(&dialog);
+    auto *label = new QLabel(tr("New save path on %1:")
+        .arg(connection->profile.name), &dialog);
+    layout->addWidget(label);
+    auto *destination = new RemoteFileSystemPathComboEdit(&dialog);
+    destination->setObjectName(QStringLiteral("setTorrentLocationSelector"));
+    destination->comboBox()->setObjectName(QStringLiteral("remoteSetLocationPath"));
+    destination->setInsertPolicy(QComboBox::NoInsert);
+    destination->setToolTip(tr("Enter an absolute path on the remote server "
+        "(for example /share/Downloads), or browse a mapped local NAS mount."));
+    for (const auto &mapping : mappings)
+        destination->addItem(mapping.remoteRoot);
+    destination->setCurrentIndex(-1);
+    destination->setEditText(previousPath);
+    layout->addWidget(destination);
+    auto *warning = new QLabel(tr(
+        "qBittorrent will move the selected torrents' data on the remote "
+        "server. The destination must be writable on that server."), &dialog);
+    warning->setWordWrap(true);
+    layout->addWidget(warning);
+
+    auto *buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    buttons->setObjectName(QStringLiteral("setTorrentLocationButtons"));
+    layout->addWidget(buttons);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    connect(destination, &RemoteFileSystemPathComboEdit::browseRequested,
+            &dialog, [&, this]() {
+        if (mappings.isEmpty())
+        {
+            QMessageBox::information(&dialog, tr("No path mappings"),
+                tr("Configure a local NAS mount in Preferences → Servers, "
+                   "or enter an absolute remote server path."));
+            return;
+        }
+        const QString local = QFileDialog::getExistingDirectory(
+            &dialog, tr("Choose mapped local NAS directory"),
+            mappings.first().localRoot);
+        if (local.isEmpty())
+            return;
+        const QString remote = Remote::PathMappingStore::toRemote(local, mappings);
+        if (remote.isEmpty())
+        {
+            QMessageBox::warning(&dialog, tr("Unmapped directory"),
+                tr("The chosen directory is not covered by this server's path mappings."));
+            return;
+        }
+        destination->setEditText(remote);
+    });
+
+    QString chosenLocation;
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, [&, this]() {
+        const QString input = destination->currentText().trimmed();
+        const QString mapped = Remote::PathMappingStore::toRemote(input, mappings);
+        const QString remote = mapped.isEmpty() ? input : mapped;
+        if (remote.isEmpty() || remote == QLatin1String("/")
+            || !remote.startsWith(QLatin1Char('/'))
+            || remote.contains(QLatin1Char('\\'))
+            || remote.contains(QLatin1Char('\n'))
+            || remote.contains(QLatin1Char('\r')))
+        {
+            QMessageBox::warning(&dialog, tr("Invalid remote location"),
+                tr("Enter a non-root absolute POSIX path on %1, or browse a mapped "
+                   "local NAS folder.").arg(connection->profile.name));
+            return;
+        }
+        chosenLocation = remote;
+        dialog.accept();
+    });
+    if (dialog.exec() != QDialog::Accepted || chosenLocation == previousPath)
+        return;
+
+    // The user may have changed tabs or disconnected while the modal dialog
+    // was open. Never relocate torrents on a different remote server.
+    if (!containsConnection(connection) || !connection->connected
+        || activeConnection() != connection || selectedTorrentHashes() != hashes)
+        return;
+    connection->session->setTorrentLocation(hashes, chosenLocation);
+}
+
 void MainWindow::openSelectedTorrentDestinations()
 {
     const auto connection = activeConnection();
@@ -1053,6 +1176,9 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
             break;
         case ServerPane::TorrentContextAction::OpenDestinationFolder:
             m_ui->actionOpenDestinationFolder->trigger();
+            break;
+        case ServerPane::TorrentContextAction::SetLocation:
+            setSelectedTorrentLocation();
             break;
         }
     });
