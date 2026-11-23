@@ -441,7 +441,6 @@ void MainWindow::setupActions()
         {m_ui->actionBottomQueuePos, "go-bottom"},
         {m_ui->actionCreateTorrent, "torrent-creator"},
         {m_ui->actionOptions, "configure"},
-        {m_ui->actionUseAlternativeSpeedLimits, "slow"},
         {m_ui->actionSetGlobalSpeedLimits, "speedometer"},
         {m_ui->actionPauseSession, "pause-session"},
         {m_ui->actionResumeSession, "torrent-start"},
