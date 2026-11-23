@@ -46,6 +46,7 @@ public:
     QString freeSpaceText() const;
     void setProgressFollowsStateColors(bool enabled);
     void setContentPathMappings(const QList<Remote::PathMapping> &mappings);
+    void setContentDragEnabled(bool enabled);
     void setSeparateTrackerStatusFilter(bool enabled);
     void setSearchTerm(const QString &text);
     const QString &searchTerm() const noexcept { return m_search; }

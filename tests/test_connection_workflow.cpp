@@ -2175,6 +2175,87 @@ private slots:
         QCOMPARE(server.commandsFor("/api/v2/torrents/add"), 2);
     }
 
+    void contentDragPreferenceIsEnabledAndControlsNativeDragMode()
+    {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("drag-preferences.ini")),
+                           QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        QTRY_VERIFY(window.isVisible());
+
+        auto *content = window.findChild<MappedContentTreeWidget *>(
+            QStringLiteral("torrentContent"));
+        auto *preferences = window.findChild<QAction *>(QStringLiteral("actionOptions"));
+        QVERIFY(content && preferences);
+        // Preserve the existing working drag-out behavior on upgrade.
+        QVERIFY(content->dragEnabled());
+
+        QString error;
+        const auto changePreference = [&](bool enabled) {
+            QTimer::singleShot(0, &window, [&]() {
+                auto *dialog = qobject_cast<RemotePreferencesDialog *>(
+                    QApplication::activeModalWidget());
+                if (!dialog)
+                {
+                    error = QStringLiteral("Preferences did not open");
+                    return;
+                }
+                auto *check = dialog->findChild<QCheckBox *>(
+                    QStringLiteral("checkTorrentContentDrag"));
+                auto *buttons = dialog->findChild<QDialogButtonBox *>(
+                    QStringLiteral("buttonBox"));
+                if (!check || !check->isEnabled() || !buttons
+                    || !buttons->button(QDialogButtonBox::Ok))
+                {
+                    error = QStringLiteral("Native Content drag option remains disabled");
+                    dialog->reject();
+                    return;
+                }
+                check->setChecked(enabled);
+                buttons->button(QDialogButtonBox::Ok)->click();
+            });
+            preferences->trigger();
+        };
+
+        changePreference(false);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QCOMPARE(settings.value(QStringLiteral(
+            "Preferences/Behavior/TorrentContentDragEnabled")).toBool(), false);
+        QVERIFY(!content->dragEnabled());
+
+        // Upstream's Alt inversion: unchecked prefers selection, Alt drags.
+        auto *viewport = content->viewport();
+        QTest::mousePress(viewport, Qt::LeftButton, Qt::AltModifier, QPoint(3, 3));
+        QVERIFY(content->dragEnabled());
+        QTest::mouseRelease(viewport, Qt::LeftButton, Qt::AltModifier, QPoint(3, 3));
+        QTest::mousePress(viewport, Qt::LeftButton, Qt::NoModifier, QPoint(3, 3));
+        QVERIFY(!content->dragEnabled());
+        QTest::mouseRelease(viewport, Qt::LeftButton, Qt::NoModifier, QPoint(3, 3));
+
+        changePreference(true);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QCOMPARE(settings.value(QStringLiteral(
+            "Preferences/Behavior/TorrentContentDragEnabled")).toBool(), true);
+        QVERIFY(content->dragEnabled());
+
+        // Checked prefers dragging, Alt gives multi-selection again.
+        QTest::mousePress(viewport, Qt::LeftButton, Qt::AltModifier, QPoint(3, 3));
+        QVERIFY(!content->dragEnabled());
+        QTest::mouseRelease(viewport, Qt::LeftButton, Qt::AltModifier, QPoint(3, 3));
+        QTest::mousePress(viewport, Qt::LeftButton, Qt::NoModifier, QPoint(3, 3));
+        QVERIFY(content->dragEnabled());
+        QTest::mouseRelease(viewport, Qt::LeftButton, Qt::NoModifier, QPoint(3, 3));
+
+        // Reopening the dialog must reflect the saved choice.
+        RemotePreferencesDialog reopened(settings);
+        auto *check = reopened.findChild<QCheckBox *>(
+            QStringLiteral("checkTorrentContentDrag"));
+        QVERIFY(check && check->isEnabled() && check->isChecked());
+    }
+
     void userDragsOnlyExistingMappedContentAsCopyUris()
     {
         DemoQbittorrentServer server(true);

@@ -285,6 +285,10 @@ void RemotePreferencesDialog::loadLocalBehaviorControls()
             combo->view()->setEnabled(true);
     };
     unlock(m_ui->confirmDeletion);
+    unlock(m_ui->checkTorrentContentDrag,
+        tr("Allow dragging files from the Content tab into a file manager. "
+           "Hold Alt to invert drag versus selection behavior. "
+           "The files must be accessible through this server's path mappings."));
     unlock(m_ui->checkUseTorrentStatesColors);
     unlock(m_ui->checkProgressBarFollowsTextColor);
     unlock(m_ui->checkBoxUseSeparateTrackerStatusFilter);
@@ -342,6 +346,8 @@ void RemotePreferencesDialog::loadLocalBehaviorControls()
         QStringLiteral("Preferences/Behavior/ConfirmTorrentDeletion"), true).toBool());
     m_ui->checkProgramExitConfirm->setChecked(m_settings.value(
         QStringLiteral("Preferences/Behavior/ConfirmExit"), false).toBool());
+    m_ui->checkTorrentContentDrag->setChecked(m_settings.value(
+        QStringLiteral("Preferences/Behavior/TorrentContentDragEnabled"), true).toBool());
     m_ui->checkUseTorrentStatesColors->setChecked(m_settings.value(
         QStringLiteral("Preferences/Behavior/StateColors"), true).toBool());
     m_ui->checkProgressBarFollowsTextColor->setChecked(m_settings.value(
@@ -408,6 +414,7 @@ void RemotePreferencesDialog::loadLocalBehaviorControls()
             this, [dirty](int) { dirty(); });
     connect(m_ui->confirmDeletion, &QCheckBox::toggled, this, dirty);
     connect(m_ui->checkProgramExitConfirm, &QCheckBox::toggled, this, dirty);
+    connect(m_ui->checkTorrentContentDrag, &QCheckBox::toggled, this, dirty);
     connect(m_ui->checkUseTorrentStatesColors, &QCheckBox::toggled, this,
             [this, dirty](bool enabled) {
                 m_ui->checkProgressBarFollowsTextColor->setEnabled(enabled);
@@ -968,6 +975,8 @@ bool RemotePreferencesDialog::applyChanges()
             m_ui->confirmDeletion->isChecked());
         m_settings.setValue(QStringLiteral("Preferences/Behavior/ConfirmExit"),
             m_ui->checkProgramExitConfirm->isChecked());
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/TorrentContentDragEnabled"),
+            m_ui->checkTorrentContentDrag->isChecked());
         m_settings.setValue(QStringLiteral("Preferences/Behavior/StateColors"),
             m_ui->checkUseTorrentStatesColors->isChecked());
         m_settings.setValue(QStringLiteral("Preferences/Behavior/ProgressFollowsState"),

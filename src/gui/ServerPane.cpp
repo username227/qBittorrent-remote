@@ -371,6 +371,11 @@ void ServerPane::setContentPathMappings(const QList<Remote::PathMapping> &mappin
     m_details->setContentPathMappings(mappings);
 }
 
+void ServerPane::setContentDragEnabled(bool enabled)
+{
+    m_details->setContentDragEnabled(enabled);
+}
+
 void ServerPane::setProgressFollowsStateColors(bool enabled)
 {
     auto *delegate = static_cast<TransferListDelegate *>(m_table->itemDelegate());

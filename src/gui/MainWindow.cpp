@@ -359,6 +359,8 @@ void MainWindow::showEmptyPane()
     if (!m_emptyPane && m_views && m_connections.isEmpty())
     {
         m_emptyPane = new ServerPane(m_views);
+        m_emptyPane->setContentDragEnabled(m_settings->value(
+            QStringLiteral("Preferences/Behavior/TorrentContentDragEnabled"), true).toBool());
         m_views->addTab(m_emptyPane, upstreamIcon("folder-remote"), tr("Transfers"));
         m_views->setCurrentWidget(m_emptyPane);
         enableTorrentDrops(m_emptyPane);
@@ -1201,6 +1203,8 @@ void MainWindow::updateTorrentCount()
 void MainWindow::applyLocalBehaviorPreferences()
 {
     updateTraySettings();
+    const bool contentDrag = m_settings->value(
+        QStringLiteral("Preferences/Behavior/TorrentContentDragEnabled"), true).toBool();
     const bool stateColors = m_settings->value(
         QStringLiteral("Preferences/Behavior/StateColors"), true).toBool();
     const bool progressColor = m_settings->value(
@@ -1217,7 +1221,7 @@ void MainWindow::applyLocalBehaviorPreferences()
     const bool hideZeroStatus = m_settings->value(
         QStringLiteral("Preferences/Behavior/HideZeroStatusFilters"), false).toBool();
     const auto apply = [alternating, hideZero, mode, hideZeroStatus,
-                        stateColors, progressColor, separateTracker](ServerPane *pane) {
+                        stateColors, progressColor, separateTracker, contentDrag](ServerPane *pane) {
         if (!pane)
             return;
         pane->table()->setAlternatingRowColors(alternating);
@@ -1225,6 +1229,7 @@ void MainWindow::applyLocalBehaviorPreferences()
         pane->sidebar()->setHideZeroStatusFilters(hideZeroStatus);
         pane->model()->setUseStateColors(stateColors);
         pane->setProgressFollowsStateColors(progressColor && stateColors);
+        pane->setContentDragEnabled(contentDrag);
         pane->setSeparateTrackerStatusFilter(separateTracker);
     };
     apply(m_emptyPane);
@@ -1473,6 +1478,8 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
     auto connection = std::make_shared<SessionContext>();
     connection->profile = profile;
     connection->pane = new ServerPane(m_views);
+    connection->pane->setContentDragEnabled(m_settings->value(
+        QStringLiteral("Preferences/Behavior/TorrentContentDragEnabled"), true).toBool());
     connection->pane->setContentPathMappings(
         Remote::PathMappingStore(*m_settings).mappings(profile.id));
     enableTorrentDrops(connection->pane);

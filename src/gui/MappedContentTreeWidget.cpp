@@ -4,6 +4,7 @@
 #include <QDrag>
 #include <QFileInfo>
 #include <QMimeData>
+#include <QMouseEvent>
 #include <QSet>
 #include <QUrl>
 
@@ -23,6 +24,20 @@ void MappedContentTreeWidget::setRemoteRoots(const QString &savePath,
 {
     m_savePath = savePath;
     m_contentPath = contentPath;
+}
+
+void MappedContentTreeWidget::setContentDragEnabled(bool enabled)
+{
+    m_contentDragEnabled = enabled;
+    setDragEnabled(enabled);
+}
+
+void MappedContentTreeWidget::mousePressEvent(QMouseEvent *event)
+{
+    // Match upstream TorrentContentWidget: Alt temporarily reverses the
+    // preferred interaction between drag-and-drop and multiple selection.
+    setDragEnabled(m_contentDragEnabled != event->modifiers().testFlag(Qt::AltModifier));
+    QTreeWidget::mousePressEvent(event);
 }
 
 QMimeData *MappedContentTreeWidget::mappedSelectionMimeData() const

@@ -32,6 +32,7 @@ public:
     void displayError(const QString &hash, int tab, const QString &reason);
     void appendRates(double downloadBytesPerSec, double uploadBytesPerSec);
     void setContentPathMappings(const QList<Remote::PathMapping> &mappings);
+    void setContentDragEnabled(bool enabled);
 
 signals:
     void filePriorityRequested(const QString &hash, const QList<int> &ids, int priority);

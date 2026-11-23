@@ -535,7 +535,7 @@ TorrentDetailsWidget::TorrentDetailsWidget(QWidget *parent)
     tree->setColumnWidth(5, 95);
     tree->setItemDelegate(new ContentProgressDelegate(tree));
     tree->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    tree->setDragEnabled(true);
+    tree->setDragEnabled(true); // Keep existing working drag behavior by default.
     tree->setDragDropMode(QAbstractItemView::DragOnly);
     tree->setDefaultDropAction(Qt::CopyAction);
     tree->setSelectionMode(QAbstractItemView::ExtendedSelection);
@@ -916,6 +916,11 @@ void TorrentDetailsWidget::setContentPathMappings(
     const QList<Remote::PathMapping> &mappings)
 {
     m_ui->filesList->setPathMappings(mappings);
+}
+
+void TorrentDetailsWidget::setContentDragEnabled(bool enabled)
+{
+    m_ui->filesList->setContentDragEnabled(enabled);
 }
 
 void TorrentDetailsWidget::displayFiles(const QJsonArray &files)
