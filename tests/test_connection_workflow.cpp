@@ -938,7 +938,12 @@ private slots:
 
         QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 1, 6000);
         QCOMPARE(table->model()->index(0, 0).data().toString(), QStringLiteral("Demo Linux ISO"));
-        QVERIFY(window.statusBar()->findChildren<QLabel *>().size() > 0);
+        auto *rates = window.statusBar()->findChild<QLabel *>(
+            QStringLiteral("remoteTransferRates"));
+        QVERIFY(rates);
+        // These are observed status-bar values from the real authenticated
+        // /sync/maindata response, not a direct call into the rate formatter.
+        QCOMPARE(rates->text(), QStringLiteral("D: 2.0 KiB/s    U: 1.0 KiB/s"));
 
         auto *search = window.findChild<QLineEdit *>(QStringLiteral("torrentSearch"));
         QVERIFY2(search && search->isEnabled(), "Live torrent search should be enabled.");
@@ -950,7 +955,11 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(table->model()->index(0, 0).data().toString(),
                                   QStringLiteral("Updated Linux ISO"), 6000);
         QCOMPARE(table->model()->index(0, 2).data().toString().endsWith(QLatin1Char('%')), true);
+        // On the incremental sync, only the download rate changes.
+        // Upload must retain the previous server-reported rate.
+        QCOMPARE(rates->text(), QStringLiteral("D: 4.0 KiB/s    U: 1.0 KiB/s"));
         QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 0, 9000);
+        QCOMPARE(rates->text(), QStringLiteral("D: 0 B/s    U: 0 B/s"));
     }
 
     void nativeTransferPresentationShowsUpstreamProgressAndAvailability()

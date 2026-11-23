@@ -230,6 +230,8 @@ MainWindow::MainWindow(QWidget *parent, QSettings *settings,
 
     m_ui->statusBar->showMessage(tr("Not connected to a server"));
     m_ratesLabel = new QLabel(tr("D: —    U: —"), m_ui->statusBar);
+    m_ratesLabel->setObjectName(QStringLiteral("remoteTransferRates"));
+    m_ratesLabel->setToolTip(tr("Live download and upload rates reported by the selected qBittorrent server."));
     m_ui->statusBar->addPermanentWidget(m_ratesLabel);
     restoreWindowLayout();
 
