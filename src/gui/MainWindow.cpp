@@ -1197,8 +1197,12 @@ void MainWindow::toggleWindowFromTray()
 void MainWindow::quitCompletely()
 {
     m_forceExit = true;
-    close();
-    QApplication::quit();
+    // closeEvent() may reject exit when the user declines confirmation.
+    // QApplication::quit() must never bypass that decision.
+    const bool accepted = close();
+    m_forceExit = false;
+    if (accepted)
+        QApplication::quit();
 }
 
 void MainWindow::showForStartup()
