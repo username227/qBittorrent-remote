@@ -972,6 +972,43 @@ private slots:
         }
     }
 
+    void corruptedOldToolbarSettingsRecoverOnce()
+    {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("legacy-layout.ini")),
+                           QSettings::IniFormat);
+        settings.setValue(QStringLiteral("Layout/ToolbarVisible"), false);
+        settings.setValue(QStringLiteral("Layout/StatusbarVisible"), false);
+        DemoCredentialVault vault;
+        {
+            MainWindow window(nullptr, &settings, &vault);
+            window.show();
+            QTRY_VERIFY(window.isVisible());
+            auto *toolbar = window.findChild<QToolBar *>(QStringLiteral("toolBar"));
+            auto *statusbar = window.findChild<QStatusBar *>(QStringLiteral("statusBar"));
+            QVERIFY(toolbar && statusbar);
+            QVERIFY(toolbar->isVisible());
+            QVERIFY(statusbar->isVisible());
+            QVERIFY(window.close());
+        }
+        QCOMPARE(settings.value(QStringLiteral("Layout/ViewVisibilityVersion")).toInt(), 2);
+        // Subsequent deliberate changes are respected, not migrated again.
+        settings.setValue(QStringLiteral("Layout/ToolbarVisible"), false);
+        settings.setValue(QStringLiteral("Layout/StatusbarVisible"), false);
+        {
+            MainWindow window(nullptr, &settings, &vault);
+            window.show();
+            QTRY_VERIFY(window.isVisible());
+            auto *toolbar = window.findChild<QToolBar *>(QStringLiteral("toolBar"));
+            auto *statusbar = window.findChild<QStatusBar *>(QStringLiteral("statusBar"));
+            QVERIFY(toolbar && statusbar);
+            QVERIFY(!toolbar->isVisible());
+            QVERIFY(!statusbar->isVisible());
+            QVERIFY(window.close());
+        }
+    }
+
     void mainWindowAndEachServerRestoreNativeLayout()
     {
         DemoQbittorrentServer alpha(true, nullptr, true);

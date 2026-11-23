@@ -525,16 +525,6 @@
                 </widget>
                </item>
                <item>
-                <widget class="QCheckBox" name="checkShowSplash">
-                 <property name="text">
-                  <string>Show splash screen on start up</string>
-                 </property>
-                 <property name="checked">
-                  <bool>true</bool>
-                 </property>
-                </widget>
-               </item>
-               <item>
                 <layout class="QHBoxLayout" name="windowStateLayout">
                  <item>
                   <widget class="QLabel" name="windowStateLabel">
@@ -572,16 +562,6 @@
                  </property>
                  <property name="text">
                   <string>Confirmation on exit when torrents are active</string>
-                 </property>
-                 <property name="checked">
-                  <bool>true</bool>
-                 </property>
-                </widget>
-               </item>
-               <item>
-                <widget class="QCheckBox" name="checkProgramAutoExitConfirm">
-                 <property name="text">
-                  <string>Confirmation on auto-exit when downloads finish</string>
                  </property>
                  <property name="checked">
                   <bool>true</bool>
@@ -744,13 +724,6 @@
                 </widget>
                </item>
                <item>
-                <widget class="QCheckBox" name="checkProgramUpdates">
-                 <property name="text">
-                  <string>Check for program updates</string>
-                 </property>
-                </widget>
-               </item>
-               <item>
                 <widget class="QCheckBox" name="checkShowSpeedInDock">
                  <property name="text">
                   <string>Show speed in Dock</string>
@@ -761,29 +734,6 @@
                 <widget class="QCheckBox" name="checkShowMenuBarIcon">
                  <property name="text">
                   <string>Show qBittorrent in menu bar</string>
-                 </property>
-                </widget>
-               </item>
-              </layout>
-             </widget>
-            </item>
-            <item>
-             <widget class="QGroupBox" name="groupBox">
-              <property name="title">
-               <string>Power Management</string>
-              </property>
-              <layout class="QVBoxLayout" name="verticalLayout_16">
-               <item>
-                <widget class="QCheckBox" name="checkPreventFromSuspendWhenDownloading">
-                 <property name="text">
-                  <string>Inhibit system sleep when torrents are downloading</string>
-                 </property>
-                </widget>
-               </item>
-               <item>
-                <widget class="QCheckBox" name="checkPreventFromSuspendWhenSeeding">
-                 <property name="text">
-                  <string>Inhibit system sleep when torrents are seeding</string>
                  </property>
                 </widget>
                </item>

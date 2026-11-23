@@ -2098,6 +2098,15 @@ void MainWindow::restoreWindowLayout()
     // explicitly apply our saved View menu choices after it: setChecked()
     // alone emits nothing when an action is already checked, even if the
     // restored widget is unexpectedly hidden.
+    // Previous versions recorded false while the entire window was hidden
+    // to tray. Recover that poisoned persisted state once, not on every run.
+    // After migration, intentionally hidden toolbars still stay hidden.
+    if (m_settings->value(QStringLiteral("Layout/ViewVisibilityVersion"), 0).toInt() < 2)
+    {
+        m_settings->setValue(QStringLiteral("Layout/ToolbarVisible"), true);
+        m_settings->setValue(QStringLiteral("Layout/StatusbarVisible"), true);
+        m_settings->setValue(QStringLiteral("Layout/ViewVisibilityVersion"), 2);
+    }
     const bool toolbarVisible = m_settings->value(
         QStringLiteral("Layout/ToolbarVisible"), true).toBool();
     const bool statusbarVisible = m_settings->value(
