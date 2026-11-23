@@ -22,6 +22,10 @@
 #include <QVBoxLayout>
 #include <QDesktopServices>
 #include <QDir>
+#include <QDragEnterEvent>
+#include <QDragMoveEvent>
+#include <QDropEvent>
+#include <QMimeData>
 #include <QCloseEvent>
 #include <QGuiApplication>
 #include <QScreen>
@@ -70,6 +74,58 @@
 
 namespace
 {
+struct DroppedTorrentSources
+{
+    QStringList files;
+    QStringList links;
+    bool valid() const { return !files.isEmpty() || !links.isEmpty(); }
+};
+
+DroppedTorrentSources droppedTorrentSources(const QMimeData *mime)
+{
+    DroppedTorrentSources sources;
+    if (!mime) return sources;
+    QStringList inputs;
+    if (mime->hasUrls())
+    {
+        for (const QUrl &url : mime->urls())
+            inputs.append(url.toString(QUrl::FullyEncoded));
+    }
+    else if (mime->hasText())
+        inputs = mime->text().split(QRegularExpression(QStringLiteral("[\\r\\n]+")),
+                                   Qt::SkipEmptyParts);
+    if (inputs.isEmpty() || inputs.size() > 256) return {};
+    QSet<QString> seen;
+    for (const QString &input : inputs)
+    {
+        const QUrl url(input.trimmed(), QUrl::StrictMode);
+        if (!url.isValid()) return {};
+        if (url.isLocalFile())
+        {
+            const QString local = url.toLocalFile();
+            if (!local.endsWith(QLatin1String(".torrent"), Qt::CaseInsensitive))
+                return {};
+            if (!seen.contains(local))
+            {
+                seen.insert(local);
+                sources.files.append(local);
+            }
+        }
+        else if (url.scheme().compare(QLatin1String("magnet"), Qt::CaseInsensitive) == 0)
+        {
+            const QString link = url.toString(QUrl::FullyEncoded);
+            if (!seen.contains(link))
+            {
+                seen.insert(link);
+                sources.links.append(link);
+            }
+        }
+        else return {}; // Reject unrelated dropped web links and file types.
+    }
+    if (!sources.files.isEmpty() && !sources.links.isEmpty()) return {};
+    return sources;
+}
+
 struct TorrentIdentity
 {
     QStringList hashes;
@@ -305,6 +361,8 @@ void MainWindow::showEmptyPane()
         m_emptyPane = new ServerPane(m_views);
         m_views->addTab(m_emptyPane, upstreamIcon("folder-remote"), tr("Transfers"));
         m_views->setCurrentWidget(m_emptyPane);
+        enableTorrentDrops(m_emptyPane);
+        enableTorrentDrops(m_emptyPane->table()->viewport());
     }
 }
 
@@ -313,6 +371,8 @@ void MainWindow::setupMainArea()
     m_views = new HidableTabWidget(m_ui->centralWidget);
     m_views->setObjectName(QStringLiteral("serverTabs"));
     m_ui->centralWidgetLayout->addWidget(m_views);
+    enableTorrentDrops(m_ui->centralWidget);
+    enableTorrentDrops(m_views);
     showEmptyPane();
     if (m_emptyPane)
         m_emptyPane->restoreLayout(*m_settings, QStringLiteral("empty-pane"));
@@ -475,6 +535,7 @@ void MainWindow::setupActions()
                 this, &MainWindow::applyLocalBehaviorPreferences);
         trackDialogGeometry(dialog, QStringLiteral("Preferences"));
         dialog.exec();
+        refreshContentPathMappings();
     });
 
     m_ui->menuHelp->clear();
@@ -620,12 +681,14 @@ void MainWindow::setupActions()
         return true; // Duplicate was handled even when the user declined.
     };
 
-    connect(m_ui->actionDownloadFromURL, &QAction::triggered, this, [this, offerTrackerMerge]() {
+    // Menu and desktop drops share the actual server-selecting Add Torrent
+    // dialog, duplicate safeguards and authenticated remote Web API workflow.
+    m_addLinks = [this, offerTrackerMerge](const QString &initialLinks) {
         const auto server = activeConnection();
         if (!server || !server->connected)
             return;
         RemoteAddTorrentDialog dialog(*m_settings, server->profile,
-            RemoteAddTorrentDialog::Source::Links, {}, {}, {}, this,
+            RemoteAddTorrentDialog::Source::Links, initialLinks, {}, {}, this,
             connectedServerProfiles(),
             [this](const QString &id) { return static_cast<bool>(connectedById(id)); });
         trackDialogGeometry(dialog, QStringLiteral("AddTorrent"));
@@ -642,22 +705,13 @@ void MainWindow::setupActions()
         if (offerTrackerMerge(target, magnetIdentity(dialog.links())))
             return;
         target->session->addTorrentUrls(dialog.links(), dialog.options());
-    });
+    };
+    connect(m_ui->actionDownloadFromURL, &QAction::triggered,
+            this, [this]() { m_addLinks({}); });
 
-    connect(m_ui->actionOpen, &QAction::triggered, this, [this, offerTrackerMerge]() {
+    m_addTorrentFiles = [this, offerTrackerMerge](const QStringList &filenames) {
         const auto server = activeConnection();
-        if (!server || !server->connected)
-            return;
-        QFileDialog filePicker(this, tr("Select local .torrent metadata"));
-        filePicker.setObjectName(QStringLiteral("addTorrentFileDialog"));
-        filePicker.setFileMode(QFileDialog::ExistingFiles);
-        filePicker.setNameFilters({tr("Torrent files (*.torrent)"), tr("All files (*)")});
-        trackDialogGeometry(filePicker, QStringLiteral("SelectTorrentFile"));
-        if (filePicker.exec() != QDialog::Accepted)
-            return;
-        const QStringList filenames = filePicker.selectedFiles();
-        if (filenames.isEmpty() || !containsConnection(server) || !server->connected)
-            return;
+        if (!server || !server->connected || filenames.isEmpty()) return;
 
         QList<Remote::TorrentUpload> uploads;
         uploads.reserve(filenames.size());
@@ -796,10 +850,69 @@ void MainWindow::setupActions()
         if (!containsConnection(target) || !target->connected)
             return;
         target->session->addTorrentFiles(toUpload, options);
+    };
+    connect(m_ui->actionOpen, &QAction::triggered, this, [this]() {
+        if (!activeConnection()) return;
+        QFileDialog picker(this, tr("Select local .torrent metadata"));
+        picker.setObjectName(QStringLiteral("addTorrentFileDialog"));
+        picker.setFileMode(QFileDialog::ExistingFiles);
+        picker.setNameFilters({tr("Torrent files (*.torrent)"), tr("All files (*)")});
+        trackDialogGeometry(picker, QStringLiteral("SelectTorrentFile"));
+        if (picker.exec() == QDialog::Accepted)
+            m_addTorrentFiles(picker.selectedFiles());
     });
 }
 
 
+
+void MainWindow::enableTorrentDrops(QWidget *widget)
+{
+    widget->setAcceptDrops(true);
+    widget->installEventFilter(this);
+}
+
+bool MainWindow::eventFilter(QObject *watched, QEvent *event)
+{
+    if (event->type() == QEvent::DragEnter || event->type() == QEvent::DragMove
+        || event->type() == QEvent::Drop)
+    {
+        const QMimeData *mime = nullptr;
+        if (event->type() == QEvent::DragEnter)
+            mime = static_cast<QDragEnterEvent *>(event)->mimeData();
+        else if (event->type() == QEvent::DragMove)
+            mime = static_cast<QDragMoveEvent *>(event)->mimeData();
+        else
+            mime = static_cast<QDropEvent *>(event)->mimeData();
+        const DroppedTorrentSources sources = droppedTorrentSources(mime);
+        const auto server = activeConnection();
+        if (server && server->connected && sources.valid())
+        {
+            if (event->type() == QEvent::DragEnter)
+                static_cast<QDragEnterEvent *>(event)->acceptProposedAction();
+            else if (event->type() == QEvent::DragMove)
+                static_cast<QDragMoveEvent *>(event)->acceptProposedAction();
+            else
+            {
+                auto *drop = static_cast<QDropEvent *>(event);
+                drop->setDropAction(Qt::CopyAction);
+                drop->accept();
+                if (!sources.files.isEmpty() && m_addTorrentFiles)
+                    m_addTorrentFiles(sources.files);
+                else if (!sources.links.isEmpty() && m_addLinks)
+                    m_addLinks(sources.links.join(QLatin1Char('\n')));
+            }
+            return true;
+        }
+    }
+    return QMainWindow::eventFilter(watched, event);
+}
+
+void MainWindow::refreshContentPathMappings()
+{
+    const Remote::PathMappingStore store(*m_settings);
+    for (const auto &connection : m_connections)
+        connection->pane->setContentPathMappings(store.mappings(connection->profile.id));
+}
 
 void MainWindow::setSelectedTorrentLocation()
 {
@@ -1360,6 +1473,10 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
     auto connection = std::make_shared<SessionContext>();
     connection->profile = profile;
     connection->pane = new ServerPane(m_views);
+    connection->pane->setContentPathMappings(
+        Remote::PathMappingStore(*m_settings).mappings(profile.id));
+    enableTorrentDrops(connection->pane);
+    enableTorrentDrops(connection->pane->table()->viewport());
     connection->pane->restoreLayout(*m_settings, profile.id);
     connection->pane->table()->setAlternatingRowColors(m_settings->value(
         QStringLiteral("Preferences/Behavior/AlternatingRows"), true).toBool());

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/MainWindow.h"
 #include "gui/ServerPane.h"
+#include "gui/MappedContentTreeWidget.h"
 #include "gui/ConnectionDialog.h"
 #include "gui/RemoteAddTorrentDialog.h"
 #include "gui/RemoteTrackerEntriesDialog.h"
@@ -18,6 +19,9 @@
 #include <QDesktopServices>
 #include <QDir>
 #include <QEvent>
+#include <QDragEnterEvent>
+#include <QDropEvent>
+#include <QMimeData>
 #include <QDateTime>
 #include <QJsonDocument>
 #include <QAbstractButton>
@@ -871,6 +875,52 @@ protected:
 private:
     QString m_directory;
     QStringList m_filenames;
+};
+
+// Drive the real Add Torrent options dialog without a file picker. The
+// drag gesture should always use the same authenticated native dialog.
+class DroppedTorrentUi final : public QObject
+{
+public:
+    int opened = 0;
+    int batches = 0;
+    int links = 0;
+    QString unexpected;
+protected:
+    bool eventFilter(QObject *object, QEvent *event) override
+    {
+        if (event->type() != QEvent::Show)
+            return QObject::eventFilter(object, event);
+        if (auto *picker = qobject_cast<QFileDialog *>(object);
+            picker && picker->objectName() == QLatin1String("addTorrentFileDialog"))
+            unexpected = QStringLiteral("A file picker opened during a desktop drop");
+        if (auto *dialog = qobject_cast<RemoteAddTorrentDialog *>(object))
+        {
+            ++opened;
+            QTimer::singleShot(0, dialog, [this, dialog]() {
+                if (dialog->findChild<QGroupBox *>(QStringLiteral("torrentBatchGroup")))
+                    ++batches;
+                if (dialog->findChild<QPlainTextEdit *>(QStringLiteral("torrentLinks")))
+                    ++links;
+                auto *buttons = dialog->findChild<QDialogButtonBox *>(
+                    QStringLiteral("buttonBox"));
+                if (!buttons || !buttons->button(QDialogButtonBox::Ok))
+                {
+                    unexpected = QStringLiteral("Native Add Torrent confirmation missing");
+                    dialog->reject();
+                    return;
+                }
+                buttons->button(QDialogButtonBox::Ok)->click();
+            });
+        }
+        if (auto *message = qobject_cast<QMessageBox *>(object))
+        {
+            unexpected = QStringLiteral("Unexpected warning during drop: ")
+                + message->windowTitle() + QLatin1String(": ") + message->text();
+            QTimer::singleShot(0, message, &QMessageBox::reject);
+        }
+        return QObject::eventFilter(object, event);
+    }
 };
 
 class ConnectionWorkflowTest final : public QObject
@@ -1926,6 +1976,194 @@ private slots:
         QVERIFY(request.contains("Content-Type: application/x-bittorrent"));
         QVERIFY(request.contains(metadata));
         QVERIFY(request.startsWith("--qbtRemote-"));
+    }
+
+    void userDropsTorrentFilesAndMagnetIntoNativeTransferView()
+    {
+        DemoQbittorrentServer server(true);
+        QVERIFY(server.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("drag.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        QTRY_VERIFY(window.isVisible());
+        openConnectDialog(window, server.url());
+        auto *table = window.findChild<QTableView *>(QStringLiteral("torrentList"));
+        QVERIFY(table);
+        auto *add = window.findChild<QAction *>(QStringLiteral("actionOpen"));
+        QVERIFY(add);
+        QTRY_VERIFY_WITH_TIMEOUT(add->isEnabled(), 6000);
+
+        QList<QByteArray> payloads;
+        QList<QUrl> urls;
+        for (int i = 1; i <= 2; ++i)
+        {
+            const QByteArray torrentName = QByteArrayLiteral("drag") + QByteArray::number(i);
+            const QByteArray metadata = QByteArrayLiteral("d4:infod6:lengthi")
+                + QByteArray::number(100 + i) + QByteArrayLiteral("e4:name")
+                + QByteArray::number(torrentName.size()) + ':'
+                + torrentName + QByteArrayLiteral("ee");
+            Remote::TorrentMetadata decoded;
+            QVERIFY(Remote::TorrentMetadataReader::read(metadata, decoded));
+            const QString path = temp.filePath(QStringLiteral("dropped_%1.torrent").arg(i));
+            QFile output(path);
+            QVERIFY(output.open(QIODevice::WriteOnly));
+            QCOMPARE(output.write(metadata), qint64(metadata.size()));
+            output.close();
+            payloads.append(metadata);
+            urls.append(QUrl::fromLocalFile(path));
+        }
+
+        QMimeData localMime;
+        localMime.setUrls(urls);
+        auto *viewport = table->viewport();
+        QDragEnterEvent enter(QPoint(10, 10), Qt::CopyAction, &localMime,
+                              Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(viewport, &enter);
+        QVERIFY(enter.isAccepted());
+
+        DroppedTorrentUi driver;
+        QApplication::instance()->installEventFilter(&driver);
+        QTimer watchdog;
+        watchdog.setSingleShot(true);
+        QObject::connect(&watchdog, &QTimer::timeout, &window, [&]() {
+            driver.unexpected = QStringLiteral("Drop confirmation timed out");
+            for (QWidget *top : QApplication::topLevelWidgets())
+                if (auto *dialog = qobject_cast<QDialog *>(top); dialog && dialog->isVisible())
+                    dialog->reject();
+        });
+        watchdog.start(10000);
+        QDropEvent drop(QPointF(10, 10), Qt::CopyAction, &localMime,
+                        Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(viewport, &drop);
+        watchdog.stop();
+        QApplication::instance()->removeEventFilter(&driver);
+        QVERIFY(drop.isAccepted());
+        QVERIFY2(driver.unexpected.isEmpty(), qPrintable(driver.unexpected));
+        QCOMPARE(driver.opened, 1);
+        QCOMPARE(driver.batches, 1);
+        QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor("/api/v2/torrents/add"), 1, 6000);
+        QByteArray body = server.lastCommandBody("/api/v2/torrents/add");
+        QCOMPARE(body.count(QByteArrayLiteral("name=\"torrents\"; filename=\"")), 2);
+        for (const QByteArray &metadata : payloads)
+            QVERIFY(body.contains(metadata));
+
+        const QString magnet = QStringLiteral(
+            "magnet:?xt=urn:btih:fedcba9876543210fedcba9876543210fedcba98");
+        QMimeData magnetMime;
+        magnetMime.setText(magnet);
+        QDragEnterEvent magnetEnter(QPoint(10, 10), Qt::CopyAction, &magnetMime,
+                                    Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(viewport, &magnetEnter);
+        QVERIFY(magnetEnter.isAccepted());
+        DroppedTorrentUi linkDriver;
+        QApplication::instance()->installEventFilter(&linkDriver);
+        watchdog.start(10000);
+        QDropEvent magnetDrop(QPointF(10, 10), Qt::CopyAction, &magnetMime,
+                              Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(viewport, &magnetDrop);
+        watchdog.stop();
+        QApplication::instance()->removeEventFilter(&linkDriver);
+        QVERIFY(magnetDrop.isAccepted());
+        QVERIFY2(linkDriver.unexpected.isEmpty(), qPrintable(linkDriver.unexpected));
+        QCOMPARE(linkDriver.opened, 1);
+        QCOMPARE(linkDriver.links, 1);
+        QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor("/api/v2/torrents/add"), 2, 6000);
+        QCOMPARE(QUrlQuery(QString::fromUtf8(server.lastCommandBody(
+            "/api/v2/torrents/add"))).queryItemValue(QStringLiteral("urls")), magnet);
+
+        QMimeData irrelevant;
+        irrelevant.setUrls({QUrl::fromLocalFile(temp.filePath(QStringLiteral("notes.txt")))});
+        QDragEnterEvent rejected(QPoint(10, 10), Qt::CopyAction, &irrelevant,
+                                 Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(viewport, &rejected);
+        QVERIFY(!rejected.isAccepted());
+        QCOMPARE(server.commandsFor("/api/v2/torrents/add"), 2);
+    }
+
+    void userDragsOnlyExistingMappedContentAsCopyUris()
+    {
+        DemoQbittorrentServer server(true);
+        server.enableTorrentSyncDemo();
+        server.enableMappedFolderDemo();
+        server.enableDetailsDemo();
+        server.keepDemoTorrents();
+        QVERIFY(server.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        const QString mount = temp.filePath(QStringLiteral("NAS"));
+        const QString data = temp.filePath(QStringLiteral("NAS/Music/data"));
+        QVERIFY(QDir().mkpath(data));
+        QStringList local;
+        for (int i = 1; i <= 2; ++i)
+        {
+            const QString name = QStringLiteral("file-%1.bin").arg(i == 1
+                ? QStringLiteral("one") : QStringLiteral("two"));
+            const QString path = QDir(data).filePath(name);
+            QFile file(path);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write("test", 4), qint64(4));
+            file.close();
+            local.append(path);
+        }
+
+        QSettings settings(temp.filePath(QStringLiteral("paths.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        QTRY_VERIFY(window.isVisible());
+        openConnectDialog(window, server.url());
+        auto *table = window.findChild<QTableView *>(QStringLiteral("torrentList"));
+        QVERIFY(table);
+        QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 1, 6000);
+        const auto profiles = Remote::ProfileStore(settings).profiles();
+        QCOMPARE(profiles.size(), 1);
+        Remote::PathMappingStore mappings(settings);
+        QVERIFY(mappings.replace(profiles.first().id, {{mount, QStringLiteral("/share/NAS")}}));
+        // Opening/closing Preferences reloads mappings for every live server.
+        QTimer::singleShot(0, &window, []() {
+            if (auto *modal = qobject_cast<QDialog *>(QApplication::activeModalWidget()))
+                modal->reject();
+        });
+        auto *preferences = window.findChild<QAction *>(QStringLiteral("actionOptions"));
+        QVERIFY(preferences);
+        preferences->trigger();
+
+        table->selectRow(0);
+        auto *tabs = window.findChild<PropTabBar *>();
+        QVERIFY(tabs);
+        tabs->setCurrentIndex(4);
+        auto *content = window.findChild<MappedContentTreeWidget *>(
+            QStringLiteral("torrentContent"));
+        QVERIFY(content);
+        QTRY_VERIFY_WITH_TIMEOUT(content->topLevelItemCount() > 0, 6000);
+        QTRY_COMPARE_WITH_TIMEOUT(content->topLevelItem(0)->childCount(), 2, 6000);
+
+        auto *first = content->topLevelItem(0)->child(0);
+        auto *second = content->topLevelItem(0)->child(1);
+        first->setSelected(true);
+        {
+            std::unique_ptr<QMimeData> mime(content->mappedSelectionMimeData());
+            QVERIFY(mime);
+            QCOMPARE(mime->urls(), (QList<QUrl>{
+                QUrl::fromLocalFile(QFileInfo(local.at(0)).canonicalFilePath())}));
+        }
+        second->setSelected(true);
+        {
+            std::unique_ptr<QMimeData> mime(content->mappedSelectionMimeData());
+            QVERIFY(mime);
+            QCOMPARE(mime->urls().size(), 2);
+        }
+        // No partial drag if one selected file vanished from the mount.
+        QVERIFY(QFile::remove(local.at(1)));
+        QVERIFY(content->mappedSelectionMimeData() == nullptr);
+        second->setSelected(false);
+        // An unmapped content selection offers no misleading local URI.
+        content->setPathMappings({});
+        QVERIFY(content->mappedSelectionMimeData() == nullptr);
+        QCOMPARE(server.commandsFor("/api/v2/torrents/add"), 0);
     }
 
     void userCanSelectSevenTorrentFilesAndUploadOneAuthenticatedBatch()

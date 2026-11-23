@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "api/PathMappingStore.h"
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QHash>
@@ -44,6 +45,7 @@ public:
     QString rateText() const;
     QString freeSpaceText() const;
     void setProgressFollowsStateColors(bool enabled);
+    void setContentPathMappings(const QList<Remote::PathMapping> &mappings);
     void setSeparateTrackerStatusFilter(bool enabled);
     void setSearchTerm(const QString &text);
     const QString &searchTerm() const noexcept { return m_search; }

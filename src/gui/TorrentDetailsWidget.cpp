@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/TorrentDetailsWidget.h"
+#include "gui/MappedContentTreeWidget.h"
 #include "gui/NaturalNameSort.h"
 #include "ui_remotepropertieswidget.h"
 #include "gui/upstream/progressbarpainter.h"
@@ -534,6 +535,9 @@ TorrentDetailsWidget::TorrentDetailsWidget(QWidget *parent)
     tree->setColumnWidth(5, 95);
     tree->setItemDelegate(new ContentProgressDelegate(tree));
     tree->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    tree->setDragEnabled(true);
+    tree->setDragDropMode(QAbstractItemView::DragOnly);
+    tree->setDefaultDropAction(Qt::CopyAction);
     tree->setSelectionMode(QAbstractItemView::ExtendedSelection);
     tree->setAlternatingRowColors(true);
     tree->setUniformRowHeights(true);
@@ -724,6 +728,8 @@ void TorrentDetailsWidget::setSelection(const QString &hash, const QJsonObject &
         resetPages();
     }
     m_summary = summary;
+    m_ui->filesList->setRemoteRoots(summary.value(QStringLiteral("save_path")).toString(),
+                                   summary.value(QStringLiteral("content_path")).toString());
     if (hash.isEmpty())
         return;
     const double progress = summary.value(QStringLiteral("progress")).toDouble();
@@ -904,6 +910,12 @@ void TorrentDetailsWidget::displayWebSeeds(const QJsonArray &sources)
         if (!address.isEmpty())
             m_ui->listWebSeeds->addItem(address);
     }
+}
+
+void TorrentDetailsWidget::setContentPathMappings(
+    const QList<Remote::PathMapping> &mappings)
+{
+    m_ui->filesList->setPathMappings(mappings);
 }
 
 void TorrentDetailsWidget::displayFiles(const QJsonArray &files)

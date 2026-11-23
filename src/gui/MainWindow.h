@@ -8,11 +8,13 @@
 #include <QMainWindow>
 #include <QSettings>
 #include <memory>
+#include <functional>
 
 class QAction;
 class QCloseEvent;
 class QDialog;
 class QEvent;
+class QMimeData;
 class QSystemTrayIcon;
 class QMenu;
 class QLabel;
@@ -45,6 +47,8 @@ private:
     void showEmptyPane();
     void closeEvent(QCloseEvent *event) override;
     void changeEvent(QEvent *event) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
+    void enableTorrentDrops(QWidget *widget);
     void setupTray();
     void updateTraySettings();
     void toggleWindowFromTray();
@@ -65,6 +69,7 @@ private:
     QStringList selectedTorrentHashes() const;
     void openSelectedTorrentDestinations();
     void setSelectedTorrentLocation();
+    void refreshContentPathMappings();
 
     std::unique_ptr<Ui::MainWindow> m_ui;
     QSettings m_defaultSettings;
@@ -94,4 +99,6 @@ private:
     int m_fontPointSize = 10;
     QString m_preferredServerId;
     bool m_restoringStartup = false;
+    std::function<void(const QString &)> m_addLinks;
+    std::function<void(const QStringList &)> m_addTorrentFiles;
 };

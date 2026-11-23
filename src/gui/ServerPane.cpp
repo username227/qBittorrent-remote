@@ -366,6 +366,11 @@ QString ServerPane::freeSpaceText() const
         QString::fromLatin1(units[unit]));
 }
 
+void ServerPane::setContentPathMappings(const QList<Remote::PathMapping> &mappings)
+{
+    m_details->setContentPathMappings(mappings);
+}
+
 void ServerPane::setProgressFollowsStateColors(bool enabled)
 {
     auto *delegate = static_cast<TransferListDelegate *>(m_table->itemDelegate());
