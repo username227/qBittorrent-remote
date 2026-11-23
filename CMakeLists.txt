@@ -75,6 +75,9 @@ add_library(qbittorrent_remote_gui STATIC
     src/gui/ConnectionDialog.h
     src/gui/RemotePreferencesDialog.cpp
     src/gui/RemotePreferencesDialog.h
+    src/gui/RemoteSpeedLimitsDialog.cpp
+    src/gui/RemoteSpeedLimitsDialog.h
+    src/gui/upstream/layouts/speedlimitdialog.ui
     src/gui/RemoteAddTorrentDialog.cpp
     src/gui/RemoteAddTorrentDialog.h
     src/gui/RemoteTrackerEntriesDialog.cpp
@@ -123,7 +126,7 @@ target_include_directories(qbittorrent_remote_gui PUBLIC
     "${PROJECT_SOURCE_DIR}/src"
 )
 set_target_properties(qbittorrent_remote_gui PROPERTIES
-    AUTOUIC_SEARCH_PATHS "${PROJECT_SOURCE_DIR}/src/gui/upstream"
+    AUTOUIC_SEARCH_PATHS "${PROJECT_SOURCE_DIR}/src/gui/upstream;${PROJECT_SOURCE_DIR}/src/gui/upstream/layouts"
 )
 target_link_libraries(qbittorrent_remote_gui PUBLIC qbittorrent_remote_core Qt6::Widgets Qt6::Svg)
 

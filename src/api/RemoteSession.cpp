@@ -492,6 +492,18 @@ void RemoteSession::queueOperation(const QString &endpoint, const QByteArray &bo
     pumpOperations();
 }
 
+void RemoteSession::setAlternativeSpeedLimitsEnabled(bool enabled)
+{
+    // Use an explicit mode, not the toggle endpoint: retrying or switching
+    // active server must never invert the wrong session's speed mode.
+    QUrlQuery form;
+    form.addQueryItem(QStringLiteral("mode"), enabled ? QStringLiteral("1") : QStringLiteral("0"));
+    queueOperation(QStringLiteral("api/v2/transfer/setSpeedLimitsMode"),
+                   form.toString(QUrl::FullyEncoded).toUtf8(),
+                   QByteArrayLiteral("application/x-www-form-urlencoded"),
+                   tr("Set alternative speed mode"), true);
+}
+
 void RemoteSession::requestPreferences()
 {
     if (!m_connected || !m_address)

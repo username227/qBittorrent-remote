@@ -50,6 +50,8 @@ private:
     bool eventFilter(QObject *watched, QEvent *event) override;
     void enableTorrentDrops(QWidget *widget);
     void setupTray();
+    void updateTrayActionState();
+    void refreshTrayDisconnectMenu();
     void updateTraySettings();
     void toggleWindowFromTray();
     void quitCompletely();
@@ -85,6 +87,7 @@ private:
     QLabel *m_serverFreeSpaceLabel = nullptr;
     QSystemTrayIcon *m_trayIcon = nullptr;
     QMenu *m_trayMenu = nullptr;
+    QMenu *m_trayDisconnectMenu = nullptr;
     QAction *m_trayToggleAction = nullptr;
     bool m_forceExit = false;
     bool m_wasMaximizedBeforeTray = false;

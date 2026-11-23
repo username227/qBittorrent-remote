@@ -5,6 +5,7 @@
 #include "gui/FilterSidebar.h"
 #include "gui/ConnectionDialog.h"
 #include "gui/RemotePreferencesDialog.h"
+#include "gui/RemoteSpeedLimitsDialog.h"
 #include "gui/RemoteAddTorrentDialog.h"
 #include "gui/RemoteTrackerEntriesDialog.h"
 #include "gui/RemoteTorrentContentLayoutDialog.h"
@@ -267,6 +268,8 @@ struct MainWindow::SessionContext
     QString version;
     QString apiVersion;
     bool connected = false;
+    bool altSpeedModeKnown = false;
+    bool altSpeedMode = false;
 };
 
 MainWindow::MainWindow(QWidget *parent, QSettings *settings,
@@ -436,6 +439,7 @@ void MainWindow::setupActions()
         {m_ui->actionBottomQueuePos, "go-bottom"},
         {m_ui->actionCreateTorrent, "torrent-creator"},
         {m_ui->actionOptions, "configure"},
+        {m_ui->actionSetGlobalSpeedLimits, "speedometer"},
         {m_ui->actionExit, "application-exit"},
         {m_ui->actionAbout, "help-about"}
     };
@@ -453,12 +457,32 @@ void MainWindow::setupActions()
         m_ui->actionOpenDestinationFolder, m_ui->actionTopQueuePos,
         m_ui->actionIncreaseQueuePos, m_ui->actionDecreaseQueuePos,
         m_ui->actionBottomQueuePos, m_ui->actionCreateTorrent,
-        m_ui->actionOptions, m_ui->actionPauseSession,
-        m_ui->actionResumeSession
+        m_ui->actionOptions, m_ui->actionUseAlternativeSpeedLimits,
+        m_ui->actionSetGlobalSpeedLimits
     })
         action->setEnabled(false);
 
     m_ui->actionLock->setVisible(false);
+    // The original native tray actions are scoped to the currently selected
+    // connected server. They are not local torrent-engine actions.
+    connect(m_ui->actionUseAlternativeSpeedLimits, &QAction::triggered, this,
+            [this](bool enabled) {
+                const auto server = activeConnection();
+                if (!server || !server->connected || !server->altSpeedModeKnown)
+                {
+                    updateTrayActionState();
+                    return;
+                }
+                server->session->setAlternativeSpeedLimitsEnabled(enabled);
+            });
+    connect(m_ui->actionSetGlobalSpeedLimits, &QAction::triggered, this, [this]() {
+        const auto server = activeConnection();
+        if (!server || !server->connected)
+            return;
+        RemoteSpeedLimitsDialog dialog(server->session, this);
+        trackDialogGeometry(dialog, QStringLiteral("GlobalSpeedLimits"));
+        dialog.exec();
+    });
 
     // The original toolbar action and the native context menu share the same
     // selected-server behavior. Never open raw remote POSIX paths locally.
@@ -1244,15 +1268,38 @@ void MainWindow::setupTray()
     m_trayIcon->setObjectName(QStringLiteral("remoteTrayIcon"));
     m_trayMenu = new QMenu(this);
     m_trayMenu->setObjectName(QStringLiteral("remoteTrayMenu"));
-    m_trayToggleAction = m_trayMenu->addAction(tr("Show qBittorrent Remote"));
-    connect(m_trayToggleAction, &QAction::triggered,
-            this, &MainWindow::toggleWindowFromTray);
+    // This is the upstream 5.3.0 tray layout, using the exact native
+    // .ui QActions and their icons. The active remote profile supplies each
+    // session operation; a hidden window must still be able to use the menu.
+    m_trayToggleAction = m_trayMenu->addAction(tr("Show"));
+    m_trayToggleAction->setObjectName(QStringLiteral("trayShowWindow"));
+    connect(m_trayToggleAction, &QAction::triggered, this, [this]() {
+        if (!isVisible() || isMinimized())
+        {
+            if (m_wasMaximizedBeforeTray) showMaximized();
+            else showNormal();
+        }
+        raise();
+        activateWindow();
+    });
     m_trayMenu->addSeparator();
-    m_trayMenu->addAction(m_ui->actionOptions);
+    m_trayMenu->addAction(m_ui->actionOpen);
+    m_trayMenu->addAction(m_ui->actionDownloadFromURL);
     m_trayMenu->addSeparator();
-    m_trayMenu->addAction(tr("Quit qBittorrent Remote completely"),
-                          this, &MainWindow::quitCompletely);
+    m_trayMenu->addAction(m_ui->actionUseAlternativeSpeedLimits);
+    m_trayMenu->addAction(m_ui->actionSetGlobalSpeedLimits);
+    m_trayMenu->addSeparator();
+    // Remote-safe substitute for upstream Pause Session: close one desktop
+    // connection without pausing or altering any torrent on the NAS.
+    m_trayDisconnectMenu = m_trayMenu->addMenu(
+        upstreamIcon("disconnected"), tr("Disconnect from Server"));
+    m_trayDisconnectMenu->setObjectName(QStringLiteral("trayDisconnectMenu"));
+    connect(m_trayDisconnectMenu, &QMenu::aboutToShow,
+            this, &MainWindow::refreshTrayDisconnectMenu);
+    m_trayMenu->addSeparator();
+    m_trayMenu->addAction(m_ui->actionExit);
     m_trayIcon->setContextMenu(m_trayMenu);
+    updateTrayActionState();
     m_trayIcon->setToolTip(tr("qBittorrent Remote"));
     connect(m_trayIcon, &QSystemTrayIcon::activated, this,
             [this](QSystemTrayIcon::ActivationReason reason) {
@@ -1260,6 +1307,51 @@ void MainWindow::setupTray()
                     || reason == QSystemTrayIcon::DoubleClick)
                     toggleWindowFromTray();
             });
+}
+
+void MainWindow::updateTrayActionState()
+{
+    if (!m_ui || !m_ui->actionUseAlternativeSpeedLimits)
+        return;
+    const auto server = activeConnection();
+    const bool ready = server && server->connected;
+    const bool altKnown = ready && server->altSpeedModeKnown;
+    m_ui->actionSetGlobalSpeedLimits->setEnabled(ready);
+    m_ui->actionUseAlternativeSpeedLimits->setEnabled(altKnown);
+    {
+        QSignalBlocker blocker(m_ui->actionUseAlternativeSpeedLimits);
+        m_ui->actionUseAlternativeSpeedLimits->setChecked(
+            altKnown && server->altSpeedMode);
+    }
+    if (m_trayDisconnectMenu)
+    {
+        const bool anyConnected = std::any_of(m_connections.cbegin(), m_connections.cend(),
+            [](const auto &connection) { return connection && connection->connected; });
+        m_trayDisconnectMenu->setEnabled(anyConnected);
+    }
+}
+
+void MainWindow::refreshTrayDisconnectMenu()
+{
+    if (!m_trayDisconnectMenu)
+        return;
+    // Populate on submenu open, not during QAction::triggered. Destroying the
+    // triggered action while Qt is dispatching it would be unsafe.
+    m_trayDisconnectMenu->clear();
+    for (const auto &connection : m_connections)
+    {
+        if (!connection || !connection->connected)
+            continue;
+        const QString profileId = connection->profile.id;
+        auto *action = m_trayDisconnectMenu->addAction(connection->profile.name);
+        action->setData(profileId);
+        connect(action, &QAction::triggered, this, [this, profileId]() {
+            if (const auto live = connectedById(profileId))
+                removeConnection(live);
+            // This is strictly a client-side disconnect + Web API logout;
+            // downloading and seeding on the server keep running.
+        });
+    }
 }
 
 void MainWindow::updateTraySettings()
@@ -1396,6 +1488,7 @@ void MainWindow::updateActiveUi()
     if (pane)
         pane->sidebar()->setVisible(m_ui->actionShowFiltersSidebar->isChecked());
     updateTorrentActionState();
+    updateTrayActionState();
     updateTorrentCount();
     m_ratesLabel->setText(connection && ready && pane
                           ? pane->rateText() : tr("D: —    U: —"));
@@ -2068,12 +2161,20 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
             if (!containsConnection(connection))
                 return;
             connection->pane->applySync(payload);
+            const QJsonObject state = payload.value(QStringLiteral("server_state")).toObject();
+            const QJsonValue alt = state.value(QStringLiteral("use_alt_speed_limits"));
+            if (alt.isBool())
+            {
+                connection->altSpeedModeKnown = true;
+                connection->altSpeedMode = alt.toBool();
+            }
             if (activeConnection() == connection)
             {
                 m_ratesLabel->setText(connection->pane->rateText());
                 updateServerFreeSpace();
                 updateTorrentCount();
                 updateTorrentActionState();
+                updateTrayActionState();
             }
         });
     connect(session, &Remote::RemoteSession::operationSucceeded, this,
