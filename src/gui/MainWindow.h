@@ -50,6 +50,7 @@ private:
     bool eventFilter(QObject *watched, QEvent *event) override;
     void enableTorrentDrops(QWidget *widget);
     void setupTray();
+    void updateTrayActionState();
     void updateTraySettings();
     void toggleWindowFromTray();
     void quitCompletely();

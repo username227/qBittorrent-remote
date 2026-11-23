@@ -99,6 +99,9 @@ public:
     void setTorrentShareLimits(const QString &hash, const QJsonObject &shareLimits);
     void requestTorrentExport(const QString &hash);
     void requestPreferences();
+    // Session-wide operations affect only this authenticated NAS connection.
+    void setSessionPaused(bool paused);
+    void setAlternativeSpeedLimitsEnabled(bool enabled);
     void setPreferences(const QJsonObject &changes);
     void renameTorrentContent(const QString &hash, const QString &oldPath,
                               const QString &newPath);

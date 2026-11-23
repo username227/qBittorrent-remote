@@ -2,6 +2,7 @@
 #include "gui/MainWindow.h"
 #include "gui/ServerPane.h"
 #include "gui/RemotePreferencesDialog.h"
+#include "gui/RemoteSpeedLimitsDialog.h"
 #include "gui/MappedContentTreeWidget.h"
 #include "gui/TorrentModel.h"
 #include "gui/ConnectionDialog.h"
@@ -148,7 +149,23 @@ public:
                             ++m_syncRequests;
                             const QUrlQuery query(QString::fromLatin1(path.mid(path.indexOf('?') + 1)));
                             const int rid = query.queryItemValue(QStringLiteral("rid")).toInt();
-                            if (!m_existingTorrentHash.isEmpty())
+                            if (m_trayDemo)
+                            {
+                                // Stateful real authenticated sync/maindata, including
+                                // independent pause and alternative-speed state.
+                                response = QJsonDocument(QJsonObject{
+                                    {QStringLiteral("rid"), rid + 1},
+                                    {QStringLiteral("full_update"), rid == 0},
+                                    {QStringLiteral("torrents"), QJsonObject()},
+                                    {QStringLiteral("server_state"), QJsonObject{
+                                        {QStringLiteral("session_state"), m_trayPaused},
+                                        {QStringLiteral("use_alt_speed_limits"), m_trayAltMode},
+                                        {QStringLiteral("dl_info_speed"), 0},
+                                        {QStringLiteral("up_info_speed"), 0}
+                                    }}
+                                }).toJson(QJsonDocument::Compact);
+                            }
+                            else if (!m_existingTorrentHash.isEmpty())
                             {
                                 if (rid == 0)
                                     response = QByteArrayLiteral("{\"rid\":1,\"full_update\":true,\"torrents\":{\"")
@@ -273,6 +290,60 @@ public:
                             {
                                 code = 404;
                                 response = "Unknown torrent";
+                            }
+                        }
+                        else if (m_trayDemo && hasCookie
+                                 && path == "/api/v2/app/preferences")
+                        {
+                            response = QJsonDocument(m_traySpeedLimits)
+                                .toJson(QJsonDocument::Compact);
+                        }
+                        else if (m_trayDemo && hasCookie
+                                 && path == "/api/v2/app/setPreferences")
+                        {
+                            m_commands.append({path, body});
+                            const QUrlQuery form(QString::fromUtf8(body));
+                            const QJsonDocument parsed = QJsonDocument::fromJson(
+                                form.queryItemValue(QStringLiteral("json")).toUtf8());
+                            if (!parsed.isObject() || m_rejectCommands)
+                            {
+                                code = 400;
+                                response = "Rejected";
+                            }
+                            else
+                            {
+                                for (auto it = parsed.object().constBegin();
+                                     it != parsed.object().constEnd(); ++it)
+                                    m_traySpeedLimits.insert(it.key(), it.value());
+                                response = "Ok.";
+                            }
+                        }
+                        else if (m_trayDemo && hasCookie
+                                 && path.startsWith("/api/v2/transfer/"))
+                        {
+                            m_commands.append({path, body});
+                            if (m_rejectCommands)
+                            {
+                                code = 400;
+                                response = "Rejected";
+                            }
+                            else
+                            {
+                                if (path == "/api/v2/transfer/pauseSession")
+                                    m_trayPaused = true;
+                                else if (path == "/api/v2/transfer/resumeSession")
+                                    m_trayPaused = false;
+                                else if (path == "/api/v2/transfer/setSpeedLimitsMode")
+                                {
+                                    const QUrlQuery form(QString::fromUtf8(body));
+                                    m_trayAltMode = form.queryItemValue(
+                                        QStringLiteral("mode")) == QStringLiteral("1");
+                                }
+                                else
+                                {
+                                    code = 404;
+                                    response = "Unknown transfer operation";
+                                }
                             }
                         }
                         else if (path.startsWith("/api/v2/torrents/") && hasCookie)
@@ -488,6 +559,21 @@ public:
     int logouts() const noexcept { return m_logouts; }
     int syncRequests() const noexcept { return m_syncRequests; }
     void enableTorrentSyncDemo() { m_demoTorrents = true; }
+    void enableNativeTrayDemo(bool paused = false, bool alternative = false)
+    {
+        m_trayDemo = true;
+        m_trayPaused = paused;
+        m_trayAltMode = alternative;
+        m_traySpeedLimits = QJsonObject{
+            {QStringLiteral("up_limit"), 50 * 1024},
+            {QStringLiteral("dl_limit"), 100 * 1024},
+            {QStringLiteral("alt_up_limit"), 20 * 1024},
+            {QStringLiteral("alt_dl_limit"), 30 * 1024}
+        };
+    }
+    bool trayPaused() const { return m_trayPaused; }
+    bool trayAlternative() const { return m_trayAltMode; }
+    QJsonObject trayLimits() const { return m_traySpeedLimits; }
     void setReportedVersions(const QString &qbtVersion, const QString &apiVersion)
     {
         m_reportedQbtVersion = qbtVersion.toUtf8();
@@ -618,6 +704,10 @@ private:
     QByteArray m_reportedApiVersion = QByteArrayLiteral("2.11.3");
     int m_logouts = 0;
     bool m_demoTorrents = false;
+    bool m_trayDemo = false;
+    bool m_trayPaused = false;
+    bool m_trayAltMode = false;
+    QJsonObject m_traySpeedLimits;
     bool m_queueingEnabled = false;
     bool m_mappedFolderDemo = false;
     QString m_existingTorrentHash;
@@ -991,6 +1081,223 @@ private:
     }
 
 private slots:
+    void nativeTrayMenuControlsRemoteSessionAndSpeedLimitsWhileHidden()
+    {
+        DemoQbittorrentServer server(true);
+        server.enableNativeTrayDemo();
+        QVERIFY(server.start());
+
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("tray-actions.ini")),
+                           QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        QTRY_VERIFY(window.isVisible());
+
+        auto *menu = window.findChild<QMenu *>(QStringLiteral("remoteTrayMenu"));
+        auto *show = window.findChild<QAction *>(QStringLiteral("trayShowWindow"));
+        auto *file = window.findChild<QAction *>(QStringLiteral("actionOpen"));
+        auto *link = window.findChild<QAction *>(QStringLiteral("actionDownloadFromURL"));
+        auto *alternate = window.findChild<QAction *>(
+            QStringLiteral("actionUseAlternativeSpeedLimits"));
+        auto *limits = window.findChild<QAction *>(
+            QStringLiteral("actionSetGlobalSpeedLimits"));
+        auto *pause = window.findChild<QAction *>(QStringLiteral("actionPauseSession"));
+        auto *resume = window.findChild<QAction *>(QStringLiteral("actionResumeSession"));
+        auto *exit = window.findChild<QAction *>(QStringLiteral("actionExit"));
+        QVERIFY(menu && show && file && link && alternate && limits && pause && resume && exit);
+
+        // Open the actual Qt menu used by the system-tray icon. The native
+        // .ui actions are reused, rather than unrelated fake tray callbacks.
+        menu->popup(QPoint(25, 25));
+        QTRY_VERIFY(menu->isVisible());
+        QCOMPARE(menu->actions().first(), show);
+        QVERIFY(menu->actions().contains(file));
+        QVERIFY(menu->actions().contains(link));
+        QVERIFY(menu->actions().contains(alternate));
+        QVERIFY(menu->actions().contains(limits));
+        QVERIFY(menu->actions().contains(pause));
+        QVERIFY(menu->actions().contains(resume));
+        QCOMPARE(menu->actions().last(), exit);
+        QVERIFY(!file->icon().isNull());
+        QVERIFY(!link->icon().isNull());
+        QVERIFY(!limits->icon().isNull());
+        QVERIFY(!pause->icon().isNull());
+        menu->close();
+
+        openConnectDialog(window, server.url());
+        QTRY_VERIFY_WITH_TIMEOUT(alternate->isEnabled() && limits->isEnabled()
+            && pause->isEnabled(), 7000);
+        QVERIFY(!alternate->isChecked());
+        QVERIFY(pause->isVisible());
+        QVERIFY(!resume->isVisible());
+
+        // The system-tray entry points remain fully functional when the main
+        // window is hidden. In CI, menu popup is simulated without an OS tray.
+        window.hide();
+        QVERIFY(!window.isVisible());
+
+        QTimer::singleShot(0, &window, []() {
+            if (auto *dlg = qobject_cast<RemoteAddTorrentDialog *>(
+                    QApplication::activeModalWidget()))
+                dlg->reject();
+        });
+        link->trigger();
+        QVERIFY(!window.isVisible());
+
+        QTimer::singleShot(0, &window, []() {
+            if (auto *picker = qobject_cast<QFileDialog *>(
+                    QApplication::activeModalWidget()))
+                picker->reject();
+        });
+        file->trigger();
+        QVERIFY(!window.isVisible());
+
+        alternate->trigger();
+        QTRY_VERIFY_WITH_TIMEOUT(server.trayAlternative(), 7000);
+        QTRY_VERIFY_WITH_TIMEOUT(alternate->isChecked(), 7000);
+        QCOMPARE(server.commandsFor("/api/v2/transfer/setSpeedLimitsMode"), 1);
+
+        // The original qBittorrent 5.3.0 Speed Limit dialog must read all
+        // four server settings before Save becomes enabled. Edit one value,
+        // then assert only that one change reached the NAS fake server.
+        QTimer poll;
+        poll.setInterval(20);
+        QString dialogError;
+        int opened = 0;
+        connect(&poll, &QTimer::timeout, &window, [&]() {
+            auto *dlg = qobject_cast<RemoteSpeedLimitsDialog *>(
+                QApplication::activeModalWidget());
+            if (!dlg) return;
+            auto *buttons = dlg->findChild<QDialogButtonBox *>(
+                QStringLiteral("buttonBox"));
+            auto *upload = dlg->findChild<QSpinBox *>(
+                QStringLiteral("spinUploadLimit"));
+            auto *download = dlg->findChild<QSpinBox *>(
+                QStringLiteral("spinDownloadLimit"));
+            if (!buttons || !upload || !download) {
+                dialogError = QStringLiteral("Original speed dialog widgets missing");
+                dlg->reject();
+                poll.stop();
+                return;
+            }
+            if (!buttons->button(QDialogButtonBox::Ok)->isEnabled())
+                return; // Remote preferences still loading.
+            ++opened;
+            if (upload->value() != 50 || download->value() != 100)
+                dialogError = QStringLiteral("Speed limits did not load from the server");
+            else
+                upload->setValue(57);
+            buttons->button(QDialogButtonBox::Ok)->click();
+            poll.stop();
+        });
+        QTimer watchdog;
+        watchdog.setSingleShot(true);
+        connect(&watchdog, &QTimer::timeout, &window, [&]() {
+            dialogError = QStringLiteral("Speed limit dialog timed out");
+            if (auto *dlg = qobject_cast<QDialog *>(QApplication::activeModalWidget()))
+                dlg->reject();
+        });
+        poll.start();
+        watchdog.start(8000);
+        limits->trigger();
+        watchdog.stop();
+        poll.stop();
+        QVERIFY2(dialogError.isEmpty(), qPrintable(dialogError));
+        QCOMPARE(opened, 1);
+        QTRY_COMPARE_WITH_TIMEOUT(server.trayLimits().value(QStringLiteral("up_limit")).toInt(),
+                                  57 * 1024, 7000);
+        QCOMPARE(server.trayLimits().value(QStringLiteral("dl_limit")).toInt(), 100 * 1024);
+        QCOMPARE(server.trayLimits().value(QStringLiteral("alt_up_limit")).toInt(), 20 * 1024);
+        QCOMPARE(server.commandsFor("/api/v2/app/setPreferences"), 1);
+        const QUrlQuery changed(QString::fromUtf8(server.lastCommandBody(
+            "/api/v2/app/setPreferences")));
+        const QJsonObject changes = QJsonDocument::fromJson(changed.queryItemValue(
+            QStringLiteral("json")).toUtf8()).object();
+        QCOMPARE(changes.size(), 1);
+        QCOMPARE(changes.value(QStringLiteral("up_limit")).toInt(), 57 * 1024);
+
+        pause->trigger();
+        QTRY_VERIFY_WITH_TIMEOUT(server.trayPaused(), 7000);
+        QTRY_VERIFY_WITH_TIMEOUT(resume->isVisible() && resume->isEnabled(), 7000);
+        QVERIFY(!pause->isVisible());
+        resume->trigger();
+        QTRY_VERIFY_WITH_TIMEOUT(!server.trayPaused(), 7000);
+        QTRY_VERIFY_WITH_TIMEOUT(pause->isVisible() && pause->isEnabled(), 7000);
+        QCOMPARE(server.commandsFor("/api/v2/transfer/pauseSession"), 1);
+        QCOMPARE(server.commandsFor("/api/v2/transfer/resumeSession"), 1);
+
+        show->trigger();
+        QTRY_VERIFY(window.isVisible());
+
+        // Exit is the existing safe "Quit Completely" action. Declining the
+        // actual confirmation must keep the application and NAS running.
+        settings.setValue(QStringLiteral("Preferences/Behavior/ConfirmExit"), true);
+        QTimer::singleShot(0, &window, []() {
+            if (auto *question = qobject_cast<QMessageBox *>(
+                    QApplication::activeModalWidget()))
+                question->done(QMessageBox::No);
+        });
+        exit->trigger();
+        QVERIFY(window.isVisible());
+        QCOMPARE(server.trayPaused(), false);
+        settings.setValue(QStringLiteral("Preferences/Behavior/ConfirmExit"), false);
+    }
+
+    void nativeTrayMenuTracksTheSelectedServerWithoutCrossServerCommands()
+    {
+        DemoQbittorrentServer alpha(true, nullptr, true);
+        DemoQbittorrentServer beta(true, nullptr, true);
+        alpha.enableNativeTrayDemo(false, false);
+        beta.enableNativeTrayDemo(true, true);
+        QVERIFY(alpha.start());
+        QVERIFY(beta.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("two-trays.ini")),
+                           QSettings::IniFormat);
+        Remote::ProfileStore profiles(settings);
+        Remote::ServerProfile first{
+            QStringLiteral("alpha-server"), QStringLiteral("Alpha"), alpha.url(),
+            QStringLiteral("demo"), false, true};
+        Remote::ServerProfile second{
+            QStringLiteral("beta-server"), QStringLiteral("Beta"), beta.url(),
+            QStringLiteral("demo"), false, true};
+        QVERIFY(profiles.save(first));
+        QVERIFY(profiles.save(second));
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        auto *tabs = window.findChild<QTabWidget *>(QStringLiteral("serverTabs"));
+        auto *alternative = window.findChild<QAction *>(
+            QStringLiteral("actionUseAlternativeSpeedLimits"));
+        auto *pause = window.findChild<QAction *>(QStringLiteral("actionPauseSession"));
+        auto *resume = window.findChild<QAction *>(QStringLiteral("actionResumeSession"));
+        QVERIFY(tabs && alternative && pause && resume);
+        QTRY_COMPARE_WITH_TIMEOUT(tabs->count(), 2, 7000);
+        tabs->setCurrentIndex(0);
+        QTRY_VERIFY_WITH_TIMEOUT(alternative->isEnabled() && pause->isEnabled(), 7000);
+        QCOMPARE(alternative->isChecked(), false);
+        QCOMPARE(pause->isVisible(), true);
+        tabs->setCurrentIndex(1);
+        QTRY_VERIFY_WITH_TIMEOUT(alternative->isEnabled() && resume->isEnabled(), 7000);
+        QCOMPARE(alternative->isChecked(), true);
+        QCOMPARE(pause->isVisible(), false);
+
+        // Only Beta may be resumed through the tray while its tab is active.
+        resume->trigger();
+        QTRY_VERIFY_WITH_TIMEOUT(!beta.trayPaused(), 7000);
+        QCOMPARE(alpha.commandsFor("/api/v2/transfer/resumeSession"), 0);
+        tabs->setCurrentIndex(0);
+        QCOMPARE(alternative->isChecked(), false);
+        QCOMPARE(pause->isVisible(), true);
+        tabs->setCurrentIndex(1);
+        QTRY_VERIFY_WITH_TIMEOUT(pause->isEnabled(), 7000);
+        QCOMPARE(alternative->isChecked(), true);
+    }
+
     void toolbarAndStatusbarRemainEnabledAfterHiddenWindowExit()
     {
         QTemporaryDir temp;
