@@ -469,7 +469,8 @@ void MainWindow::setupActions()
     connect(m_ui->actionOptions, &QAction::triggered, this, [this]() {
         const auto server = activeConnection();
         const QString profileId = server ? server->profile.id : m_preferredServerId;
-        RemotePreferencesDialog dialog(*m_settings, profileId, this);
+        RemotePreferencesDialog dialog(*m_settings, profileId, this,
+                                      server && server->connected ? server->session : nullptr);
         connect(&dialog, &RemotePreferencesDialog::localBehaviorApplied,
                 this, &MainWindow::applyLocalBehaviorPreferences);
         trackDialogGeometry(dialog, QStringLiteral("Preferences"));

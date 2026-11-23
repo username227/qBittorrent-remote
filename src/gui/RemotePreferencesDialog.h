@@ -5,6 +5,8 @@
 
 #include <QDialog>
 #include <QHash>
+#include <QJsonObject>
+#include <QPointer>
 #include <QList>
 #include <QSet>
 #include <QString>
@@ -16,6 +18,7 @@ class QPushButton;
 class QSettings;
 class QTableWidget;
 namespace Ui { class OptionsDialog; }
+namespace Remote { class RemoteSession; }
 
 // The complete native qBittorrent Preferences layout is retained for
 // visual parity, with unsupported controls explicitly disabled. Client-side
@@ -28,7 +31,8 @@ class RemotePreferencesDialog final : public QDialog
 public:
     explicit RemotePreferencesDialog(QSettings &settings,
                                      const QString &preferredProfileId = {},
-                                     QWidget *parent = nullptr);
+                                     QWidget *parent = nullptr,
+                                     Remote::RemoteSession *session = nullptr);
     ~RemotePreferencesDialog() override;
 
 signals:
@@ -39,6 +43,7 @@ private:
     void populateAdvancedPlaceholders();
     void disableUnimplementedControls();
     void loadLocalBehaviorControls();
+    void loadServerBehaviorControls();
     void populateServerSelector(const QString &preferredProfileId);
     void showServerMappings();
     void stageCurrentMappings();
@@ -65,4 +70,9 @@ private:
     QHash<QString, QList<Remote::PathMapping>> m_staged;
     QSet<QString> m_changedProfiles;
     bool m_behaviorDirty = false;
+    bool m_serverBehaviorDirty = false;
+    bool m_remotePreferencesLoaded = false;
+    bool m_loadingRemotePreferences = false;
+    QJsonObject m_remotePreferences;
+    QPointer<Remote::RemoteSession> m_remoteSession;
 };

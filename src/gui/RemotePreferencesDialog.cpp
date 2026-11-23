@@ -2,6 +2,7 @@
 #include "gui/RemotePreferencesDialog.h"
 #include "gui/DesktopAutostart.h"
 #include "api/ServerProfile.h"
+#include "api/RemoteSession.h"
 #include "ui_optionsdialog.h"
 
 #include <QAbstractButton>
@@ -15,6 +16,7 @@
 #include <QFontMetrics>
 #include <QFormLayout>
 #include <QGroupBox>
+#include <QJsonValue>
 #include <QIcon>
 #include <QHeaderView>
 #include <QLabel>
@@ -122,11 +124,13 @@ void setUnsupported(QWidget *widget)
 
 RemotePreferencesDialog::RemotePreferencesDialog(QSettings &settings,
                                                  const QString &preferredProfileId,
-                                                 QWidget *parent)
+                                                 QWidget *parent,
+                                                 Remote::RemoteSession *session)
     : QDialog(parent)
     , m_settings(settings)
     , m_mappingStore(settings)
     , m_ui(std::make_unique<Ui::OptionsDialog>())
+    , m_remoteSession(session)
 {
     m_ui->setupUi(this);
     setObjectName(QStringLiteral("remotePreferencesDialog"));
@@ -145,6 +149,7 @@ RemotePreferencesDialog::RemotePreferencesDialog(QSettings &settings,
     // were substituted with stock QLineEdit widgets.
     disableUnimplementedControls();
     loadLocalBehaviorControls();
+    loadServerBehaviorControls();
     populateAdvancedPlaceholders();
     buildRemotePathsPage(preferredProfileId);
 
@@ -428,8 +433,99 @@ void RemotePreferencesDialog::loadLocalBehaviorControls()
             this, dirty);
 }
 
-void RemotePreferencesDialog::populateAdvancedPlaceholders()
+void RemotePreferencesDialog::loadServerBehaviorControls()
 {
+    // Server log files are on the NAS, never in this desktop client's
+    // filesystem. No server controls are activated without actual API data.
+    if (!m_remoteSession || !m_remoteSession->isConnected())
+        return;
+
+    const auto onChanged = [this]() {
+        if (!m_loadingRemotePreferences)
+        {
+            m_serverBehaviorDirty = true;
+            updateButtons();
+        }
+    };
+
+    connect(m_remoteSession, &Remote::RemoteSession::preferencesReceived,
+            this, [this, onChanged](const QJsonObject &preferences) {
+        m_loadingRemotePreferences = true;
+        m_remotePreferences = preferences;
+        m_remotePreferencesLoaded = true;
+
+        const auto unlock = [](QWidget *widget, const QString &tooltip = {}) {
+            widget->setEnabled(true);
+            widget->setToolTip(tooltip);
+            if (auto *combo = qobject_cast<QComboBox *>(widget))
+                combo->view()->setEnabled(true);
+        };
+        unlock(m_ui->checkFileLog);
+        unlock(m_ui->textFileLogPath, tr("Directory on the remote server (NAS), not this desktop."));
+        unlock(m_ui->checkFileLogBackup);
+        unlock(m_ui->spinFileLogSize);
+        unlock(m_ui->checkFileLogDelete);
+        unlock(m_ui->spinFileLogAge);
+        unlock(m_ui->comboFileLogAgeType);
+        unlock(m_ui->checkBoxPerformanceWarning);
+
+        m_ui->checkFileLog->setChecked(
+            preferences.value(QStringLiteral("file_log_enabled")).toBool());
+        m_ui->textFileLogPath->setText(
+            preferences.value(QStringLiteral("file_log_path")).toString());
+        m_ui->checkFileLogBackup->setChecked(
+            preferences.value(QStringLiteral("file_log_backup_enabled")).toBool());
+        m_ui->spinFileLogSize->setValue(
+            preferences.value(QStringLiteral("file_log_max_size")).toInt());
+        m_ui->checkFileLogDelete->setChecked(
+            preferences.value(QStringLiteral("file_log_delete_old")).toBool());
+        m_ui->spinFileLogAge->setValue(
+            preferences.value(QStringLiteral("file_log_age")).toInt());
+        m_ui->comboFileLogAgeType->setCurrentIndex(qBound(0,
+            preferences.value(QStringLiteral("file_log_age_type")).toInt(),
+            m_ui->comboFileLogAgeType->count() - 1));
+        m_ui->checkBoxPerformanceWarning->setChecked(
+            preferences.value(QStringLiteral("performance_warning")).toBool());
+
+        m_ui->spinFileLogSize->setEnabled(m_ui->checkFileLogBackup->isChecked());
+        m_ui->spinFileLogAge->setEnabled(m_ui->checkFileLogDelete->isChecked());
+        m_ui->comboFileLogAgeType->setEnabled(m_ui->checkFileLogDelete->isChecked());
+        m_loadingRemotePreferences = false;
+        m_serverBehaviorDirty = false;
+        updateButtons();
+    });
+    connect(m_remoteSession, &Remote::RemoteSession::preferencesFailed,
+            this, [this](const QString &reason) {
+        QMessageBox::warning(this, tr("Cannot read server preferences"),
+            tr("The server's log settings remain unavailable: %1").arg(reason));
+    });
+
+    connect(m_ui->checkFileLog, &QGroupBox::toggled, this,
+            [onChanged](bool) { onChanged(); });
+    connect(m_ui->textFileLogPath, &QLineEdit::textChanged, this,
+            [onChanged](const QString &) { onChanged(); });
+    for (QCheckBox *box : {m_ui->checkFileLogBackup, m_ui->checkFileLogDelete,
+                           m_ui->checkBoxPerformanceWarning})
+        connect(box, &QCheckBox::toggled, this,
+                [onChanged](bool) { onChanged(); });
+    for (QSpinBox *spin : {m_ui->spinFileLogSize, m_ui->spinFileLogAge})
+        connect(spin, QOverload<int>::of(&QSpinBox::valueChanged), this,
+                [onChanged](int) { onChanged(); });
+    connect(m_ui->comboFileLogAgeType,
+            QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [onChanged](int) { onChanged(); });
+    connect(m_ui->checkFileLogBackup, &QCheckBox::toggled,
+            m_ui->spinFileLogSize, &QWidget::setEnabled);
+    connect(m_ui->checkFileLogDelete, &QCheckBox::toggled,
+            m_ui->spinFileLogAge, &QWidget::setEnabled);
+    connect(m_ui->checkFileLogDelete, &QCheckBox::toggled,
+            m_ui->comboFileLogAgeType, &QWidget::setEnabled);
+
+    m_remoteSession->requestPreferences();
+}
+
+void RemotePreferencesDialog::populateAdvancedPlaceholders()
+
     // Upstream qBittorrent's Designer leaves Advanced empty and populates
     // this table in advancedsettings.cpp. Retain every named setting from
     // that original list, with non-editable grey values until supported by
@@ -790,7 +886,8 @@ void RemotePreferencesDialog::updateButtons()
     m_removeMapping->setEnabled(selected);
     m_checkMount->setEnabled(selected);
     if (m_applyButton)
-        m_applyButton->setEnabled(!m_changedProfiles.isEmpty() || m_behaviorDirty);
+        m_applyButton->setEnabled(!m_changedProfiles.isEmpty()
+                                  || m_behaviorDirty || m_serverBehaviorDirty);
 }
 
 bool RemotePreferencesDialog::applyChanges()
@@ -805,6 +902,35 @@ bool RemotePreferencesDialog::applyChanges()
         }
     }
     m_changedProfiles.clear();
+    if (m_serverBehaviorDirty)
+    {
+        if (!m_remoteSession || !m_remoteSession->isConnected()
+            || !m_remotePreferencesLoaded)
+        {
+            QMessageBox::warning(this, tr("Server disconnected"),
+                                 tr("Cannot save the NAS log settings."));
+            return false;
+        }
+        QJsonObject changes;
+        const auto put = [this, &changes](const char *key, const QJsonValue &value) {
+            const QString name = QString::fromLatin1(key);
+            if (m_remotePreferences.value(name) != value)
+                changes.insert(name, value);
+        };
+        put("file_log_enabled", m_ui->checkFileLog->isChecked());
+        put("file_log_path", m_ui->textFileLogPath->text());
+        put("file_log_backup_enabled", m_ui->checkFileLogBackup->isChecked());
+        put("file_log_max_size", m_ui->spinFileLogSize->value());
+        put("file_log_delete_old", m_ui->checkFileLogDelete->isChecked());
+        put("file_log_age", m_ui->spinFileLogAge->value());
+        put("file_log_age_type", m_ui->comboFileLogAgeType->currentIndex());
+        put("performance_warning", m_ui->checkBoxPerformanceWarning->isChecked());
+        if (!changes.isEmpty())
+            m_remoteSession->setPreferences(changes);
+        for (auto it = changes.constBegin(); it != changes.constEnd(); ++it)
+            m_remotePreferences.insert(it.key(), it.value());
+        m_serverBehaviorDirty = false;
+    }
     if (m_behaviorDirty)
     {
         const bool tray = m_ui->checkShowSystray->isChecked()
