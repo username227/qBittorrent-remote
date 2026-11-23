@@ -268,8 +268,6 @@ struct MainWindow::SessionContext
     QString version;
     QString apiVersion;
     bool connected = false;
-    bool sessionStateKnown = false;
-    bool sessionPaused = false;
     bool altSpeedModeKnown = false;
     bool altSpeedMode = false;
 };
@@ -442,8 +440,6 @@ void MainWindow::setupActions()
         {m_ui->actionCreateTorrent, "torrent-creator"},
         {m_ui->actionOptions, "configure"},
         {m_ui->actionSetGlobalSpeedLimits, "speedometer"},
-        {m_ui->actionPauseSession, "pause-session"},
-        {m_ui->actionResumeSession, "torrent-start"},
         {m_ui->actionExit, "application-exit"},
         {m_ui->actionAbout, "help-about"}
     };
@@ -461,8 +457,7 @@ void MainWindow::setupActions()
         m_ui->actionOpenDestinationFolder, m_ui->actionTopQueuePos,
         m_ui->actionIncreaseQueuePos, m_ui->actionDecreaseQueuePos,
         m_ui->actionBottomQueuePos, m_ui->actionCreateTorrent,
-        m_ui->actionOptions, m_ui->actionPauseSession,
-        m_ui->actionResumeSession, m_ui->actionUseAlternativeSpeedLimits,
+        m_ui->actionOptions, m_ui->actionUseAlternativeSpeedLimits,
         m_ui->actionSetGlobalSpeedLimits
     })
         action->setEnabled(false);
@@ -487,16 +482,6 @@ void MainWindow::setupActions()
         RemoteSpeedLimitsDialog dialog(server->session, this);
         trackDialogGeometry(dialog, QStringLiteral("GlobalSpeedLimits"));
         dialog.exec();
-    });
-    connect(m_ui->actionPauseSession, &QAction::triggered, this, [this]() {
-        const auto server = activeConnection();
-        if (server && server->connected && server->sessionStateKnown && !server->sessionPaused)
-            server->session->setSessionPaused(true);
-    });
-    connect(m_ui->actionResumeSession, &QAction::triggered, this, [this]() {
-        const auto server = activeConnection();
-        if (server && server->connected && server->sessionStateKnown && server->sessionPaused)
-            server->session->setSessionPaused(false);
     });
 
     // The original toolbar action and the native context menu share the same
@@ -1304,8 +1289,13 @@ void MainWindow::setupTray()
     m_trayMenu->addAction(m_ui->actionUseAlternativeSpeedLimits);
     m_trayMenu->addAction(m_ui->actionSetGlobalSpeedLimits);
     m_trayMenu->addSeparator();
-    m_trayMenu->addAction(m_ui->actionResumeSession);
-    m_trayMenu->addAction(m_ui->actionPauseSession);
+    // Remote-safe substitute for upstream Pause Session: close one desktop
+    // connection without pausing or altering any torrent on the NAS.
+    m_trayDisconnectMenu = m_trayMenu->addMenu(
+        upstreamIcon("disconnected"), tr("Disconnect from Server"));
+    m_trayDisconnectMenu->setObjectName(QStringLiteral("trayDisconnectMenu"));
+    connect(m_trayDisconnectMenu, &QMenu::aboutToShow,
+            this, &MainWindow::refreshTrayDisconnectMenu);
     m_trayMenu->addSeparator();
     m_trayMenu->addAction(m_ui->actionExit);
     m_trayIcon->setContextMenu(m_trayMenu);
@@ -1325,7 +1315,6 @@ void MainWindow::updateTrayActionState()
         return;
     const auto server = activeConnection();
     const bool ready = server && server->connected;
-    const bool stateKnown = ready && server->sessionStateKnown;
     const bool altKnown = ready && server->altSpeedModeKnown;
     m_ui->actionSetGlobalSpeedLimits->setEnabled(ready);
     m_ui->actionUseAlternativeSpeedLimits->setEnabled(altKnown);
@@ -1334,11 +1323,35 @@ void MainWindow::updateTrayActionState()
         m_ui->actionUseAlternativeSpeedLimits->setChecked(
             altKnown && server->altSpeedMode);
     }
-    const bool paused = stateKnown && server->sessionPaused;
-    m_ui->actionPauseSession->setVisible(!paused);
-    m_ui->actionPauseSession->setEnabled(stateKnown && !paused);
-    m_ui->actionResumeSession->setVisible(paused);
-    m_ui->actionResumeSession->setEnabled(paused);
+    if (m_trayDisconnectMenu)
+    {
+        const bool anyConnected = std::any_of(m_connections.cbegin(), m_connections.cend(),
+            [](const auto &connection) { return connection && connection->connected; });
+        m_trayDisconnectMenu->setEnabled(anyConnected);
+    }
+}
+
+void MainWindow::refreshTrayDisconnectMenu()
+{
+    if (!m_trayDisconnectMenu)
+        return;
+    // Populate on submenu open, not during QAction::triggered. Destroying the
+    // triggered action while Qt is dispatching it would be unsafe.
+    m_trayDisconnectMenu->clear();
+    for (const auto &connection : m_connections)
+    {
+        if (!connection || !connection->connected)
+            continue;
+        const QString profileId = connection->profile.id;
+        auto *action = m_trayDisconnectMenu->addAction(connection->profile.name);
+        action->setData(profileId);
+        connect(action, &QAction::triggered, this, [this, profileId]() {
+            if (const auto live = connectedById(profileId))
+                removeConnection(live);
+            // This is strictly a client-side disconnect + Web API logout;
+            // downloading and seeding on the server keep running.
+        });
+    }
 }
 
 void MainWindow::updateTraySettings()
@@ -2149,12 +2162,6 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
                 return;
             connection->pane->applySync(payload);
             const QJsonObject state = payload.value(QStringLiteral("server_state")).toObject();
-            const QJsonValue paused = state.value(QStringLiteral("session_state"));
-            if (paused.isBool())
-            {
-                connection->sessionStateKnown = true;
-                connection->sessionPaused = paused.toBool();
-            }
             const QJsonValue alt = state.value(QStringLiteral("use_alt_speed_limits"));
             if (alt.isBool())
             {

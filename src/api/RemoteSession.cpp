@@ -492,15 +492,6 @@ void RemoteSession::queueOperation(const QString &endpoint, const QByteArray &bo
     pumpOperations();
 }
 
-void RemoteSession::setSessionPaused(bool paused)
-{
-    queueOperation(paused ? QStringLiteral("api/v2/transfer/pauseSession")
-                          : QStringLiteral("api/v2/transfer/resumeSession"),
-                   {}, QByteArrayLiteral("application/x-www-form-urlencoded"),
-                   paused ? tr("Pause remote session") : tr("Resume remote session"),
-                   true);
-}
-
 void RemoteSession::setAlternativeSpeedLimitsEnabled(bool enabled)
 {
     // Use an explicit mode, not the toggle endpoint: retrying or switching

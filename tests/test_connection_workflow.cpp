@@ -151,14 +151,13 @@ public:
                             const int rid = query.queryItemValue(QStringLiteral("rid")).toInt();
                             if (m_trayDemo)
                             {
-                                // Stateful real authenticated sync/maindata, including
-                                // independent pause and alternative-speed state.
+                                // Stateful authenticated sync/maindata for the
+                                // selected NAS alternative speed setting.
                                 response = QJsonDocument(QJsonObject{
                                     {QStringLiteral("rid"), rid + 1},
                                     {QStringLiteral("full_update"), rid == 0},
                                     {QStringLiteral("torrents"), QJsonObject()},
                                     {QStringLiteral("server_state"), QJsonObject{
-                                        {QStringLiteral("session_state"), m_trayPaused},
                                         {QStringLiteral("use_alt_speed_limits"), m_trayAltMode},
                                         {QStringLiteral("dl_info_speed"), 0},
                                         {QStringLiteral("up_info_speed"), 0}
@@ -330,11 +329,7 @@ public:
                             }
                             else
                             {
-                                if (path == "/api/v2/transfer/pauseSession")
-                                    m_trayPaused = true;
-                                else if (path == "/api/v2/transfer/resumeSession")
-                                    m_trayPaused = false;
-                                else if (path == "/api/v2/transfer/setSpeedLimitsMode")
+                                if (path == "/api/v2/transfer/setSpeedLimitsMode")
                                 {
                                     const QUrlQuery form(QString::fromUtf8(body));
                                     m_trayAltMode = form.queryItemValue(
@@ -560,10 +555,9 @@ public:
     int logouts() const noexcept { return m_logouts; }
     int syncRequests() const noexcept { return m_syncRequests; }
     void enableTorrentSyncDemo() { m_demoTorrents = true; }
-    void enableNativeTrayDemo(bool paused = false, bool alternative = false)
+    void enableNativeTrayDemo(bool alternative = false)
     {
         m_trayDemo = true;
-        m_trayPaused = paused;
         m_trayAltMode = alternative;
         m_traySpeedLimits = QJsonObject{
             {QStringLiteral("up_limit"), 50 * 1024},
@@ -572,7 +566,6 @@ public:
             {QStringLiteral("alt_dl_limit"), 30 * 1024}
         };
     }
-    bool trayPaused() const { return m_trayPaused; }
     bool trayAlternative() const { return m_trayAltMode; }
     QJsonObject trayLimits() const { return m_traySpeedLimits; }
     void setReportedVersions(const QString &qbtVersion, const QString &apiVersion)
@@ -706,7 +699,6 @@ private:
     int m_logouts = 0;
     bool m_demoTorrents = false;
     bool m_trayDemo = false;
-    bool m_trayPaused = false;
     bool m_trayAltMode = false;
     QJsonObject m_traySpeedLimits;
     bool m_queueingEnabled = false;
@@ -1105,10 +1097,10 @@ private slots:
             QStringLiteral("actionUseAlternativeSpeedLimits"));
         auto *limits = window.findChild<QAction *>(
             QStringLiteral("actionSetGlobalSpeedLimits"));
-        auto *pause = window.findChild<QAction *>(QStringLiteral("actionPauseSession"));
-        auto *resume = window.findChild<QAction *>(QStringLiteral("actionResumeSession"));
+        auto *disconnectMenu = window.findChild<QMenu *>(QStringLiteral("trayDisconnectMenu"));
         auto *exit = window.findChild<QAction *>(QStringLiteral("actionExit"));
-        QVERIFY(menu && show && file && link && alternate && limits && pause && resume && exit);
+        QVERIFY(menu && show && file && link && alternate && limits && disconnectMenu && exit);
+        QVERIFY(!disconnectMenu->isEnabled());
 
         // Open the actual Qt menu used by the system-tray icon. The native
         // .ui actions are reused, rather than unrelated fake tray callbacks.
@@ -1119,21 +1111,22 @@ private slots:
         QVERIFY(menu->actions().contains(link));
         QVERIFY(menu->actions().contains(alternate));
         QVERIFY(menu->actions().contains(limits));
-        QVERIFY(menu->actions().contains(pause));
-        QVERIFY(menu->actions().contains(resume));
+        QVERIFY(menu->actions().contains(disconnectMenu->menuAction()));
+        QVERIFY(!menu->actions().contains(window.findChild<QAction *>(
+            QStringLiteral("actionPauseSession"))));
+        QVERIFY(!menu->actions().contains(window.findChild<QAction *>(
+            QStringLiteral("actionResumeSession"))));
         QCOMPARE(menu->actions().last(), exit);
         QVERIFY(!file->icon().isNull());
         QVERIFY(!link->icon().isNull());
         QVERIFY(!limits->icon().isNull());
-        QVERIFY(!pause->icon().isNull());
+        QVERIFY(!disconnectMenu->icon().isNull());
         menu->close();
 
         openConnectDialog(window, server.url());
         QTRY_VERIFY_WITH_TIMEOUT(alternate->isEnabled() && limits->isEnabled()
-            && pause->isEnabled(), 7000);
+            && disconnectMenu->isEnabled(), 7000);
         QVERIFY(!alternate->isChecked());
-        QVERIFY(pause->isVisible());
-        QVERIFY(!resume->isVisible());
 
         // The system-tray entry points remain fully functional when the main
         // window is hidden. In CI, menu popup is simulated without an OS tray.
@@ -1219,15 +1212,23 @@ private slots:
             QStringLiteral("json")).toUtf8()).object();
         QCOMPARE(changes.size(), 1);
         QCOMPARE(changes.value(QStringLiteral("up_limit")).toInt(), 57 * 1024);
-        pause->trigger();
-        QTRY_VERIFY_WITH_TIMEOUT(server.trayPaused(), 7000);
-        QTRY_VERIFY_WITH_TIMEOUT(resume->isVisible() && resume->isEnabled(), 7000);
-        QVERIFY(!pause->isVisible());
-        resume->trigger();
-        QTRY_VERIFY_WITH_TIMEOUT(!server.trayPaused(), 7000);
-        QTRY_VERIFY_WITH_TIMEOUT(pause->isVisible() && pause->isEnabled(), 7000);
-        QCOMPARE(server.commandsFor("/api/v2/transfer/pauseSession"), 1);
-        QCOMPARE(server.commandsFor("/api/v2/transfer/resumeSession"), 1);
+        // Open the real tray submenu while the main window is hidden.
+        // Entries are sourced from currently connected NAS profiles.
+        disconnectMenu->popup(QPoint(35, 35));
+        QTRY_VERIFY(disconnectMenu->isVisible());
+        QCOMPARE(disconnectMenu->actions().size(), 1);
+        QAction *serverEntry = disconnectMenu->actions().first();
+        QCOMPARE(serverEntry->text(), QStringLiteral("Demo seedbox"));
+        QVERIFY(serverEntry->isEnabled());
+        disconnectMenu->close();
+        serverEntry->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(server.logouts(), 1, 7000);
+        QVERIFY(!disconnectMenu->isEnabled());
+        QVERIFY(!window.isVisible());
+        // Disconnect is local only. Nothing pauses the NAS or torrents.
+        QCOMPARE(server.commandsFor("/api/v2/transfer/pauseSession"), 0);
+        QCOMPARE(server.commandsFor("/api/v2/transfer/resumeSession"), 0);
+        QVERIFY(server.trayAlternative());
         show->trigger();
         QTRY_VERIFY(window.isVisible());
 
@@ -1241,7 +1242,7 @@ private slots:
         });
         exit->trigger();
         QVERIFY(window.isVisible());
-        QCOMPARE(server.trayPaused(), false);
+        QCOMPARE(server.logouts(), 1);
         settings.setValue(QStringLiteral("Preferences/Behavior/ConfirmExit"), false);
     }
 
@@ -1249,8 +1250,8 @@ private slots:
     {
         DemoQbittorrentServer alpha(true, nullptr, true);
         DemoQbittorrentServer beta(true, nullptr, true);
-        alpha.enableNativeTrayDemo(false, false);
-        beta.enableNativeTrayDemo(true, true);
+        alpha.enableNativeTrayDemo(false);
+        beta.enableNativeTrayDemo(true);
         QVERIFY(alpha.start());
         QVERIFY(beta.start());
         QTemporaryDir temp;
@@ -1272,29 +1273,49 @@ private slots:
         auto *tabs = window.findChild<QTabWidget *>(QStringLiteral("serverTabs"));
         auto *alternative = window.findChild<QAction *>(
             QStringLiteral("actionUseAlternativeSpeedLimits"));
-        auto *pause = window.findChild<QAction *>(QStringLiteral("actionPauseSession"));
-        auto *resume = window.findChild<QAction *>(QStringLiteral("actionResumeSession"));
-        QVERIFY(tabs && alternative && pause && resume);
+        auto *disconnectMenu = window.findChild<QMenu *>(QStringLiteral("trayDisconnectMenu"));
+        QVERIFY(tabs && alternative && disconnectMenu);
         QTRY_COMPARE_WITH_TIMEOUT(tabs->count(), 2, 7000);
         tabs->setCurrentIndex(0);
-        QTRY_VERIFY_WITH_TIMEOUT(alternative->isEnabled() && pause->isEnabled(), 7000);
+        QTRY_VERIFY_WITH_TIMEOUT(alternative->isEnabled() && disconnectMenu->isEnabled(), 7000);
         QCOMPARE(alternative->isChecked(), false);
-        QCOMPARE(pause->isVisible(), true);
         tabs->setCurrentIndex(1);
-        QTRY_VERIFY_WITH_TIMEOUT(alternative->isEnabled() && resume->isEnabled(), 7000);
-        QCOMPARE(alternative->isChecked(), true);
-        QCOMPARE(pause->isVisible(), false);
+        QTRY_VERIFY_WITH_TIMEOUT(alternative->isEnabled() && alternative->isChecked(), 7000);
 
-        // Only Beta may be resumed through the tray while its tab is active.
-        resume->trigger();
-        QTRY_VERIFY_WITH_TIMEOUT(!beta.trayPaused(), 7000);
-        QCOMPARE(alpha.commandsFor("/api/v2/transfer/resumeSession"), 0);
+        // Disconnect Beta while Alpha is selected. It must not act on the
+        // current tab by accident or modify the NAS daemon's torrent state.
         tabs->setCurrentIndex(0);
         QCOMPARE(alternative->isChecked(), false);
-        QCOMPARE(pause->isVisible(), true);
-        tabs->setCurrentIndex(1);
-        QTRY_VERIFY_WITH_TIMEOUT(pause->isEnabled(), 7000);
-        QCOMPARE(alternative->isChecked(), true);
+        disconnectMenu->popup(QPoint(40, 40));
+        QTRY_COMPARE(disconnectMenu->actions().size(), 2);
+        QAction *betaEntry = nullptr;
+        for (QAction *entry : disconnectMenu->actions())
+            if (entry->text() == QStringLiteral("Beta"))
+                betaEntry = entry;
+        QVERIFY(betaEntry);
+        QCOMPARE(betaEntry->data().toString(), QStringLiteral("beta-server"));
+        disconnectMenu->close();
+        betaEntry->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(beta.logouts(), 1, 7000);
+        QCOMPARE(alpha.logouts(), 0);
+        QTRY_COMPARE(tabs->count(), 1);
+        QCOMPARE(tabs->tabText(0), QStringLiteral("Alpha"));
+        QVERIFY(disconnectMenu->isEnabled());
+        QCOMPARE(alpha.commandsFor("/api/v2/transfer/pauseSession"), 0);
+        QCOMPARE(beta.commandsFor("/api/v2/transfer/pauseSession"), 0);
+
+        // After refresh, the list has only Alpha. It can be disconnected
+        // without showing the main window or stopping any NAS transfers.
+        window.hide();
+        disconnectMenu->popup(QPoint(40, 40));
+        QTRY_COMPARE(disconnectMenu->actions().size(), 1);
+        QAction *alphaEntry = disconnectMenu->actions().first();
+        QCOMPARE(alphaEntry->text(), QStringLiteral("Alpha"));
+        disconnectMenu->close();
+        alphaEntry->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(alpha.logouts(), 1, 7000);
+        QTRY_VERIFY(!disconnectMenu->isEnabled());
+        QVERIFY(!window.isVisible());
     }
 
     void toolbarAndStatusbarRemainEnabledAfterHiddenWindowExit()
