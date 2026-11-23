@@ -162,13 +162,21 @@ public:
                             }
                             else if (m_demoNativePresentation)
                             {
-                                // Two real server-originated states: completed seeding
-                                // with unavailable swarm information, and an incomplete
-                                // torrent with 2.5 distributed copies.
+                                // Authenticated sync/maindata drives the actual
+                                // visible Qt torrent table; no local torrent data.
                                 if (rid == 0)
-                                    response = R"({"rid":1,"full_update":true,"torrents":{"0000000000000000000000000000000000000001":{"name":"Complete seed","size":1024,"progress":1.0,"state":"stalledUP","availability":-1},"0000000000000000000000000000000000000002":{"name":"Partial download","size":1024,"progress":0.5,"state":"downloading","availability":2.5}},"server_state":{"dl_info_speed":0,"up_info_speed":0}})";
+                                    response = R"({"rid":1,"full_update":true,"torrents":{"0000000000000000000000000000000000000001":{"name":"Complete seed","size":1024,"progress":1.0,"state":"stalledUP","availability":-1,"num_seeds":0,"num_complete":3,"num_leechs":0,"num_incomplete":0},"0000000000000000000000000000000000000002":{"name":"Partial download","size":1024,"progress":0.5,"state":"downloading","availability":2.5,"num_seeds":2,"num_complete":5,"num_leechs":4,"num_incomplete":8}},"server_state":{"dl_info_speed":0,"up_info_speed":0}})";
+                                else if (m_pendingSwarmCountsUpdate)
+                                {
+                                    m_pendingSwarmCountsUpdate = false;
+                                    response = QByteArrayLiteral("{\"rid\":")
+                                        + QByteArray::number(rid + 1)
+                                        + QByteArrayLiteral(R"(,"full_update":false,"torrents":{"0000000000000000000000000000000000000001":{"num_seeds":10,"num_complete":14,"num_leechs":3,"num_incomplete":6},"0000000000000000000000000000000000000002":{"num_complete":11}}})");
+                                }
                                 else
-                                    response = R"({"rid":2,"full_update":false,"server_state":{"dl_info_speed":0}})";
+                                    response = QByteArrayLiteral("{\"rid\":")
+                                        + QByteArray::number(rid + 1)
+                                        + QByteArrayLiteral(R"(,"full_update":false,"server_state":{"dl_info_speed":0}})");
                             }
                             else if (!m_demoTorrents)
                                 response = R"({"rid":1,"full_update":true,"torrents":{},"server_state":{"dl_info_speed":0,"up_info_speed":0}})";
@@ -491,6 +499,7 @@ public:
     void setExistingTorrentHash(const QString &hash) { m_existingTorrentHash = hash; }
     void setExistingTorrentPrivate(bool value) { m_existingTorrentPrivate = value; }
     void enableNativePresentationDemo() { m_demoNativePresentation = true; }
+    void queueSwarmCountsUpdate() { m_pendingSwarmCountsUpdate = true; }
     void enableDetailsDemo() { m_demoDetails = true; }
     void enableDistinctTrackerPasskeyDemo() { m_distinctTrackerPasskeys = true; }
     void enableRemoteContentAndOptionsDemo()
@@ -614,6 +623,7 @@ private:
     QString m_existingTorrentHash;
     bool m_existingTorrentPrivate = false;
     bool m_demoNativePresentation = false;
+    bool m_pendingSwarmCountsUpdate = false;
     bool m_demoDetails = false;
     bool m_distinctTrackerPasskeys = false;
     bool m_statefulTrackerDemo = false;
@@ -1524,6 +1534,61 @@ private slots:
         QVERIFY(window.statusBar()->currentMessage().contains(QStringLiteral("Demo seedbox")));
     }
 
+    void liveTorrentSwarmCountsHonorHideZeroAndIncrementalSync()
+    {
+        DemoQbittorrentServer server(true);
+        server.enableNativePresentationDemo();
+        QVERIFY(server.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("swarm-view.ini")),
+                           QSettings::IniFormat);
+        // Apply the actual native Behavior option through the live MainWindow,
+        // not a fabricated model object or a formatting-helper unit test.
+        settings.setValue(QStringLiteral("Preferences/Behavior/HideZero"), true);
+        settings.setValue(QStringLiteral("Preferences/Behavior/HideZeroMode"), 0);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        QTRY_VERIFY(window.isVisible());
+        openConnectDialog(window, server.url());
+
+        auto *table = window.findChild<QTableView *>(QStringLiteral("torrentList"));
+        QVERIFY(table && table->model());
+        QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 2, 6000);
+        const auto rowFor = [table](const QString &name) {
+            for (int row = 0; row < table->model()->rowCount(); ++row)
+                if (table->model()->index(row, 0).data().toString() == name)
+                    return row;
+            return -1;
+        };
+        const auto shown = [table, &rowFor](const QString &name, int column) {
+            const int row = rowFor(name);
+            return row < 0 ? QStringLiteral("<missing torrent>")
+                : table->model()->index(row, column).data().toString();
+        };
+        const QString complete = QStringLiteral("Complete seed");
+        const QString partial = QStringLiteral("Partial download");
+        QCOMPARE(shown(complete, 4), QStringLiteral("0 (3)"));
+        QCOMPARE(shown(complete, 5), QString()); // Both counts are zero.
+        QCOMPARE(shown(partial, 4), QStringLiteral("2 (5)"));
+        QCOMPARE(shown(partial, 5), QStringLiteral("4 (8)"));
+
+        // Change counts at the HTTP server, then observe the *live* Qt table
+        // after a genuine incremental /sync/maindata response is processed.
+        server.queueSwarmCountsUpdate();
+        QTRY_COMPARE_WITH_TIMEOUT(shown(complete, 4), QStringLiteral("10 (14)"), 7000);
+        QCOMPARE(shown(complete, 5), QStringLiteral("3 (6)"));
+        QCOMPARE(shown(partial, 4), QStringLiteral("2 (11)")); // Total-only patch.
+
+        // The display string must not leak into numeric sorting: 10 > 2,
+        // despite "2 (...)" sorting lexically after "10 (...)".
+        table->sortByColumn(4, Qt::DescendingOrder);
+        QTRY_COMPARE(table->model()->index(0, 0).data().toString(), complete);
+        QCOMPARE(table->model()->index(0, 4).data(Qt::UserRole).toInt(), 10);
+        QCOMPARE(table->model()->index(1, 4).data(Qt::UserRole).toInt(), 2);
+    }
+
     void nativeTransferPresentationShowsUpstreamProgressAndAvailability()
     {
         DemoQbittorrentServer server(true);
@@ -1606,6 +1671,18 @@ private slots:
         QVERIFY(partial.data().toString().endsWith(QLatin1Char('%')));
         QCOMPARE(indexFor(QStringLiteral("Complete seed"), 3).data().toString(),
                  QStringLiteral("Seeding"));
+        // End-to-end rendering from the authenticated sync/maindata fixture:
+        // connected count followed by the swarm total (upstream v5.3.0).
+        QCOMPARE(indexFor(QStringLiteral("Complete seed"), 4).data().toString(),
+                 QStringLiteral("0 (3)"));
+        QCOMPARE(indexFor(QStringLiteral("Complete seed"), 5).data().toString(),
+                 QStringLiteral("0 (0)"));
+        QCOMPARE(indexFor(QStringLiteral("Partial download"), 4).data().toString(),
+                 QStringLiteral("2 (5)"));
+        QCOMPARE(indexFor(QStringLiteral("Partial download"), 5).data().toString(),
+                 QStringLiteral("4 (8)"));
+        QCOMPARE(indexFor(QStringLiteral("Partial download"), 4)
+                 .data(Qt::UserRole).toInt(), 2);
         QCOMPARE(indexFor(QStringLiteral("Complete seed"), 12).data().toString(),
                  QStringLiteral("N/A"));
 
