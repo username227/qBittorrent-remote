@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/RemotePreferencesDialog.h"
+#include "gui/DesktopAutostart.h"
 #include "api/ServerProfile.h"
+#include "api/RemoteSession.h"
 #include "ui_optionsdialog.h"
 
 #include <QAbstractButton>
@@ -14,6 +16,7 @@
 #include <QFontMetrics>
 #include <QFormLayout>
 #include <QGroupBox>
+#include <QJsonValue>
 #include <QIcon>
 #include <QHeaderView>
 #include <QLabel>
@@ -21,6 +24,7 @@
 #include <QListWidget>
 #include <QMessageBox>
 #include <QScreen>
+#include <QSystemTrayIcon>
 #include <QGuiApplication>
 #include <QPushButton>
 #include <limits>
@@ -120,11 +124,13 @@ void setUnsupported(QWidget *widget)
 
 RemotePreferencesDialog::RemotePreferencesDialog(QSettings &settings,
                                                  const QString &preferredProfileId,
-                                                 QWidget *parent)
+                                                 QWidget *parent,
+                                                 Remote::RemoteSession *session)
     : QDialog(parent)
     , m_settings(settings)
     , m_mappingStore(settings)
     , m_ui(std::make_unique<Ui::OptionsDialog>())
+    , m_remoteSession(session)
 {
     m_ui->setupUi(this);
     setObjectName(QStringLiteral("remotePreferencesDialog"));
@@ -142,6 +148,8 @@ RemotePreferencesDialog::RemotePreferencesDialog(QSettings &settings,
     // layout (GPL-3.0-or-later). Only local-engine-only custom path widgets
     // were substituted with stock QLineEdit widgets.
     disableUnimplementedControls();
+    loadLocalBehaviorControls();
+    loadServerBehaviorControls();
     populateAdvancedPlaceholders();
     buildRemotePathsPage(preferredProfileId);
 
@@ -186,8 +194,9 @@ RemotePreferencesDialog::RemotePreferencesDialog(QSettings &settings,
     // Unsupported controls already carry the same explanatory tooltip;
     // a permanent footer warning reduced the height available to settings.
     m_ui->tabSelection->setToolTip(tr(
-        "Unsupported controls remain visible but disabled; displayed "
-        "defaults are not live settings from the remote server."));
+        "Unimplemented controls remain disabled. Local Behavior controls "
+        "use desktop settings; NAS log controls load actual values from the "
+        "connected server."));
 
     m_applyButton = m_ui->buttonBox->button(QDialogButtonBox::Apply);
     m_applyButton->setObjectName(QStringLiteral("preferencesApply"));
@@ -228,6 +237,24 @@ void RemotePreferencesDialog::disableUnimplementedControls()
         QWidget *page = m_ui->tabOption->widget(pageIndex);
         for (QWidget *widget : page->findChildren<QWidget *>())
         {
+            // QComboBox owns a popup QAbstractItemView. Disabling its view
+            // separately leaves every popup item visually disabled even after
+            // we re-enable the combo in Behavior. Treat the combo as one
+            // control and never disable its internal widgets independently.
+            bool insideComboBox = false;
+            for (QWidget *ancestor = widget->parentWidget();
+                 ancestor && ancestor != page;
+                 ancestor = ancestor->parentWidget())
+            {
+                if (qobject_cast<QComboBox *>(ancestor))
+                {
+                    insideComboBox = true;
+                    break;
+                }
+            }
+            if (insideComboBox)
+                continue;
+
             if (auto *group = qobject_cast<QGroupBox *>(widget))
             {
                 if (group->isCheckable())
@@ -243,6 +270,266 @@ void RemotePreferencesDialog::disableUnimplementedControls()
                 setUnsupported(widget);
         }
     }
+}
+
+void RemotePreferencesDialog::loadLocalBehaviorControls()
+{
+    // These native controls affect this remote desktop application, not the
+    // qBittorrent daemon. They must not modify any server preferences.
+    const auto unlock = [](QWidget *widget, const QString &tooltip = {}) {
+        widget->setEnabled(true);
+        widget->setToolTip(tooltip);
+        // Also repair popups disabled by earlier initialization; enabling a
+        // QComboBox alone does not undo an explicit disable on its view.
+        if (auto *combo = qobject_cast<QComboBox *>(widget))
+            combo->view()->setEnabled(true);
+    };
+    unlock(m_ui->confirmDeletion);
+    unlock(m_ui->checkTorrentContentDrag,
+        tr("Allow dragging files from the Content tab into a file manager. "
+           "Hold Alt to invert drag versus selection behavior. "
+           "The files must be accessible through this server's path mappings."));
+    unlock(m_ui->checkUseTorrentStatesColors);
+    unlock(m_ui->checkProgressBarFollowsTextColor);
+    unlock(m_ui->checkBoxUseSeparateTrackerStatusFilter);
+    unlock(m_ui->checkProgramExitConfirm);
+    unlock(m_ui->checkAltRowColors);
+    unlock(m_ui->checkHideZero);
+    unlock(m_ui->comboHideZero);
+    unlock(m_ui->actionTorrentDlOnDblClBox);
+    unlock(m_ui->actionTorrentFnOnDblClBox);
+    unlock(m_ui->checkBoxFreeDiskSpaceStatusBar);
+    unlock(m_ui->checkBoxHideZeroStatusFilters);
+    unlock(m_ui->windowStateComboBox);
+    if (DesktopAutostart::available())
+        unlock(m_ui->checkStartup);
+    if (QSystemTrayIcon::isSystemTrayAvailable())
+        unlock(m_ui->checkShowSystray);
+    unlock(m_ui->checkMinimizeToSysTray);
+    unlock(m_ui->checkCloseToSystray);
+    unlock(m_ui->comboTrayIcon);
+
+    m_ui->checkStartup->setText(tr("Start qBittorrent Remote when system starts"));
+    m_ui->checkStartup->setToolTip(tr(
+        "Start when you sign in to your desktop session (Linux), "
+        "or when you sign in to Windows. This does not start a system daemon."));
+    m_ui->checkStartup->setChecked(DesktopAutostart::isEnabled());
+    m_ui->windowStateComboBox->clear();
+    m_ui->windowStateComboBox->addItem(tr("Normal"), QStringLiteral("normal"));
+    m_ui->windowStateComboBox->addItem(tr("Minimized"), QStringLiteral("minimized"));
+    m_ui->windowStateComboBox->addItem(tr("Hidden"), QStringLiteral("hidden"));
+    const QString startupWindowState = m_settings.value(
+        QStringLiteral("Preferences/Behavior/StartupWindowState"),
+        QStringLiteral("normal")).toString();
+    const int startupIndex = m_ui->windowStateComboBox->findData(startupWindowState);
+    m_ui->windowStateComboBox->setCurrentIndex(startupIndex >= 0 ? startupIndex : 0);
+    m_ui->checkShowSystray->setChecked(m_settings.value(
+        QStringLiteral("Preferences/Behavior/EnableTray"), false).toBool()
+        && QSystemTrayIcon::isSystemTrayAvailable());
+    m_ui->checkMinimizeToSysTray->setChecked(m_settings.value(
+        QStringLiteral("Preferences/Behavior/MinimizeToTray"), false).toBool());
+    m_ui->checkCloseToSystray->setChecked(m_settings.value(
+        QStringLiteral("Preferences/Behavior/CloseToTray"), false).toBool());
+    m_ui->comboTrayIcon->setCurrentIndex(qBound(0, m_settings.value(
+        QStringLiteral("Preferences/Behavior/TrayIconStyle"), 0).toInt(),
+        m_ui->comboTrayIcon->count() - 1));
+    const auto updateTrayInputs = [this]() {
+        const bool active = m_ui->checkShowSystray->isEnabled()
+            && m_ui->checkShowSystray->isChecked();
+        m_ui->checkMinimizeToSysTray->setEnabled(active);
+        m_ui->checkCloseToSystray->setEnabled(active);
+        m_ui->comboTrayIcon->setEnabled(active);
+    };
+    updateTrayInputs();
+
+    m_ui->confirmDeletion->setChecked(m_settings.value(
+        QStringLiteral("Preferences/Behavior/ConfirmTorrentDeletion"), true).toBool());
+    m_ui->checkProgramExitConfirm->setChecked(m_settings.value(
+        QStringLiteral("Preferences/Behavior/ConfirmExit"), false).toBool());
+    m_ui->checkTorrentContentDrag->setChecked(m_settings.value(
+        QStringLiteral("Preferences/Behavior/TorrentContentDragEnabled"), true).toBool());
+    m_ui->checkUseTorrentStatesColors->setChecked(m_settings.value(
+        QStringLiteral("Preferences/Behavior/StateColors"), true).toBool());
+    m_ui->checkProgressBarFollowsTextColor->setChecked(m_settings.value(
+        QStringLiteral("Preferences/Behavior/ProgressFollowsState"), false).toBool());
+    m_ui->checkProgressBarFollowsTextColor->setEnabled(
+        m_ui->checkUseTorrentStatesColors->isChecked());
+    m_ui->checkBoxUseSeparateTrackerStatusFilter->setChecked(m_settings.value(
+        QStringLiteral("Preferences/Behavior/SeparateTrackerStatus"), false).toBool());
+    m_ui->checkAltRowColors->setChecked(m_settings.value(
+        QStringLiteral("Preferences/Behavior/AlternatingRows"), true).toBool());
+    const bool hideZero = m_settings.value(
+        QStringLiteral("Preferences/Behavior/HideZero"), false).toBool();
+    m_ui->checkHideZero->setChecked(hideZero);
+    m_ui->comboHideZero->setCurrentIndex(qBound(0, m_settings.value(
+        QStringLiteral("Preferences/Behavior/HideZeroMode"), 0).toInt(), 1));
+    m_ui->comboHideZero->setEnabled(hideZero);
+
+    // Preview requires a separate remote-access and playback milestone.
+    // Do not offer an action that would be a no-op or open a wrong local file.
+    for (QComboBox *box : {m_ui->actionTorrentDlOnDblClBox,
+                           m_ui->actionTorrentFnOnDblClBox})
+    {
+        box->removeItem(2);
+        for (int i = 0; i < box->count(); ++i)
+        {
+            static const char *const actionIds[] = {
+                "toggle", "folder", "options", "none"
+            };
+            box->setItemData(i, QString::fromLatin1(actionIds[i]));
+        }
+    }
+    const auto loadAction = [this](QComboBox *box, const QString &key,
+                                   const QString &fallback) {
+        const QString selected = m_settings.value(key, fallback).toString();
+        const int index = box->findData(selected);
+        box->setCurrentIndex(index >= 0 ? index : box->findData(fallback));
+    };
+    loadAction(m_ui->actionTorrentDlOnDblClBox,
+        QStringLiteral("Preferences/Behavior/DoubleClickDownloading"),
+        QStringLiteral("toggle"));
+    loadAction(m_ui->actionTorrentFnOnDblClBox,
+        QStringLiteral("Preferences/Behavior/DoubleClickCompleted"),
+        QStringLiteral("folder"));
+    m_ui->checkBoxHideZeroStatusFilters->setChecked(m_settings.value(
+        QStringLiteral("Preferences/Behavior/HideZeroStatusFilters"), false).toBool());
+    m_ui->checkBoxFreeDiskSpaceStatusBar->setChecked(m_settings.value(
+        QStringLiteral("Preferences/Behavior/ShowServerFreeSpace"), false).toBool());
+    m_ui->checkBoxFreeDiskSpaceStatusBar->setToolTip(tr(
+        "Show available space on the connected server's default save drive, "
+        "as reported by its Web API. This is not your desktop's free space."));
+
+    const auto dirty = [this]() {
+        m_behaviorDirty = true;
+        updateButtons();
+    };
+    connect(m_ui->checkStartup, &QCheckBox::toggled, this, dirty);
+    connect(m_ui->windowStateComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [dirty](int) { dirty(); });
+    connect(m_ui->checkShowSystray, &QGroupBox::toggled, this,
+            [updateTrayInputs, dirty](bool) { updateTrayInputs(); dirty(); });
+    connect(m_ui->checkMinimizeToSysTray, &QCheckBox::toggled, this, dirty);
+    connect(m_ui->checkCloseToSystray, &QCheckBox::toggled, this, dirty);
+    connect(m_ui->comboTrayIcon, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [dirty](int) { dirty(); });
+    connect(m_ui->confirmDeletion, &QCheckBox::toggled, this, dirty);
+    connect(m_ui->checkProgramExitConfirm, &QCheckBox::toggled, this, dirty);
+    connect(m_ui->checkTorrentContentDrag, &QCheckBox::toggled, this, dirty);
+    connect(m_ui->checkUseTorrentStatesColors, &QCheckBox::toggled, this,
+            [this, dirty](bool enabled) {
+                m_ui->checkProgressBarFollowsTextColor->setEnabled(enabled);
+                dirty();
+            });
+    connect(m_ui->checkProgressBarFollowsTextColor, &QCheckBox::toggled,
+            this, dirty);
+    connect(m_ui->checkBoxUseSeparateTrackerStatusFilter, &QCheckBox::toggled,
+            this, dirty);
+    connect(m_ui->checkAltRowColors, &QCheckBox::toggled, this, dirty);
+    connect(m_ui->checkHideZero, &QCheckBox::toggled, this, [this, dirty](bool value) {
+        m_ui->comboHideZero->setEnabled(value);
+        dirty();
+    });
+    connect(m_ui->comboHideZero, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [dirty](int) { dirty(); });
+    for (QComboBox *box : {m_ui->actionTorrentDlOnDblClBox,
+                           m_ui->actionTorrentFnOnDblClBox})
+        connect(box, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                this, [dirty](int) { dirty(); });
+    connect(m_ui->checkBoxFreeDiskSpaceStatusBar, &QCheckBox::toggled,
+            this, dirty);
+    connect(m_ui->checkBoxHideZeroStatusFilters, &QCheckBox::toggled,
+            this, dirty);
+}
+
+void RemotePreferencesDialog::loadServerBehaviorControls()
+{
+    // Server log files are on the NAS, never in this desktop client's
+    // filesystem. No server controls are activated without actual API data.
+    if (!m_remoteSession || !m_remoteSession->isConnected())
+        return;
+
+    const auto onChanged = [this]() {
+        if (!m_loadingRemotePreferences)
+        {
+            m_serverBehaviorDirty = true;
+            updateButtons();
+        }
+    };
+
+    connect(m_remoteSession, &Remote::RemoteSession::preferencesReceived,
+            this, [this, onChanged](const QJsonObject &preferences) {
+        m_loadingRemotePreferences = true;
+        m_remotePreferences = preferences;
+        m_remotePreferencesLoaded = true;
+
+        const auto unlock = [](QWidget *widget, const QString &tooltip = {}) {
+            widget->setEnabled(true);
+            widget->setToolTip(tooltip);
+            if (auto *combo = qobject_cast<QComboBox *>(widget))
+                combo->view()->setEnabled(true);
+        };
+        unlock(m_ui->checkFileLog);
+        unlock(m_ui->textFileLogPath, tr("Directory on the remote server (NAS), not this desktop."));
+        unlock(m_ui->checkFileLogBackup);
+        unlock(m_ui->spinFileLogSize);
+        unlock(m_ui->checkFileLogDelete);
+        unlock(m_ui->spinFileLogAge);
+        unlock(m_ui->comboFileLogAgeType);
+        unlock(m_ui->checkBoxPerformanceWarning);
+
+        m_ui->checkFileLog->setChecked(
+            preferences.value(QStringLiteral("file_log_enabled")).toBool());
+        m_ui->textFileLogPath->setText(
+            preferences.value(QStringLiteral("file_log_path")).toString());
+        m_ui->checkFileLogBackup->setChecked(
+            preferences.value(QStringLiteral("file_log_backup_enabled")).toBool());
+        m_ui->spinFileLogSize->setValue(
+            preferences.value(QStringLiteral("file_log_max_size")).toInt());
+        m_ui->checkFileLogDelete->setChecked(
+            preferences.value(QStringLiteral("file_log_delete_old")).toBool());
+        m_ui->spinFileLogAge->setValue(
+            preferences.value(QStringLiteral("file_log_age")).toInt());
+        m_ui->comboFileLogAgeType->setCurrentIndex(qBound(0,
+            preferences.value(QStringLiteral("file_log_age_type")).toInt(),
+            m_ui->comboFileLogAgeType->count() - 1));
+        m_ui->checkBoxPerformanceWarning->setChecked(
+            preferences.value(QStringLiteral("performance_warning")).toBool());
+
+        m_ui->spinFileLogSize->setEnabled(m_ui->checkFileLogBackup->isChecked());
+        m_ui->spinFileLogAge->setEnabled(m_ui->checkFileLogDelete->isChecked());
+        m_ui->comboFileLogAgeType->setEnabled(m_ui->checkFileLogDelete->isChecked());
+        m_loadingRemotePreferences = false;
+        m_serverBehaviorDirty = false;
+        updateButtons();
+    });
+    connect(m_remoteSession, &Remote::RemoteSession::preferencesFailed,
+            this, [this](const QString &reason) {
+        QMessageBox::warning(this, tr("Cannot read server preferences"),
+            tr("The server's log settings remain unavailable: %1").arg(reason));
+    });
+
+    connect(m_ui->checkFileLog, &QGroupBox::toggled, this,
+            [onChanged](bool) { onChanged(); });
+    connect(m_ui->textFileLogPath, &QLineEdit::textChanged, this,
+            [onChanged](const QString &) { onChanged(); });
+    for (QCheckBox *box : {m_ui->checkFileLogBackup, m_ui->checkFileLogDelete,
+                           m_ui->checkBoxPerformanceWarning})
+        connect(box, &QCheckBox::toggled, this,
+                [onChanged](bool) { onChanged(); });
+    for (QSpinBox *spin : {m_ui->spinFileLogSize, m_ui->spinFileLogAge})
+        connect(spin, QOverload<int>::of(&QSpinBox::valueChanged), this,
+                [onChanged](int) { onChanged(); });
+    connect(m_ui->comboFileLogAgeType,
+            QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [onChanged](int) { onChanged(); });
+    connect(m_ui->checkFileLogBackup, &QCheckBox::toggled,
+            m_ui->spinFileLogSize, &QWidget::setEnabled);
+    connect(m_ui->checkFileLogDelete, &QCheckBox::toggled,
+            m_ui->spinFileLogAge, &QWidget::setEnabled);
+    connect(m_ui->checkFileLogDelete, &QCheckBox::toggled,
+            m_ui->comboFileLogAgeType, &QWidget::setEnabled);
+
+    m_remoteSession->requestPreferences();
 }
 
 void RemotePreferencesDialog::populateAdvancedPlaceholders()
@@ -607,7 +894,8 @@ void RemotePreferencesDialog::updateButtons()
     m_removeMapping->setEnabled(selected);
     m_checkMount->setEnabled(selected);
     if (m_applyButton)
-        m_applyButton->setEnabled(!m_changedProfiles.isEmpty());
+        m_applyButton->setEnabled(!m_changedProfiles.isEmpty()
+                                  || m_behaviorDirty || m_serverBehaviorDirty);
 }
 
 bool RemotePreferencesDialog::applyChanges()
@@ -622,6 +910,96 @@ bool RemotePreferencesDialog::applyChanges()
         }
     }
     m_changedProfiles.clear();
+    if (m_serverBehaviorDirty)
+    {
+        if (!m_remoteSession || !m_remoteSession->isConnected()
+            || !m_remotePreferencesLoaded)
+        {
+            QMessageBox::warning(this, tr("Server disconnected"),
+                                 tr("Cannot save the NAS log settings."));
+            return false;
+        }
+        QJsonObject changes;
+        const auto put = [this, &changes](const char *key, const QJsonValue &value) {
+            const QString name = QString::fromLatin1(key);
+            if (m_remotePreferences.value(name) != value)
+                changes.insert(name, value);
+        };
+        put("file_log_enabled", m_ui->checkFileLog->isChecked());
+        put("file_log_path", m_ui->textFileLogPath->text());
+        put("file_log_backup_enabled", m_ui->checkFileLogBackup->isChecked());
+        put("file_log_max_size", m_ui->spinFileLogSize->value());
+        put("file_log_delete_old", m_ui->checkFileLogDelete->isChecked());
+        put("file_log_age", m_ui->spinFileLogAge->value());
+        put("file_log_age_type", m_ui->comboFileLogAgeType->currentIndex());
+        put("performance_warning", m_ui->checkBoxPerformanceWarning->isChecked());
+        if (!changes.isEmpty())
+            m_remoteSession->setPreferences(changes);
+        for (auto it = changes.constBegin(); it != changes.constEnd(); ++it)
+            m_remotePreferences.insert(it.key(), it.value());
+        m_serverBehaviorDirty = false;
+    }
+    if (m_behaviorDirty)
+    {
+        const bool tray = m_ui->checkShowSystray->isChecked()
+            && QSystemTrayIcon::isSystemTrayAvailable();
+        if (m_ui->windowStateComboBox->currentData().toString()
+                == QLatin1String("hidden") && !tray)
+        {
+            QMessageBox::warning(this, tr("Tray required"),
+                tr("A hidden startup window requires an enabled, available system tray. "
+                   "Choose Normal or Minimized instead."));
+            return false;
+        }
+        const bool startAtLogin = m_ui->checkStartup->isChecked();
+        if (DesktopAutostart::available()
+            && startAtLogin != DesktopAutostart::isEnabled())
+        {
+            QString error;
+            if (!DesktopAutostart::setEnabled(startAtLogin, &error))
+            {
+                QMessageBox::warning(this, tr("Could not change autostart"), error);
+                return false;
+            }
+        }
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/StartupWindowState"),
+            m_ui->windowStateComboBox->currentData().toString());
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/EnableTray"), tray);
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/MinimizeToTray"),
+            m_ui->checkMinimizeToSysTray->isChecked());
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/CloseToTray"),
+            m_ui->checkCloseToSystray->isChecked());
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/TrayIconStyle"),
+            m_ui->comboTrayIcon->currentIndex());
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/ConfirmTorrentDeletion"),
+            m_ui->confirmDeletion->isChecked());
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/ConfirmExit"),
+            m_ui->checkProgramExitConfirm->isChecked());
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/TorrentContentDragEnabled"),
+            m_ui->checkTorrentContentDrag->isChecked());
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/StateColors"),
+            m_ui->checkUseTorrentStatesColors->isChecked());
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/ProgressFollowsState"),
+            m_ui->checkProgressBarFollowsTextColor->isChecked());
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/SeparateTrackerStatus"),
+            m_ui->checkBoxUseSeparateTrackerStatusFilter->isChecked());
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/AlternatingRows"),
+            m_ui->checkAltRowColors->isChecked());
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/HideZero"),
+            m_ui->checkHideZero->isChecked());
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/HideZeroMode"),
+            m_ui->comboHideZero->currentIndex());
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/DoubleClickDownloading"),
+            m_ui->actionTorrentDlOnDblClBox->currentData().toString());
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/DoubleClickCompleted"),
+            m_ui->actionTorrentFnOnDblClBox->currentData().toString());
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/ShowServerFreeSpace"),
+            m_ui->checkBoxFreeDiskSpaceStatusBar->isChecked());
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/HideZeroStatusFilters"),
+            m_ui->checkBoxHideZeroStatusFilters->isChecked());
+        m_behaviorDirty = false;
+        emit localBehaviorApplied();
+    }
     updateButtons();
     return true;
 }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "api/PathMappingStore.h"
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QJsonValue>
@@ -30,6 +31,8 @@ public:
     void displayDetails(const QString &hash, int tab, const QJsonValue &data);
     void displayError(const QString &hash, int tab, const QString &reason);
     void appendRates(double downloadBytesPerSec, double uploadBytesPerSec);
+    void setContentPathMappings(const QList<Remote::PathMapping> &mappings);
+    void setContentDragEnabled(bool enabled);
 
 signals:
     void filePriorityRequested(const QString &hash, const QList<int> &ids, int priority);

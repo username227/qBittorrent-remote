@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/TorrentDetailsWidget.h"
+#include "gui/MappedContentTreeWidget.h"
 #include "gui/NaturalNameSort.h"
 #include "ui_remotepropertieswidget.h"
 #include "gui/upstream/progressbarpainter.h"
@@ -510,6 +511,7 @@ TorrentDetailsWidget::TorrentDetailsWidget(QWidget *parent)
     m_peers->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_peers->setAlternatingRowColors(true);
     m_peers->horizontalHeader()->setStretchLastSection(true);
+    m_peers->horizontalHeader()->setSectionsMovable(true);
     m_peers->horizontalHeader()->setHighlightSections(false);
     m_peers->setSortingEnabled(true);
     m_peers->sortItems(0, Qt::AscendingOrder);
@@ -525,6 +527,7 @@ TorrentDetailsWidget::TorrentDetailsWidget(QWidget *parent)
         tr("Download Priority"), tr("Remaining"), tr("Availability")
     });
     tree->header()->setStretchLastSection(false);
+    tree->header()->setSectionsMovable(true);
     tree->header()->setHighlightSections(false);
     tree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
     tree->setColumnWidth(1, 105);
@@ -534,6 +537,9 @@ TorrentDetailsWidget::TorrentDetailsWidget(QWidget *parent)
     tree->setColumnWidth(5, 95);
     tree->setItemDelegate(new ContentProgressDelegate(tree));
     tree->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    tree->setDragEnabled(true); // Keep existing working drag behavior by default.
+    tree->setDragDropMode(QAbstractItemView::DragOnly);
+    tree->setDefaultDropAction(Qt::CopyAction);
     tree->setSelectionMode(QAbstractItemView::ExtendedSelection);
     tree->setAlternatingRowColors(true);
     tree->setUniformRowHeights(true);
@@ -724,6 +730,8 @@ void TorrentDetailsWidget::setSelection(const QString &hash, const QJsonObject &
         resetPages();
     }
     m_summary = summary;
+    m_ui->filesList->setRemoteRoots(summary.value(QStringLiteral("save_path")).toString(),
+                                   summary.value(QStringLiteral("content_path")).toString());
     if (hash.isEmpty())
         return;
     const double progress = summary.value(QStringLiteral("progress")).toDouble();
@@ -904,6 +912,17 @@ void TorrentDetailsWidget::displayWebSeeds(const QJsonArray &sources)
         if (!address.isEmpty())
             m_ui->listWebSeeds->addItem(address);
     }
+}
+
+void TorrentDetailsWidget::setContentPathMappings(
+    const QList<Remote::PathMapping> &mappings)
+{
+    m_ui->filesList->setPathMappings(mappings);
+}
+
+void TorrentDetailsWidget::setContentDragEnabled(bool enabled)
+{
+    m_ui->filesList->setContentDragEnabled(enabled);
 }
 
 void TorrentDetailsWidget::displayFiles(const QJsonArray &files)

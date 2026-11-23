@@ -492,6 +492,34 @@ void RemoteSession::queueOperation(const QString &endpoint, const QByteArray &bo
     pumpOperations();
 }
 
+void RemoteSession::requestPreferences()
+{
+    if (!m_connected || !m_address)
+    {
+        emit preferencesFailed(tr("The selected server is not connected."));
+        return;
+    }
+    QueuedOperation request;
+    request.endpoint = QStringLiteral("api/v2/app/preferences");
+    request.description = tr("Read server preferences");
+    request.preferencesRequest = true;
+    m_operations.enqueue(std::move(request));
+    pumpOperations();
+}
+
+void RemoteSession::setPreferences(const QJsonObject &changes)
+{
+    if (changes.isEmpty())
+        return;
+    QUrlQuery form;
+    form.addQueryItem(QStringLiteral("json"),
+        QString::fromUtf8(QJsonDocument(changes).toJson(QJsonDocument::Compact)));
+    queueOperation(QStringLiteral("api/v2/app/setPreferences"),
+        form.toString(QUrl::FullyEncoded).toUtf8(),
+        QByteArrayLiteral("application/x-www-form-urlencoded"),
+        tr("Update server preferences"), true);
+}
+
 void RemoteSession::pumpOperations()
 {
     // The existing secure TLS/checkReply path tracks one outstanding reply.
@@ -502,10 +530,12 @@ void RemoteSession::pumpOperations()
 
     const QueuedOperation operation = m_operations.dequeue();
     QNetworkRequest request = requestFor(operation.endpoint);
-    if (!operation.detailsRequest && !operation.exportRequest)
+    if (!operation.detailsRequest && !operation.exportRequest
+        && !operation.preferencesRequest)
         request.setHeader(QNetworkRequest::ContentTypeHeader,
                           QString::fromLatin1(operation.contentType));
-    QNetworkReply *reply = (operation.detailsRequest || operation.exportRequest)
+    QNetworkReply *reply = (operation.detailsRequest || operation.exportRequest
+                            || operation.preferencesRequest)
         ? m_network.get(request) : m_network.post(request, operation.body);
     armReply(reply);
     connect(reply, &QNetworkReply::finished, this, [this, reply, operation]() {
@@ -520,6 +550,15 @@ void RemoteSession::pumpOperations()
                 }
                 else
                     emit torrentExportReceived(operation.exportHash, response);
+            }
+            else if (operation.preferencesRequest)
+            {
+                QJsonParseError error;
+                const QJsonDocument json = QJsonDocument::fromJson(response, &error);
+                if (error.error != QJsonParseError::NoError || !json.isObject())
+                    emit preferencesFailed(tr("Invalid preferences returned by the server."));
+                else
+                    emit preferencesReceived(json.object());
             }
             else if (operation.detailsRequest)
             {
@@ -554,6 +593,8 @@ void RemoteSession::pumpOperations()
         }, [this, operation](const QString &reason) {
             if (operation.detailsRequest)
                 emit torrentDetailsFailed(operation.detailHash, operation.detailTab, reason);
+            else if (operation.preferencesRequest)
+                emit preferencesFailed(reason);
             else
             {
                 emit operationFailed(operation.description, reason);

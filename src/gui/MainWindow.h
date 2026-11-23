@@ -8,10 +8,15 @@
 #include <QMainWindow>
 #include <QSettings>
 #include <memory>
+#include <functional>
 
 class QAction;
 class QCloseEvent;
 class QDialog;
+class QEvent;
+class QMimeData;
+class QSystemTrayIcon;
+class QMenu;
 class QLabel;
 class QLineEdit;
 class QComboBox;
@@ -28,6 +33,7 @@ public:
                         Remote::CredentialVault *vault = nullptr);
     ~MainWindow() override;
     int fontPointSize() const noexcept { return m_fontPointSize; }
+    void showForStartup();
 
 private:
     struct SessionContext;
@@ -40,6 +46,13 @@ private:
     void trackDialogGeometry(QDialog &dialog, const QString &name);
     void showEmptyPane();
     void closeEvent(QCloseEvent *event) override;
+    void changeEvent(QEvent *event) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
+    void enableTorrentDrops(QWidget *widget);
+    void setupTray();
+    void updateTraySettings();
+    void toggleWindowFromTray();
+    void quitCompletely();
     void connectToProfile(const Remote::ServerProfile &profile, const QString &password);
     void disconnectCurrentServer();
     void removeConnection(const std::shared_ptr<SessionContext> &connection);
@@ -51,9 +64,12 @@ private:
     void updateActiveUi();
     void updateTorrentCount();
     void updateTorrentActionState();
+    void applyLocalBehaviorPreferences();
+    void updateServerFreeSpace();
     QStringList selectedTorrentHashes() const;
     void openSelectedTorrentDestinations();
     void setSelectedTorrentLocation();
+    void refreshContentPathMappings();
 
     std::unique_ptr<Ui::MainWindow> m_ui;
     QSettings m_defaultSettings;
@@ -66,6 +82,12 @@ private:
     QList<std::shared_ptr<SessionContext>> m_connections;
     QLabel *m_torrentCountLabel = nullptr;
     QLabel *m_ratesLabel = nullptr;
+    QLabel *m_serverFreeSpaceLabel = nullptr;
+    QSystemTrayIcon *m_trayIcon = nullptr;
+    QMenu *m_trayMenu = nullptr;
+    QAction *m_trayToggleAction = nullptr;
+    bool m_forceExit = false;
+    bool m_wasMaximizedBeforeTray = false;
     QLineEdit *m_searchEdit = nullptr;
     QComboBox *m_searchBy = nullptr;
     QAction *m_connectAction = nullptr;
@@ -77,4 +99,6 @@ private:
     int m_fontPointSize = 10;
     QString m_preferredServerId;
     bool m_restoringStartup = false;
+    std::function<void(const QString &)> m_addLinks;
+    std::function<void(const QStringList &)> m_addTorrentFiles;
 };

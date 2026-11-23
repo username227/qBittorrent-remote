@@ -101,6 +101,8 @@ add_library(qbittorrent_remote_gui STATIC
     src/gui/TorrentModel.h
     src/gui/TorrentDetailsWidget.cpp
     src/gui/TorrentDetailsWidget.h
+    src/gui/MappedContentTreeWidget.cpp
+    src/gui/MappedContentTreeWidget.h
     src/gui/remotepropertieswidget.ui
     src/gui/ServerPane.cpp
     src/gui/ServerPane.h

@@ -139,6 +139,7 @@ ServerPane::ServerPane(QWidget *parent) : QWidget(parent)
     m_table->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_table->setSortingEnabled(true);
     m_table->horizontalHeader()->setStretchLastSection(false);
+    m_table->horizontalHeader()->setSectionsMovable(true);
     // Native Qt may still bold labels of selected header sections even when
     // highlighting is disabled. An explicitly resolved Normal weight prevents
     // QCommonStyle::CE_HeaderLabel from synthesizing bold, without styling
@@ -346,6 +347,47 @@ QString ServerPane::rateText() const
     const double down = m_serverState.value(QStringLiteral("dl_info_speed")).toDouble(-1);
     const double up = m_serverState.value(QStringLiteral("up_info_speed")).toDouble(-1);
     return tr("D: %1    U: %2").arg(rate(down), rate(up));
+}
+
+QString ServerPane::freeSpaceText() const
+{
+    const QJsonValue value = m_serverState.value(QStringLiteral("free_space_on_disk"));
+    if (!value.isDouble() || value.toDouble() < 0)
+        return tr("Free: —");
+    double amount = value.toDouble();
+    static const char *units[] = {"B", "KiB", "MiB", "GiB", "TiB", "PiB"};
+    int unit = 0;
+    while (amount >= 1024 && unit < 5)
+    {
+        amount /= 1024;
+        ++unit;
+    }
+    return tr("Free: %1 %2").arg(
+        QLocale().toString(amount, 'f', unit == 0 ? 0 : 1),
+        QString::fromLatin1(units[unit]));
+}
+
+void ServerPane::setContentPathMappings(const QList<Remote::PathMapping> &mappings)
+{
+    m_details->setContentPathMappings(mappings);
+}
+
+void ServerPane::setContentDragEnabled(bool enabled)
+{
+    m_details->setContentDragEnabled(enabled);
+}
+
+void ServerPane::setProgressFollowsStateColors(bool enabled)
+{
+    auto *delegate = static_cast<TransferListDelegate *>(m_table->itemDelegate());
+    delegate->setProgressFollowsTextColor(enabled);
+    m_table->viewport()->update();
+}
+
+void ServerPane::setSeparateTrackerStatusFilter(bool enabled)
+{
+    m_sidebar->setSeparateTrackerStatusFilter(enabled);
+    m_sidebar->updateCounts(m_model->torrents(), m_categories, m_tags, m_trackers);
 }
 
 void ServerPane::setSearchTerm(const QString &text)
@@ -966,6 +1008,7 @@ void ServerPane::restoreLayout(QSettings &settings, const QString &profileId)
     // torrent headings whenever rows are selected. Override that persisted
     // visual flag *after* restoring section geometry and sort state.
     header->setHighlightSections(false);
+    header->setSectionsMovable(true); // Also correct headers saved by earlier builds.
     header->setSectionResizeMode(0, QHeaderView::Interactive);
     if (!settings.value(root + QStringLiteral("/nameColumnResizableV1"), false).toBool())
         header->resizeSection(0, qMax(header->sectionSize(0),
@@ -979,6 +1022,7 @@ void ServerPane::restoreLayout(QSettings &settings, const QString &profileId)
                 root + QLatin1Char('/') + QString::fromLatin1(key)).toByteArray();
             if (!data.isEmpty())
                 view->header()->restoreState(data);
+            view->header()->setSectionsMovable(true);
         }
     };
     restoreHeader("torrentTrackers", "trackerHeader");
@@ -989,6 +1033,7 @@ void ServerPane::restoreLayout(QSettings &settings, const QString &profileId)
             settings.value(root + QStringLiteral("/peerHeader")).toByteArray();
         if (!data.isEmpty())
             peers->horizontalHeader()->restoreState(data);
+        peers->horizontalHeader()->setSectionsMovable(true);
     }
 
     const int tab = settings.value(root + QStringLiteral("/detailsTab"), 0).toInt();

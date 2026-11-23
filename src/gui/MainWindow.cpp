@@ -22,10 +22,17 @@
 #include <QVBoxLayout>
 #include <QDesktopServices>
 #include <QDir>
+#include <QDragEnterEvent>
+#include <QDragMoveEvent>
+#include <QDropEvent>
+#include <QMimeData>
 #include <QCloseEvent>
 #include <QGuiApplication>
 #include <QScreen>
 #include <QApplication>
+#include <QSystemTrayIcon>
+#include <QPainter>
+#include <QWindowStateChangeEvent>
 #include <QFont>
 #include <QFontInfo>
 #include <QGuiApplication>
@@ -67,6 +74,58 @@
 
 namespace
 {
+struct DroppedTorrentSources
+{
+    QStringList files;
+    QStringList links;
+    bool valid() const { return !files.isEmpty() || !links.isEmpty(); }
+};
+
+DroppedTorrentSources droppedTorrentSources(const QMimeData *mime)
+{
+    DroppedTorrentSources sources;
+    if (!mime) return sources;
+    QStringList inputs;
+    if (mime->hasUrls())
+    {
+        for (const QUrl &url : mime->urls())
+            inputs.append(url.toString(QUrl::FullyEncoded));
+    }
+    else if (mime->hasText())
+        inputs = mime->text().split(QRegularExpression(QStringLiteral("[\\r\\n]+")),
+                                   Qt::SkipEmptyParts);
+    if (inputs.isEmpty() || inputs.size() > 256) return {};
+    QSet<QString> seen;
+    for (const QString &input : inputs)
+    {
+        const QUrl url(input.trimmed(), QUrl::StrictMode);
+        if (!url.isValid()) return {};
+        if (url.isLocalFile())
+        {
+            const QString local = url.toLocalFile();
+            if (!local.endsWith(QLatin1String(".torrent"), Qt::CaseInsensitive))
+                return {};
+            if (!seen.contains(local))
+            {
+                seen.insert(local);
+                sources.files.append(local);
+            }
+        }
+        else if (url.scheme().compare(QLatin1String("magnet"), Qt::CaseInsensitive) == 0)
+        {
+            const QString link = url.toString(QUrl::FullyEncoded);
+            if (!seen.contains(link))
+            {
+                seen.insert(link);
+                sources.links.append(link);
+            }
+        }
+        else return {}; // Reject unrelated dropped web links and file types.
+    }
+    if (!sources.files.isEmpty() && !sources.links.isEmpty()) return {};
+    return sources;
+}
+
 struct TorrentIdentity
 {
     QStringList hashes;
@@ -237,6 +296,7 @@ MainWindow::MainWindow(QWidget *parent, QSettings *settings,
 
     setupMainArea();
     setupActions();
+    setupTray();
     updateFontActionStates();
 
     // Retain server identity/version as the default left-hand status text.
@@ -262,7 +322,13 @@ MainWindow::MainWindow(QWidget *parent, QSettings *settings,
     m_ratesLabel = new QLabel(tr("D: —    U: —"), m_ui->statusBar);
     m_ratesLabel->setObjectName(QStringLiteral("remoteTransferRates"));
     m_ui->statusBar->addPermanentWidget(m_ratesLabel);
+    m_serverFreeSpaceLabel = new QLabel(tr("Free: —"), m_ui->statusBar);
+    m_serverFreeSpaceLabel->setObjectName(QStringLiteral("remoteServerFreeSpace"));
+    m_serverFreeSpaceLabel->setToolTip(tr(
+        "Free space on the selected server's default save drive, not this computer."));
+    m_ui->statusBar->addPermanentWidget(m_serverFreeSpaceLabel);
     restoreWindowLayout();
+    applyLocalBehaviorPreferences();
 
     // Opt-in startup connections run after the event loop begins. Each
     // profile independently uses a blank-password login or secure vault
@@ -293,8 +359,12 @@ void MainWindow::showEmptyPane()
     if (!m_emptyPane && m_views && m_connections.isEmpty())
     {
         m_emptyPane = new ServerPane(m_views);
+        m_emptyPane->setContentDragEnabled(m_settings->value(
+            QStringLiteral("Preferences/Behavior/TorrentContentDragEnabled"), true).toBool());
         m_views->addTab(m_emptyPane, upstreamIcon("folder-remote"), tr("Transfers"));
         m_views->setCurrentWidget(m_emptyPane);
+        enableTorrentDrops(m_emptyPane);
+        enableTorrentDrops(m_emptyPane->table()->viewport());
     }
 }
 
@@ -303,6 +373,8 @@ void MainWindow::setupMainArea()
     m_views = new HidableTabWidget(m_ui->centralWidget);
     m_views->setObjectName(QStringLiteral("serverTabs"));
     m_ui->centralWidgetLayout->addWidget(m_views);
+    enableTorrentDrops(m_ui->centralWidget);
+    enableTorrentDrops(m_views);
     showEmptyPane();
     if (m_emptyPane)
         m_emptyPane->restoreLayout(*m_settings, QStringLiteral("empty-pane"));
@@ -451,6 +523,7 @@ void MainWindow::setupActions()
     m_ui->menuOptions->addAction(m_ui->actionCreateTorrent);
     m_ui->menuOptions->addAction(m_ui->actionOptions);
     m_ui->actionOptions->setEnabled(true);
+    m_ui->actionOptions->setText(tr("Preferences..."));
 
     // Native vertical Preferences pages are always reachable, even without
     // a currently connected server: local path mappings belong to saved
@@ -458,9 +531,13 @@ void MainWindow::setupActions()
     connect(m_ui->actionOptions, &QAction::triggered, this, [this]() {
         const auto server = activeConnection();
         const QString profileId = server ? server->profile.id : m_preferredServerId;
-        RemotePreferencesDialog dialog(*m_settings, profileId, this);
+        RemotePreferencesDialog dialog(*m_settings, profileId, this,
+                                      server && server->connected ? server->session : nullptr);
+        connect(&dialog, &RemotePreferencesDialog::localBehaviorApplied,
+                this, &MainWindow::applyLocalBehaviorPreferences);
         trackDialogGeometry(dialog, QStringLiteral("Preferences"));
         dialog.exec();
+        refreshContentPathMappings();
     });
 
     m_ui->menuHelp->clear();
@@ -486,7 +563,7 @@ void MainWindow::setupActions()
     });
     connect(m_disconnectAction, &QAction::triggered, this,
         &MainWindow::disconnectCurrentServer);
-    connect(m_ui->actionExit, &QAction::triggered, this, &QWidget::close);
+    connect(m_ui->actionExit, &QAction::triggered, this, &MainWindow::quitCompletely);
     connect(m_ui->actionAbout, &QAction::triggered, this, [this]()
     {
         QMessageBox dialog(QMessageBox::Information, tr("About qBittorrent Remote"),
@@ -517,6 +594,17 @@ void MainWindow::setupActions()
         const QStringList hashes = selectedTorrentHashes();
         if (!server || !server->connected || hashes.isEmpty())
             return;
+
+        const bool confirmDeletion = m_settings->value(
+            QStringLiteral("Preferences/Behavior/ConfirmTorrentDeletion"), true).toBool();
+        if (!confirmDeletion)
+        {
+            // With confirmations disabled, perform metadata-only deletion.
+            // Never silently delete downloaded NAS content.
+            server->session->commandTorrents(
+                Remote::RemoteSession::TorrentCommand::Delete, hashes, false);
+            return;
+        }
 
         QMessageBox prompt(this);
         prompt.setObjectName(QStringLiteral("removeTorrentsDialog"));
@@ -595,12 +683,14 @@ void MainWindow::setupActions()
         return true; // Duplicate was handled even when the user declined.
     };
 
-    connect(m_ui->actionDownloadFromURL, &QAction::triggered, this, [this, offerTrackerMerge]() {
+    // Menu and desktop drops share the actual server-selecting Add Torrent
+    // dialog, duplicate safeguards and authenticated remote Web API workflow.
+    m_addLinks = [this, offerTrackerMerge](const QString &initialLinks) {
         const auto server = activeConnection();
         if (!server || !server->connected)
             return;
         RemoteAddTorrentDialog dialog(*m_settings, server->profile,
-            RemoteAddTorrentDialog::Source::Links, {}, {}, {}, this,
+            RemoteAddTorrentDialog::Source::Links, initialLinks, {}, {}, this,
             connectedServerProfiles(),
             [this](const QString &id) { return static_cast<bool>(connectedById(id)); });
         trackDialogGeometry(dialog, QStringLiteral("AddTorrent"));
@@ -617,22 +707,13 @@ void MainWindow::setupActions()
         if (offerTrackerMerge(target, magnetIdentity(dialog.links())))
             return;
         target->session->addTorrentUrls(dialog.links(), dialog.options());
-    });
+    };
+    connect(m_ui->actionDownloadFromURL, &QAction::triggered,
+            this, [this]() { m_addLinks({}); });
 
-    connect(m_ui->actionOpen, &QAction::triggered, this, [this, offerTrackerMerge]() {
+    m_addTorrentFiles = [this, offerTrackerMerge](const QStringList &filenames) {
         const auto server = activeConnection();
-        if (!server || !server->connected)
-            return;
-        QFileDialog filePicker(this, tr("Select local .torrent metadata"));
-        filePicker.setObjectName(QStringLiteral("addTorrentFileDialog"));
-        filePicker.setFileMode(QFileDialog::ExistingFiles);
-        filePicker.setNameFilters({tr("Torrent files (*.torrent)"), tr("All files (*)")});
-        trackDialogGeometry(filePicker, QStringLiteral("SelectTorrentFile"));
-        if (filePicker.exec() != QDialog::Accepted)
-            return;
-        const QStringList filenames = filePicker.selectedFiles();
-        if (filenames.isEmpty() || !containsConnection(server) || !server->connected)
-            return;
+        if (!server || !server->connected || filenames.isEmpty()) return;
 
         QList<Remote::TorrentUpload> uploads;
         uploads.reserve(filenames.size());
@@ -771,10 +852,69 @@ void MainWindow::setupActions()
         if (!containsConnection(target) || !target->connected)
             return;
         target->session->addTorrentFiles(toUpload, options);
+    };
+    connect(m_ui->actionOpen, &QAction::triggered, this, [this]() {
+        if (!activeConnection()) return;
+        QFileDialog picker(this, tr("Select local .torrent metadata"));
+        picker.setObjectName(QStringLiteral("addTorrentFileDialog"));
+        picker.setFileMode(QFileDialog::ExistingFiles);
+        picker.setNameFilters({tr("Torrent files (*.torrent)"), tr("All files (*)")});
+        trackDialogGeometry(picker, QStringLiteral("SelectTorrentFile"));
+        if (picker.exec() == QDialog::Accepted)
+            m_addTorrentFiles(picker.selectedFiles());
     });
 }
 
 
+
+void MainWindow::enableTorrentDrops(QWidget *widget)
+{
+    widget->setAcceptDrops(true);
+    widget->installEventFilter(this);
+}
+
+bool MainWindow::eventFilter(QObject *watched, QEvent *event)
+{
+    if (event->type() == QEvent::DragEnter || event->type() == QEvent::DragMove
+        || event->type() == QEvent::Drop)
+    {
+        const QMimeData *mime = nullptr;
+        if (event->type() == QEvent::DragEnter)
+            mime = static_cast<QDragEnterEvent *>(event)->mimeData();
+        else if (event->type() == QEvent::DragMove)
+            mime = static_cast<QDragMoveEvent *>(event)->mimeData();
+        else
+            mime = static_cast<QDropEvent *>(event)->mimeData();
+        const DroppedTorrentSources sources = droppedTorrentSources(mime);
+        const auto server = activeConnection();
+        if (server && server->connected && sources.valid())
+        {
+            if (event->type() == QEvent::DragEnter)
+                static_cast<QDragEnterEvent *>(event)->acceptProposedAction();
+            else if (event->type() == QEvent::DragMove)
+                static_cast<QDragMoveEvent *>(event)->acceptProposedAction();
+            else
+            {
+                auto *drop = static_cast<QDropEvent *>(event);
+                drop->setDropAction(Qt::CopyAction);
+                drop->accept();
+                if (!sources.files.isEmpty() && m_addTorrentFiles)
+                    m_addTorrentFiles(sources.files);
+                else if (!sources.links.isEmpty() && m_addLinks)
+                    m_addLinks(sources.links.join(QLatin1Char('\n')));
+            }
+            return true;
+        }
+    }
+    return QMainWindow::eventFilter(watched, event);
+}
+
+void MainWindow::refreshContentPathMappings()
+{
+    const Remote::PathMappingStore store(*m_settings);
+    for (const auto &connection : m_connections)
+        connection->pane->setContentPathMappings(store.mappings(connection->profile.id));
+}
 
 void MainWindow::setSelectedTorrentLocation()
 {
@@ -1060,6 +1200,178 @@ void MainWindow::updateTorrentCount()
         .arg(pane->model()->rowCount()));
 }
 
+void MainWindow::applyLocalBehaviorPreferences()
+{
+    updateTraySettings();
+    const bool contentDrag = m_settings->value(
+        QStringLiteral("Preferences/Behavior/TorrentContentDragEnabled"), true).toBool();
+    const bool stateColors = m_settings->value(
+        QStringLiteral("Preferences/Behavior/StateColors"), true).toBool();
+    const bool progressColor = m_settings->value(
+        QStringLiteral("Preferences/Behavior/ProgressFollowsState"), false).toBool();
+    const bool separateTracker = m_settings->value(
+        QStringLiteral("Preferences/Behavior/SeparateTrackerStatus"), false).toBool();
+    const bool alternating = m_settings->value(
+        QStringLiteral("Preferences/Behavior/AlternatingRows"), true).toBool();
+    const bool hideZero = m_settings->value(
+        QStringLiteral("Preferences/Behavior/HideZero"), false).toBool();
+    const int mode = m_settings->value(
+        QStringLiteral("Preferences/Behavior/HideZeroMode"), 0).toInt();
+
+    const bool hideZeroStatus = m_settings->value(
+        QStringLiteral("Preferences/Behavior/HideZeroStatusFilters"), false).toBool();
+    const auto apply = [alternating, hideZero, mode, hideZeroStatus,
+                        stateColors, progressColor, separateTracker, contentDrag](ServerPane *pane) {
+        if (!pane)
+            return;
+        pane->table()->setAlternatingRowColors(alternating);
+        pane->model()->setHideZeroValues(hideZero, mode);
+        pane->sidebar()->setHideZeroStatusFilters(hideZeroStatus);
+        pane->model()->setUseStateColors(stateColors);
+        pane->setProgressFollowsStateColors(progressColor && stateColors);
+        pane->setContentDragEnabled(contentDrag);
+        pane->setSeparateTrackerStatusFilter(separateTracker);
+    };
+    apply(m_emptyPane);
+    for (const auto &connection : m_connections)
+        apply(connection->pane);
+    updateServerFreeSpace();
+}
+
+void MainWindow::setupTray()
+{
+    m_trayIcon = new QSystemTrayIcon(this);
+    m_trayIcon->setObjectName(QStringLiteral("remoteTrayIcon"));
+    m_trayMenu = new QMenu(this);
+    m_trayMenu->setObjectName(QStringLiteral("remoteTrayMenu"));
+    m_trayToggleAction = m_trayMenu->addAction(tr("Show qBittorrent Remote"));
+    connect(m_trayToggleAction, &QAction::triggered,
+            this, &MainWindow::toggleWindowFromTray);
+    m_trayMenu->addSeparator();
+    m_trayMenu->addAction(m_ui->actionOptions);
+    m_trayMenu->addSeparator();
+    m_trayMenu->addAction(tr("Quit qBittorrent Remote completely"),
+                          this, &MainWindow::quitCompletely);
+    m_trayIcon->setContextMenu(m_trayMenu);
+    m_trayIcon->setToolTip(tr("qBittorrent Remote"));
+    connect(m_trayIcon, &QSystemTrayIcon::activated, this,
+            [this](QSystemTrayIcon::ActivationReason reason) {
+                if (reason == QSystemTrayIcon::Trigger
+                    || reason == QSystemTrayIcon::DoubleClick)
+                    toggleWindowFromTray();
+            });
+}
+
+void MainWindow::updateTraySettings()
+{
+    if (!m_trayIcon)
+        return;
+    const bool enabled = m_settings->value(
+        QStringLiteral("Preferences/Behavior/EnableTray"), false).toBool()
+        && QSystemTrayIcon::isSystemTrayAvailable();
+    if (!enabled)
+    {
+        // Never strand a hidden application after its tray icon is disabled.
+        if (!isVisible() && m_trayIcon->isVisible())
+            showNormal();
+        m_trayIcon->hide();
+        return;
+    }
+    QIcon icon = windowIcon();
+    const bool monochrome = m_settings->value(
+        QStringLiteral("Preferences/Behavior/TrayIconStyle"), 0).toInt() == 1;
+    if (monochrome)
+    {
+        QPixmap pixmap = icon.pixmap(QSize(32, 32));
+        if (!pixmap.isNull())
+        {
+            QPainter painter(&pixmap);
+            painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
+            painter.fillRect(pixmap.rect(), palette().color(QPalette::WindowText));
+            painter.end();
+            icon = QIcon(pixmap);
+        }
+    }
+    m_trayIcon->setIcon(icon);
+    m_trayIcon->show();
+}
+
+void MainWindow::toggleWindowFromTray()
+{
+    if (isVisible() && !isMinimized())
+    {
+        m_wasMaximizedBeforeTray = isMaximized();
+        hide();
+        return;
+    }
+    if (m_wasMaximizedBeforeTray)
+        showMaximized();
+    else
+        showNormal();
+    raise();
+    activateWindow();
+}
+
+void MainWindow::quitCompletely()
+{
+    m_forceExit = true;
+    // closeEvent() may reject exit when the user declines confirmation.
+    // QApplication::quit() must never bypass that decision.
+    const bool accepted = close();
+    m_forceExit = false;
+    if (accepted)
+        QApplication::quit();
+}
+
+void MainWindow::showForStartup()
+{
+    const QString state = m_settings->value(
+        QStringLiteral("Preferences/Behavior/StartupWindowState"),
+        QStringLiteral("normal")).toString();
+    const bool trayAvailable = m_trayIcon && m_trayIcon->isVisible();
+    if (state == QLatin1String("hidden") && trayAvailable)
+    {
+        hide();
+        return;
+    }
+    if (state == QLatin1String("minimized"))
+        showMinimized();
+    else
+        show();
+}
+
+void MainWindow::changeEvent(QEvent *event)
+{
+    if (event->type() == QEvent::WindowStateChange
+        && isMinimized() && m_trayIcon && m_trayIcon->isVisible()
+        && m_settings->value(
+            QStringLiteral("Preferences/Behavior/MinimizeToTray"), false).toBool())
+    {
+        const auto *state = static_cast<QWindowStateChangeEvent *>(event);
+        m_wasMaximizedBeforeTray = state->oldState().testFlag(Qt::WindowMaximized);
+        QTimer::singleShot(0, this, [this]() {
+            if (isMinimized() && m_trayIcon && m_trayIcon->isVisible())
+                hide();
+        });
+    }
+    QMainWindow::changeEvent(event);
+}
+
+void MainWindow::updateServerFreeSpace()
+{
+    if (!m_serverFreeSpaceLabel)
+        return;
+    const bool show = m_settings->value(
+        QStringLiteral("Preferences/Behavior/ShowServerFreeSpace"), false).toBool();
+    m_serverFreeSpaceLabel->setVisible(show);
+    if (show)
+    {
+        const auto connection = activeConnection();
+        m_serverFreeSpaceLabel->setText(connection && connection->connected
+            ? connection->pane->freeSpaceText() : tr("Free: —"));
+    }
+}
+
 void MainWindow::updateActiveUi()
 {
     if (!m_searchEdit || !m_searchBy || !m_disconnectAction
@@ -1087,6 +1399,7 @@ void MainWindow::updateActiveUi()
     updateTorrentCount();
     m_ratesLabel->setText(connection && ready && pane
                           ? pane->rateText() : tr("D: —    U: —"));
+    updateServerFreeSpace();
 
     if (connection && !m_restoringStartup && !connection->profile.id.isEmpty())
     {
@@ -1165,10 +1478,67 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
     auto connection = std::make_shared<SessionContext>();
     connection->profile = profile;
     connection->pane = new ServerPane(m_views);
+    connection->pane->setContentDragEnabled(m_settings->value(
+        QStringLiteral("Preferences/Behavior/TorrentContentDragEnabled"), true).toBool());
+    connection->pane->setContentPathMappings(
+        Remote::PathMappingStore(*m_settings).mappings(profile.id));
+    enableTorrentDrops(connection->pane);
+    enableTorrentDrops(connection->pane->table()->viewport());
     connection->pane->restoreLayout(*m_settings, profile.id);
+    connection->pane->table()->setAlternatingRowColors(m_settings->value(
+        QStringLiteral("Preferences/Behavior/AlternatingRows"), true).toBool());
+    connection->pane->model()->setHideZeroValues(m_settings->value(
+        QStringLiteral("Preferences/Behavior/HideZero"), false).toBool(),
+        m_settings->value(QStringLiteral("Preferences/Behavior/HideZeroMode"), 0).toInt());
+    connection->pane->sidebar()->setHideZeroStatusFilters(m_settings->value(
+        QStringLiteral("Preferences/Behavior/HideZeroStatusFilters"), false).toBool());
+    connection->pane->model()->setUseStateColors(m_settings->value(
+        QStringLiteral("Preferences/Behavior/StateColors"), true).toBool());
+    connection->pane->setProgressFollowsStateColors(m_settings->value(
+        QStringLiteral("Preferences/Behavior/ProgressFollowsState"), false).toBool()
+        && m_settings->value(QStringLiteral("Preferences/Behavior/StateColors"), true).toBool());
+    connection->pane->setSeparateTrackerStatusFilter(m_settings->value(
+        QStringLiteral("Preferences/Behavior/SeparateTrackerStatus"), false).toBool());
     connection->session = new Remote::RemoteSession(this);
     auto *session = connection->session;
     m_connections.append(connection);
+
+    // The user may choose separate double-click actions for downloads and
+    // completed torrents. All actions use this exact remote session.
+    connect(connection->pane->table(), &QTableView::doubleClicked,
+            this, [this, connection](const QModelIndex &index) {
+        if (!index.isValid() || !containsConnection(connection)
+            || !connection->connected || activeConnection() != connection)
+            return;
+        const QStringList selected = selectedTorrentHashes();
+        if (selected.size() != 1)
+            return;
+        const QJsonObject torrent = connection->pane->model()->torrents()
+            .value(selected.first());
+        if (torrent.isEmpty())
+            return;
+        const bool complete = torrent.value(QStringLiteral("progress")).toDouble() >= 1.0;
+        const QString key = complete
+            ? QStringLiteral("Preferences/Behavior/DoubleClickCompleted")
+            : QStringLiteral("Preferences/Behavior/DoubleClickDownloading");
+        const QString action = m_settings->value(key,
+            complete ? QStringLiteral("folder") : QStringLiteral("toggle")).toString();
+        if (action == QLatin1String("folder"))
+            openSelectedTorrentDestinations();
+        else if (action == QLatin1String("options"))
+            emit connection->pane->torrentContextActionRequested(
+                ServerPane::TorrentContextAction::TorrentOptions);
+        else if (action == QLatin1String("toggle"))
+        {
+            const QString state = torrent.value(QStringLiteral("state")).toString();
+            const bool stopped = state.startsWith(QLatin1String("stopped"))
+                || state.startsWith(QLatin1String("paused"));
+            connection->session->commandTorrents(
+                stopped ? Remote::RemoteSession::TorrentCommand::Start
+                        : Remote::RemoteSession::TorrentCommand::Stop, selected);
+        }
+        // "none" deliberately does nothing; the preview choice is absent.
+    });
 
     // Properties always use the selected server's own authenticated session,
     // certificate pin and cookie jar. Inactive tabs remain independent.
@@ -1701,6 +2071,7 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
             if (activeConnection() == connection)
             {
                 m_ratesLabel->setText(connection->pane->rateText());
+                updateServerFreeSpace();
                 updateTorrentCount();
                 updateTorrentActionState();
             }
@@ -1880,19 +2251,59 @@ void MainWindow::restoreWindowLayout()
     if (m_settings->value(QStringLiteral("Layout/MainWindow/Maximized"), false).toBool()
         && !isMaximized())
         setWindowState(windowState() | Qt::WindowMaximized);
-    m_ui->actionTopToolBar->setChecked(
-        m_settings->value(QStringLiteral("Layout/ToolbarVisible"), true).toBool());
-    m_ui->actionShowStatusbar->setChecked(
-        m_settings->value(QStringLiteral("Layout/StatusbarVisible"), true).toBool());
+    // QMainWindow::restoreState() also restores toolbar visibility. Always
+    // explicitly apply our saved View menu choices after it: setChecked()
+    // alone emits nothing when an action is already checked, even if the
+    // restored widget is unexpectedly hidden.
+    // Previous versions recorded false while the entire window was hidden
+    // to tray. Recover that poisoned persisted state once, not on every run.
+    // After migration, intentionally hidden toolbars still stay hidden.
+    if (m_settings->value(QStringLiteral("Layout/ViewVisibilityVersion"), 0).toInt() < 2)
+    {
+        m_settings->setValue(QStringLiteral("Layout/ToolbarVisible"), true);
+        m_settings->setValue(QStringLiteral("Layout/StatusbarVisible"), true);
+        m_settings->setValue(QStringLiteral("Layout/ViewVisibilityVersion"), 2);
+    }
+    const bool toolbarVisible = m_settings->value(
+        QStringLiteral("Layout/ToolbarVisible"), true).toBool();
+    const bool statusbarVisible = m_settings->value(
+        QStringLiteral("Layout/StatusbarVisible"), true).toBool();
+    m_ui->actionTopToolBar->setChecked(toolbarVisible);
+    m_ui->toolBar->setVisible(toolbarVisible);
+    m_ui->actionShowStatusbar->setChecked(statusbarVisible);
+    m_ui->statusBar->setVisible(statusbarVisible);
     m_ui->actionShowFiltersSidebar->setChecked(
         m_settings->value(QStringLiteral("Layout/SidebarVisible"), true).toBool());
 
-    if (m_settings->value(QStringLiteral("Layout/MainWindow/Minimized"), false).toBool())
-        QTimer::singleShot(0, this, [this]() { showMinimized(); });
+    // Explicit Behavior startup state takes precedence over the prior
+    // window's last minimized state; showForStartup() applies it once.
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
+    if (!m_forceExit && m_trayIcon && m_trayIcon->isVisible()
+        && m_settings->value(
+            QStringLiteral("Preferences/Behavior/CloseToTray"), false).toBool())
+    {
+        m_wasMaximizedBeforeTray = isMaximized();
+        event->ignore();
+        hide();
+        return;
+    }
+    if (m_settings->value(
+            QStringLiteral("Preferences/Behavior/ConfirmExit"), false).toBool())
+    {
+        const auto response = QMessageBox::question(this,
+            tr("Quit qBittorrent Remote?"),
+            tr("Close qBittorrent Remote? Remote server torrents will continue running."),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (response != QMessageBox::Yes)
+        {
+            m_forceExit = false;
+            event->ignore();
+            return;
+        }
+    }
     for (const auto &connection : m_connections)
         if (connection->pane)
             connection->pane->saveLayout(*m_settings, connection->profile.id);
@@ -1903,8 +2314,13 @@ void MainWindow::closeEvent(QCloseEvent *event)
     m_settings->setValue(QStringLiteral("Layout/MainWindow/State"), saveState(1));
     m_settings->setValue(QStringLiteral("Layout/MainWindow/Minimized"), isMinimized());
     m_settings->setValue(QStringLiteral("Layout/MainWindow/Maximized"), isMaximized());
-    m_settings->setValue(QStringLiteral("Layout/ToolbarVisible"), m_ui->toolBar->isVisible());
-    m_settings->setValue(QStringLiteral("Layout/StatusbarVisible"), m_ui->statusBar->isVisible());
+    // isVisible() returns false for a visible toolbar/statusbar whenever
+    // their parent window is hidden to the system tray. Save the user's
+    // explicit View menu choices instead, not ancestor visibility.
+    m_settings->setValue(QStringLiteral("Layout/ToolbarVisible"),
+                         m_ui->actionTopToolBar->isChecked());
+    m_settings->setValue(QStringLiteral("Layout/StatusbarVisible"),
+                         m_ui->actionShowStatusbar->isChecked());
     m_settings->setValue(QStringLiteral("Layout/SidebarVisible"),
                          m_ui->actionShowFiltersSidebar->isChecked());
     if (!m_preferredServerId.isEmpty())

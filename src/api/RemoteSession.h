@@ -98,6 +98,8 @@ public:
     void setTorrentRateLimit(const QStringList &hashes, bool upload, qint64 bytesPerSec);
     void setTorrentShareLimits(const QString &hash, const QJsonObject &shareLimits);
     void requestTorrentExport(const QString &hash);
+    void requestPreferences();
+    void setPreferences(const QJsonObject &changes);
     void renameTorrentContent(const QString &hash, const QString &oldPath,
                               const QString &newPath);
     void addTorrentUrls(const QString &urls);
@@ -124,6 +126,8 @@ signals:
     void connected(const QString &version, const QString &apiVersion);
     void failed(const QString &reason);
     void mainDataUpdated(const QJsonObject &data);
+    void preferencesReceived(const QJsonObject &preferences);
+    void preferencesFailed(const QString &reason);
     void operationSucceeded(const QString &description);
     void operationFailed(const QString &description, const QString &reason);
     void torrentDetailsReceived(const QString &hash, int tab, const QJsonValue &data);
@@ -166,6 +170,7 @@ private:
         bool checkAccepted = false;
         bool detailsRequest = false;
         bool exportRequest = false;
+        bool preferencesRequest = false;
         QString exportHash;
         QString detailHash;
         int detailTab = -1;

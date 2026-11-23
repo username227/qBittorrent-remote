@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/MainWindow.h"
 #include "gui/ServerPane.h"
+#include "gui/RemotePreferencesDialog.h"
+#include "gui/MappedContentTreeWidget.h"
+#include "gui/TorrentModel.h"
 #include "gui/ConnectionDialog.h"
 #include "gui/RemoteAddTorrentDialog.h"
 #include "gui/RemoteTrackerEntriesDialog.h"
@@ -13,15 +16,23 @@
 #include "api/TorrentMetadataReader.h"
 #include "api/PathMappingStore.h"
 
+#include <iterator>
 #include <QAction>
 #include <QApplication>
 #include <QDesktopServices>
 #include <QDir>
 #include <QEvent>
+#include <QDragEnterEvent>
+#include <QDropEvent>
+#include <QMimeData>
+#include <QMouseEvent>
 #include <QDateTime>
 #include <QJsonDocument>
 #include <QAbstractButton>
 #include <QCheckBox>
+#include <QColor>
+#include <QPalette>
+#include <QSignalSpy>
 #include <QButtonGroup>
 #include <QFile>
 #include <QFileDialog>
@@ -41,6 +52,7 @@
 #include <QTabWidget>
 #include <QTabBar>
 #include <QTableView>
+#include <QToolBar>
 #include <QAbstractItemModel>
 #include <QListWidget>
 #include <QLabel>
@@ -872,6 +884,52 @@ private:
     QStringList m_filenames;
 };
 
+// Drive the real Add Torrent options dialog without a file picker. The
+// drag gesture should always use the same authenticated native dialog.
+class DroppedTorrentUi final : public QObject
+{
+public:
+    int opened = 0;
+    int batches = 0;
+    int links = 0;
+    QString unexpected;
+protected:
+    bool eventFilter(QObject *object, QEvent *event) override
+    {
+        if (event->type() != QEvent::Show)
+            return QObject::eventFilter(object, event);
+        if (auto *picker = qobject_cast<QFileDialog *>(object);
+            picker && picker->objectName() == QLatin1String("addTorrentFileDialog"))
+            unexpected = QStringLiteral("A file picker opened during a desktop drop");
+        if (auto *dialog = qobject_cast<RemoteAddTorrentDialog *>(object))
+        {
+            ++opened;
+            QTimer::singleShot(0, dialog, [this, dialog]() {
+                if (dialog->findChild<QGroupBox *>(QStringLiteral("torrentBatchGroup")))
+                    ++batches;
+                if (dialog->findChild<QPlainTextEdit *>(QStringLiteral("torrentLinks")))
+                    ++links;
+                auto *buttons = dialog->findChild<QDialogButtonBox *>(
+                    QStringLiteral("buttonBox"));
+                if (!buttons || !buttons->button(QDialogButtonBox::Ok))
+                {
+                    unexpected = QStringLiteral("Native Add Torrent confirmation missing");
+                    dialog->reject();
+                    return;
+                }
+                buttons->button(QDialogButtonBox::Ok)->click();
+            });
+        }
+        if (auto *message = qobject_cast<QMessageBox *>(object))
+        {
+            unexpected = QStringLiteral("Unexpected warning during drop: ")
+                + message->windowTitle() + QLatin1String(": ") + message->text();
+            QTimer::singleShot(0, message, &QMessageBox::reject);
+        }
+        return QObject::eventFilter(object, event);
+    }
+};
+
 class ConnectionWorkflowTest final : public QObject
 {
     Q_OBJECT
@@ -923,6 +981,91 @@ private:
     }
 
 private slots:
+    void toolbarAndStatusbarRemainEnabledAfterHiddenWindowExit()
+    {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("tray-layout.ini")),
+                           QSettings::IniFormat);
+        DemoCredentialVault vault;
+
+        {
+            MainWindow window(nullptr, &settings, &vault);
+            window.show();
+            QTRY_VERIFY(window.isVisible());
+            auto *toolbar = window.findChild<QToolBar *>(QStringLiteral("toolBar"));
+            auto *statusbar = window.findChild<QStatusBar *>(QStringLiteral("statusBar"));
+            auto *toolbarAction = window.findChild<QAction *>(
+                QStringLiteral("actionTopToolBar"));
+            auto *statusAction = window.findChild<QAction *>(
+                QStringLiteral("actionShowStatusbar"));
+            QVERIFY(toolbar && statusbar && toolbarAction && statusAction);
+            QVERIFY(toolbar->isVisible());
+            QVERIFY(statusbar->isVisible());
+            QVERIFY(toolbarAction->isChecked());
+            QVERIFY(statusAction->isChecked());
+
+            // A tray-hidden top-level widget makes isVisible() false for
+            // children, without changing the View menu toggles.
+            window.hide();
+            QVERIFY(!toolbar->isVisible());
+            QVERIFY(!statusbar->isVisible());
+            QVERIFY(window.close());
+            settings.sync();
+        }
+        QCOMPARE(settings.value(QStringLiteral("Layout/ToolbarVisible")).toBool(), true);
+        QCOMPARE(settings.value(QStringLiteral("Layout/StatusbarVisible")).toBool(), true);
+
+        {
+            MainWindow window(nullptr, &settings, &vault);
+            window.show();
+            QTRY_VERIFY(window.isVisible());
+            auto *toolbar = window.findChild<QToolBar *>(QStringLiteral("toolBar"));
+            auto *statusbar = window.findChild<QStatusBar *>(QStringLiteral("statusBar"));
+            QVERIFY(toolbar && statusbar);
+            QTRY_VERIFY(toolbar->isVisible());
+            QVERIFY(statusbar->isVisible());
+            QVERIFY(window.close());
+        }
+    }
+
+    void corruptedOldToolbarSettingsRecoverOnce()
+    {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("legacy-layout.ini")),
+                           QSettings::IniFormat);
+        settings.setValue(QStringLiteral("Layout/ToolbarVisible"), false);
+        settings.setValue(QStringLiteral("Layout/StatusbarVisible"), false);
+        DemoCredentialVault vault;
+        {
+            MainWindow window(nullptr, &settings, &vault);
+            window.show();
+            QTRY_VERIFY(window.isVisible());
+            auto *toolbar = window.findChild<QToolBar *>(QStringLiteral("toolBar"));
+            auto *statusbar = window.findChild<QStatusBar *>(QStringLiteral("statusBar"));
+            QVERIFY(toolbar && statusbar);
+            QVERIFY(toolbar->isVisible());
+            QVERIFY(statusbar->isVisible());
+            QVERIFY(window.close());
+        }
+        QCOMPARE(settings.value(QStringLiteral("Layout/ViewVisibilityVersion")).toInt(), 2);
+        // Subsequent deliberate changes are respected, not migrated again.
+        settings.setValue(QStringLiteral("Layout/ToolbarVisible"), false);
+        settings.setValue(QStringLiteral("Layout/StatusbarVisible"), false);
+        {
+            MainWindow window(nullptr, &settings, &vault);
+            window.show();
+            QTRY_VERIFY(window.isVisible());
+            auto *toolbar = window.findChild<QToolBar *>(QStringLiteral("toolBar"));
+            auto *statusbar = window.findChild<QStatusBar *>(QStringLiteral("statusBar"));
+            QVERIFY(toolbar && statusbar);
+            QVERIFY(!toolbar->isVisible());
+            QVERIFY(!statusbar->isVisible());
+            QVERIFY(window.close());
+        }
+    }
+
     void mainWindowAndEachServerRestoreNativeLayout()
     {
         DemoQbittorrentServer alpha(true, nullptr, true);
@@ -964,6 +1107,27 @@ private slots:
             QVERIFY(torrentHeader);
             torrentHeader->resizeSection(1, 173);
             QCOMPARE(torrentHeader->sectionSize(1), 173);
+            QVERIFY(torrentHeader->sectionsMovable());
+            QCOMPARE(torrentHeader->visualIndex(1), 1);
+            // Real mouse gesture on the native header: the Size column is
+            // dragged ahead of Name, not merely reordered through an API.
+            auto *headerViewport = torrentHeader->viewport();
+            const QPoint from(torrentHeader->sectionViewportPosition(1) + 38,
+                              torrentHeader->height() / 2);
+            const QPoint to(torrentHeader->sectionViewportPosition(0) + 20,
+                            torrentHeader->height() / 2);
+            QTest::mousePress(headerViewport, Qt::LeftButton, Qt::NoModifier, from);
+            // QTest::mouseMove() reports NoButton; QHeaderView requires a
+            // MouseMove *with* LeftButton held to begin a genuine section drag.
+            const auto moveWithLeftHeld = [headerViewport](const QPoint &point) {
+                QMouseEvent move(QEvent::MouseMove, QPointF(point),
+                                 Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+                QApplication::sendEvent(headerViewport, &move);
+            };
+            moveWithLeftHeld(from - QPoint(22, 0));
+            moveWithLeftHeld(to);
+            QTest::mouseRelease(headerViewport, Qt::LeftButton, Qt::NoModifier, to);
+            QTRY_COMPARE(torrentHeader->visualIndex(1), 0);
             auto *tabs = pane->findChild<PropTabBar *>();
             QVERIFY(tabs);
             tabs->setCurrentIndex(4); // Content page
@@ -977,6 +1141,9 @@ private slots:
             auto *firstPane = qobject_cast<ServerPane *>(servers->currentWidget());
             QVERIFY(firstPane);
             firstPane->table()->horizontalHeader()->resizeSection(1, 124);
+            // Reorder only the second connection: a different server must
+            // retain its own independent logical/visual column mapping.
+            QCOMPARE(firstPane->table()->horizontalHeader()->visualIndex(1), 1);
             servers->setCurrentIndex(1);
             window.resize(1230, 790);
             QCoreApplication::processEvents();
@@ -1006,6 +1173,8 @@ private slots:
             auto *pane = qobject_cast<ServerPane *>(servers->currentWidget());
             QVERIFY(pane);
             QTRY_COMPARE(pane->table()->horizontalHeader()->sectionSize(1), 173);
+            QVERIFY(pane->table()->horizontalHeader()->sectionsMovable());
+            QCOMPARE(pane->table()->horizontalHeader()->visualIndex(1), 0);
             auto *tabs = pane->findChild<PropTabBar *>();
             QVERIFY(tabs);
             QTRY_COMPARE(tabs->currentIndex(), -1);
@@ -1018,6 +1187,8 @@ private slots:
             auto *firstPane = qobject_cast<ServerPane *>(servers->currentWidget());
             QVERIFY(firstPane);
             QCOMPARE(firstPane->table()->horizontalHeader()->sectionSize(1), 124);
+            QVERIFY(firstPane->table()->horizontalHeader()->sectionsMovable());
+            QCOMPARE(firstPane->table()->horizontalHeader()->visualIndex(1), 1);
             QVERIFY(window.close());
         }
     }
@@ -1608,6 +1779,7 @@ private slots:
         QVERIFY(peers);
         QTRY_COMPARE_WITH_TIMEOUT(peers->rowCount(), 1, 6000);
         QVERIFY(!peers->horizontalHeader()->highlightSections());
+        QVERIFY(peers->horizontalHeader()->sectionsMovable());
         QCOMPARE(peers->item(0, 2)->text(), QStringLiteral("qBittorrent"));
 
         tabBar->setCurrentIndex(3);
@@ -1623,6 +1795,7 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(contents->topLevelItem(0)->childCount() == 2, 6000);
         QCOMPARE(contents->columnCount(), 6);
         QVERIFY(!contents->header()->highlightSections());
+        QVERIFY(contents->header()->sectionsMovable());
         QCOMPARE(contents->headerItem()->text(3), QStringLiteral("Download Priority"));
         auto *rootFolder = contents->topLevelItem(0);
         auto *fileOne = rootFolder->child(0);
@@ -1840,6 +2013,362 @@ private slots:
         QVERIFY(request.contains("Content-Type: application/x-bittorrent"));
         QVERIFY(request.contains(metadata));
         QVERIFY(request.startsWith("--qbtRemote-"));
+    }
+
+    void upstreamTorrentStateColorsSurviveStalledAndQueuedStates()
+    {
+        // Regression: stalledUP/stalledDL previously fell back to the plain
+        // desktop Text color, rendering nearly all idle seedboxes black.
+        // Exercise the real model with actual qBittorrent Web API state names.
+        struct Case
+        {
+            const char *state;
+            const char *lightColor;
+            const char *darkColor;
+        };
+        const Case cases[] = {
+            {"downloading", "#1a7f37", "#3fb950"},
+            {"forcedDL", "#1a7f37", "#3fb950"},
+            {"metaDL", "#1a7f37", "#3fb950"},
+            {"forcedMetaDL", "#1a7f37", "#3fb950"},
+            {"stalledDL", "#2da44e", "#238636"},
+            {"uploading", "#0969da", "#58a6ff"},
+            {"forcedUP", "#0969da", "#58a6ff"},
+            {"stalledUP", "#0969da", "#1f6feb"},
+            {"queuedDL", "#7d4e00", "#845306"},
+            {"queuedUP", "#7d4e00", "#845306"},
+            {"checkingDL", "#1a7f37", "#3fb950"},
+            {"checkingUP", "#1a7f37", "#3fb950"},
+            {"checkingResumeData", "#1a7f37", "#3fb950"},
+            {"moving", "#1a7f37", "#3fb950"},
+            {"stoppedDL", "#57606a", "#8b949e"},
+            {"pausedDL", "#57606a", "#8b949e"},
+            {"stoppedUP", "#8250df", "#a371f7"},
+            {"pausedUP", "#8250df", "#a371f7"},
+            {"error", "#cf222e", "#f85149"},
+            {"missingFiles", "#cf222e", "#f85149"}
+        };
+        const bool dark = QApplication::palette()
+            .color(QPalette::Base).lightness() < 128;
+        QJsonObject torrents;
+        for (int i = 0; i < int(std::size(cases)); ++i)
+        {
+            const QString hash = QString::number(i + 1).rightJustified(40, QLatin1Char('0'));
+            torrents.insert(hash, QJsonObject{
+                {QStringLiteral("name"), QString::fromLatin1(cases[i].state)},
+                {QStringLiteral("state"), QString::fromLatin1(cases[i].state)},
+                {QStringLiteral("progress"), 0.5}
+            });
+        }
+        TorrentModel model;
+        model.applySync(QJsonObject{
+            {QStringLiteral("rid"), 1},
+            {QStringLiteral("full_update"), true},
+            {QStringLiteral("torrents"), torrents}
+        });
+        QCOMPARE(model.rowCount(), int(std::size(cases)));
+        model.setUseStateColors(true);
+        for (int i = 0; i < int(std::size(cases)); ++i)
+        {
+            const QModelIndex row = model.index(i, 0);
+            const QColor expected(QString::fromLatin1(
+                dark ? cases[i].darkColor : cases[i].lightColor));
+            const QColor actual = row.data(Qt::ForegroundRole).value<QColor>();
+            QVERIFY2(actual.isValid(), cases[i].state);
+            QCOMPARE(actual, expected);
+            QCOMPARE(model.index(i, 2).data(Qt::ForegroundRole).value<QColor>(), expected);
+        }
+
+        // When the setting is disabled, the native text palette wins.
+        model.setUseStateColors(false);
+        QVERIFY(!model.index(7, 0).data(Qt::ForegroundRole).isValid());
+
+        // A state transition must invalidate the ForegroundRole as well as
+        // text/decoration, so the visible row and progress repaint together.
+        QSignalSpy changed(&model, &QAbstractItemModel::dataChanged);
+        const QString hash = QString::number(8).rightJustified(40, QLatin1Char('0'));
+        model.setUseStateColors(true);
+        changed.clear();
+        model.applySync(QJsonObject{
+            {QStringLiteral("rid"), 2},
+            {QStringLiteral("torrents"), QJsonObject{
+                {hash, QJsonObject{{QStringLiteral("state"), QStringLiteral("stoppedUP")}}}
+            }}
+        });
+        QVERIFY(!changed.isEmpty());
+        const QList<int> roles = changed.constLast().at(2).value<QList<int>>();
+        QVERIFY(roles.contains(Qt::ForegroundRole));
+        QCOMPARE(model.index(7, 0).data(Qt::ForegroundRole).value<QColor>(),
+                 QColor(dark ? QStringLiteral("#a371f7") : QStringLiteral("#8250df")));
+    }
+
+    void userDropsTorrentFilesAndMagnetIntoNativeTransferView()
+    {
+        DemoQbittorrentServer server(true);
+        QVERIFY(server.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("drag.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        QTRY_VERIFY(window.isVisible());
+        openConnectDialog(window, server.url());
+        auto *table = window.findChild<QTableView *>(QStringLiteral("torrentList"));
+        QVERIFY(table);
+        auto *add = window.findChild<QAction *>(QStringLiteral("actionOpen"));
+        QVERIFY(add);
+        QTRY_VERIFY_WITH_TIMEOUT(add->isEnabled(), 6000);
+
+        QList<QByteArray> payloads;
+        QList<QUrl> urls;
+        for (int i = 1; i <= 2; ++i)
+        {
+            const QByteArray torrentName = QByteArrayLiteral("drag") + QByteArray::number(i);
+            const QByteArray metadata = QByteArrayLiteral("d4:infod6:lengthi")
+                + QByteArray::number(100 + i) + QByteArrayLiteral("e4:name")
+                + QByteArray::number(torrentName.size()) + ':'
+                + torrentName + QByteArrayLiteral("ee");
+            Remote::TorrentMetadata decoded;
+            QVERIFY(Remote::TorrentMetadataReader::read(metadata, decoded));
+            const QString path = temp.filePath(QStringLiteral("dropped_%1.torrent").arg(i));
+            QFile output(path);
+            QVERIFY(output.open(QIODevice::WriteOnly));
+            QCOMPARE(output.write(metadata), qint64(metadata.size()));
+            output.close();
+            payloads.append(metadata);
+            urls.append(QUrl::fromLocalFile(path));
+        }
+
+        QMimeData localMime;
+        localMime.setUrls(urls);
+        auto *viewport = table->viewport();
+        QDragEnterEvent enter(QPoint(10, 10), Qt::CopyAction, &localMime,
+                              Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(viewport, &enter);
+        QVERIFY(enter.isAccepted());
+
+        DroppedTorrentUi driver;
+        QApplication::instance()->installEventFilter(&driver);
+        QTimer watchdog;
+        watchdog.setSingleShot(true);
+        QObject::connect(&watchdog, &QTimer::timeout, &window, [&]() {
+            driver.unexpected = QStringLiteral("Drop confirmation timed out");
+            for (QWidget *top : QApplication::topLevelWidgets())
+                if (auto *dialog = qobject_cast<QDialog *>(top); dialog && dialog->isVisible())
+                    dialog->reject();
+        });
+        watchdog.start(10000);
+        QDropEvent drop(QPointF(10, 10), Qt::CopyAction, &localMime,
+                        Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(viewport, &drop);
+        watchdog.stop();
+        QApplication::instance()->removeEventFilter(&driver);
+        QVERIFY(drop.isAccepted());
+        QVERIFY2(driver.unexpected.isEmpty(), qPrintable(driver.unexpected));
+        QCOMPARE(driver.opened, 1);
+        QCOMPARE(driver.batches, 1);
+        QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor("/api/v2/torrents/add"), 1, 6000);
+        QByteArray body = server.lastCommandBody("/api/v2/torrents/add");
+        QCOMPARE(body.count(QByteArrayLiteral("name=\"torrents\"; filename=\"")), 2);
+        for (const QByteArray &metadata : payloads)
+            QVERIFY(body.contains(metadata));
+
+        const QString magnet = QStringLiteral(
+            "magnet:?xt=urn:btih:fedcba9876543210fedcba9876543210fedcba98");
+        QMimeData magnetMime;
+        magnetMime.setText(magnet);
+        QDragEnterEvent magnetEnter(QPoint(10, 10), Qt::CopyAction, &magnetMime,
+                                    Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(viewport, &magnetEnter);
+        QVERIFY(magnetEnter.isAccepted());
+        DroppedTorrentUi linkDriver;
+        QApplication::instance()->installEventFilter(&linkDriver);
+        watchdog.start(10000);
+        QDropEvent magnetDrop(QPointF(10, 10), Qt::CopyAction, &magnetMime,
+                              Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(viewport, &magnetDrop);
+        watchdog.stop();
+        QApplication::instance()->removeEventFilter(&linkDriver);
+        QVERIFY(magnetDrop.isAccepted());
+        QVERIFY2(linkDriver.unexpected.isEmpty(), qPrintable(linkDriver.unexpected));
+        QCOMPARE(linkDriver.opened, 1);
+        QCOMPARE(linkDriver.links, 1);
+        QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor("/api/v2/torrents/add"), 2, 6000);
+        QCOMPARE(QUrlQuery(QString::fromUtf8(server.lastCommandBody(
+            "/api/v2/torrents/add"))).queryItemValue(QStringLiteral("urls")), magnet);
+
+        QMimeData irrelevant;
+        irrelevant.setUrls({QUrl::fromLocalFile(temp.filePath(QStringLiteral("notes.txt")))});
+        QDragEnterEvent rejected(QPoint(10, 10), Qt::CopyAction, &irrelevant,
+                                 Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(viewport, &rejected);
+        QVERIFY(!rejected.isAccepted());
+        QCOMPARE(server.commandsFor("/api/v2/torrents/add"), 2);
+    }
+
+    void contentDragPreferenceIsEnabledAndControlsNativeDragMode()
+    {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("drag-preferences.ini")),
+                           QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        QTRY_VERIFY(window.isVisible());
+
+        auto *content = window.findChild<MappedContentTreeWidget *>(
+            QStringLiteral("torrentContent"));
+        auto *preferences = window.findChild<QAction *>(QStringLiteral("actionOptions"));
+        QVERIFY(content && preferences);
+        // Preserve the existing working drag-out behavior on upgrade.
+        QVERIFY(content->dragEnabled());
+
+        QString error;
+        const auto changePreference = [&](bool enabled) {
+            QTimer::singleShot(0, &window, [&]() {
+                auto *dialog = qobject_cast<RemotePreferencesDialog *>(
+                    QApplication::activeModalWidget());
+                if (!dialog)
+                {
+                    error = QStringLiteral("Preferences did not open");
+                    return;
+                }
+                auto *check = dialog->findChild<QCheckBox *>(
+                    QStringLiteral("checkTorrentContentDrag"));
+                auto *buttons = dialog->findChild<QDialogButtonBox *>(
+                    QStringLiteral("buttonBox"));
+                if (!check || !check->isEnabled() || !buttons
+                    || !buttons->button(QDialogButtonBox::Ok))
+                {
+                    error = QStringLiteral("Native Content drag option remains disabled");
+                    dialog->reject();
+                    return;
+                }
+                check->setChecked(enabled);
+                buttons->button(QDialogButtonBox::Ok)->click();
+            });
+            preferences->trigger();
+        };
+
+        changePreference(false);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QCOMPARE(settings.value(QStringLiteral(
+            "Preferences/Behavior/TorrentContentDragEnabled")).toBool(), false);
+        QVERIFY(!content->dragEnabled());
+
+        // Upstream's Alt inversion: unchecked prefers selection, Alt drags.
+        auto *viewport = content->viewport();
+        QTest::mousePress(viewport, Qt::LeftButton, Qt::AltModifier, QPoint(3, 3));
+        QVERIFY(content->dragEnabled());
+        QTest::mouseRelease(viewport, Qt::LeftButton, Qt::AltModifier, QPoint(3, 3));
+        QTest::mousePress(viewport, Qt::LeftButton, Qt::NoModifier, QPoint(3, 3));
+        QVERIFY(!content->dragEnabled());
+        QTest::mouseRelease(viewport, Qt::LeftButton, Qt::NoModifier, QPoint(3, 3));
+
+        changePreference(true);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QCOMPARE(settings.value(QStringLiteral(
+            "Preferences/Behavior/TorrentContentDragEnabled")).toBool(), true);
+        QVERIFY(content->dragEnabled());
+
+        // Checked prefers dragging, Alt gives multi-selection again.
+        QTest::mousePress(viewport, Qt::LeftButton, Qt::AltModifier, QPoint(3, 3));
+        QVERIFY(!content->dragEnabled());
+        QTest::mouseRelease(viewport, Qt::LeftButton, Qt::AltModifier, QPoint(3, 3));
+        QTest::mousePress(viewport, Qt::LeftButton, Qt::NoModifier, QPoint(3, 3));
+        QVERIFY(content->dragEnabled());
+        QTest::mouseRelease(viewport, Qt::LeftButton, Qt::NoModifier, QPoint(3, 3));
+
+        // Reopening the dialog must reflect the saved choice.
+        RemotePreferencesDialog reopened(settings);
+        auto *check = reopened.findChild<QCheckBox *>(
+            QStringLiteral("checkTorrentContentDrag"));
+        QVERIFY(check && check->isEnabled() && check->isChecked());
+    }
+
+    void userDragsOnlyExistingMappedContentAsCopyUris()
+    {
+        DemoQbittorrentServer server(true);
+        server.enableTorrentSyncDemo();
+        server.enableMappedFolderDemo();
+        server.enableDetailsDemo();
+        server.keepDemoTorrents();
+        QVERIFY(server.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        const QString mount = temp.filePath(QStringLiteral("NAS"));
+        const QString data = temp.filePath(QStringLiteral("NAS/Music/data"));
+        QVERIFY(QDir().mkpath(data));
+        QStringList local;
+        for (int i = 1; i <= 2; ++i)
+        {
+            const QString name = QStringLiteral("file-%1.bin").arg(i == 1
+                ? QStringLiteral("one") : QStringLiteral("two"));
+            const QString path = QDir(data).filePath(name);
+            QFile file(path);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write("test", 4), qint64(4));
+            file.close();
+            local.append(path);
+        }
+
+        QSettings settings(temp.filePath(QStringLiteral("paths.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        QTRY_VERIFY(window.isVisible());
+        openConnectDialog(window, server.url());
+        auto *table = window.findChild<QTableView *>(QStringLiteral("torrentList"));
+        QVERIFY(table);
+        QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 1, 6000);
+        const auto profiles = Remote::ProfileStore(settings).profiles();
+        QCOMPARE(profiles.size(), 1);
+        Remote::PathMappingStore mappings(settings);
+        QVERIFY(mappings.replace(profiles.first().id, {{mount, QStringLiteral("/share/NAS")}}));
+        // Opening/closing Preferences reloads mappings for every live server.
+        QTimer::singleShot(0, &window, []() {
+            if (auto *modal = qobject_cast<QDialog *>(QApplication::activeModalWidget()))
+                modal->reject();
+        });
+        auto *preferences = window.findChild<QAction *>(QStringLiteral("actionOptions"));
+        QVERIFY(preferences);
+        preferences->trigger();
+
+        table->selectRow(0);
+        auto *tabs = window.findChild<PropTabBar *>();
+        QVERIFY(tabs);
+        tabs->setCurrentIndex(4);
+        auto *content = window.findChild<MappedContentTreeWidget *>(
+            QStringLiteral("torrentContent"));
+        QVERIFY(content);
+        QTRY_VERIFY_WITH_TIMEOUT(content->topLevelItemCount() > 0, 6000);
+        QTRY_COMPARE_WITH_TIMEOUT(content->topLevelItem(0)->childCount(), 2, 6000);
+
+        auto *first = content->topLevelItem(0)->child(0);
+        auto *second = content->topLevelItem(0)->child(1);
+        first->setSelected(true);
+        {
+            std::unique_ptr<QMimeData> mime(content->mappedSelectionMimeData());
+            QVERIFY(mime);
+            QCOMPARE(mime->urls(), (QList<QUrl>{
+                QUrl::fromLocalFile(QFileInfo(local.at(0)).canonicalFilePath())}));
+        }
+        second->setSelected(true);
+        {
+            std::unique_ptr<QMimeData> mime(content->mappedSelectionMimeData());
+            QVERIFY(mime);
+            QCOMPARE(mime->urls().size(), 2);
+        }
+        // No partial drag if one selected file vanished from the mount.
+        QVERIFY(QFile::remove(local.at(1)));
+        QVERIFY(content->mappedSelectionMimeData() == nullptr);
+        second->setSelected(false);
+        // An unmapped content selection offers no misleading local URI.
+        content->setPathMappings({});
+        QVERIFY(content->mappedSelectionMimeData() == nullptr);
+        QCOMPARE(server.commandsFor("/api/v2/torrents/add"), 0);
     }
 
     void userCanSelectSevenTorrentFilesAndUploadOneAuthenticatedBatch()

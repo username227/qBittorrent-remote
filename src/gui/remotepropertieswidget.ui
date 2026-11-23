@@ -1149,7 +1149,7 @@
         </layout>
        </item>
        <item>
-        <widget class="QTreeWidget" name="filesList">
+        <widget class="MappedContentTreeWidget" name="filesList">
          <property name="contextMenuPolicy">
           <enum>Qt::ContextMenuPolicy::CustomContextMenu</enum>
          </property>
@@ -1186,6 +1186,13 @@
    </item>
   </layout>
  </widget>
+ <customwidgets>
+  <customwidget>
+   <class>MappedContentTreeWidget</class>
+   <extends>QTreeWidget</extends>
+   <header>gui/MappedContentTreeWidget.h</header>
+  </customwidget>
+ </customwidgets>
  <resources/>
  <connections/>
 </ui>

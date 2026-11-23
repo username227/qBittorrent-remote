@@ -41,6 +41,8 @@ class TransferListDelegate final : public QStyledItemDelegate
 
 public:
     explicit TransferListDelegate(QObject *parent = nullptr);
+    void setProgressFollowsTextColor(bool enabled) noexcept
+    { m_progressFollowsTextColor = enabled; }
     void invalidateCachedRowHeight() noexcept { m_nameColHeight = -1; }
 
     QSize sizeHint(const QStyleOptionViewItem &option, const QModelIndex &index) const override;
@@ -50,4 +52,5 @@ public:
 private:
     ProgressBarPainter m_progressBarPainter;
     mutable int m_nameColHeight = -1;
+    bool m_progressFollowsTextColor = false;
 };
