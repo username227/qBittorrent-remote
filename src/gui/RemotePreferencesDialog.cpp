@@ -142,6 +142,7 @@ RemotePreferencesDialog::RemotePreferencesDialog(QSettings &settings,
     // layout (GPL-3.0-or-later). Only local-engine-only custom path widgets
     // were substituted with stock QLineEdit widgets.
     disableUnimplementedControls();
+    loadLocalBehaviorControls();
     populateAdvancedPlaceholders();
     buildRemotePathsPage(preferredProfileId);
 
@@ -243,6 +244,81 @@ void RemotePreferencesDialog::disableUnimplementedControls()
                 setUnsupported(widget);
         }
     }
+}
+
+void RemotePreferencesDialog::loadLocalBehaviorControls()
+{
+    // These native controls affect this remote desktop application, not the
+    // qBittorrent daemon. They must not modify any server preferences.
+    const auto unlock = [](QWidget *widget, const QString &tooltip = {}) {
+        widget->setEnabled(true);
+        widget->setToolTip(tooltip);
+    };
+    unlock(m_ui->checkAltRowColors);
+    unlock(m_ui->checkHideZero);
+    unlock(m_ui->comboHideZero);
+    unlock(m_ui->actionTorrentDlOnDblClBox);
+    unlock(m_ui->actionTorrentFnOnDblClBox);
+    unlock(m_ui->checkBoxFreeDiskSpaceStatusBar);
+
+    m_ui->checkAltRowColors->setChecked(m_settings.value(
+        QStringLiteral("Preferences/Behavior/AlternatingRows"), true).toBool());
+    const bool hideZero = m_settings.value(
+        QStringLiteral("Preferences/Behavior/HideZero"), false).toBool();
+    m_ui->checkHideZero->setChecked(hideZero);
+    m_ui->comboHideZero->setCurrentIndex(qBound(0, m_settings.value(
+        QStringLiteral("Preferences/Behavior/HideZeroMode"), 0).toInt(), 1));
+    m_ui->comboHideZero->setEnabled(hideZero);
+
+    // Preview requires a separate remote-access and playback milestone.
+    // Do not offer an action that would be a no-op or open a wrong local file.
+    for (QComboBox *box : {m_ui->actionTorrentDlOnDblClBox,
+                           m_ui->actionTorrentFnOnDblClBox})
+    {
+        box->removeItem(2);
+        for (int i = 0; i < box->count(); ++i)
+        {
+            static const char *const actionIds[] = {
+                "toggle", "folder", "options", "none"
+            };
+            box->setItemData(i, QString::fromLatin1(actionIds[i]));
+        }
+    }
+    const auto loadAction = [this](QComboBox *box, const QString &key,
+                                   const QString &fallback) {
+        const QString selected = m_settings.value(key, fallback).toString();
+        const int index = box->findData(selected);
+        box->setCurrentIndex(index >= 0 ? index : box->findData(fallback));
+    };
+    loadAction(m_ui->actionTorrentDlOnDblClBox,
+        QStringLiteral("Preferences/Behavior/DoubleClickDownloading"),
+        QStringLiteral("toggle"));
+    loadAction(m_ui->actionTorrentFnOnDblClBox,
+        QStringLiteral("Preferences/Behavior/DoubleClickCompleted"),
+        QStringLiteral("folder"));
+    m_ui->checkBoxFreeDiskSpaceStatusBar->setChecked(m_settings.value(
+        QStringLiteral("Preferences/Behavior/ShowServerFreeSpace"), false).toBool());
+    m_ui->checkBoxFreeDiskSpaceStatusBar->setToolTip(tr(
+        "Show available space on the connected server's default save drive, "
+        "as reported by its Web API. This is not your desktop's free space."));
+
+    const auto dirty = [this]() {
+        m_behaviorDirty = true;
+        updateButtons();
+    };
+    connect(m_ui->checkAltRowColors, &QCheckBox::toggled, this, dirty);
+    connect(m_ui->checkHideZero, &QCheckBox::toggled, this, [this, dirty](bool value) {
+        m_ui->comboHideZero->setEnabled(value);
+        dirty();
+    });
+    connect(m_ui->comboHideZero, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [dirty](int) { dirty(); });
+    for (QComboBox *box : {m_ui->actionTorrentDlOnDblClBox,
+                           m_ui->actionTorrentFnOnDblClBox})
+        connect(box, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                this, [dirty](int) { dirty(); });
+    connect(m_ui->checkBoxFreeDiskSpaceStatusBar, &QCheckBox::toggled,
+            this, dirty);
 }
 
 void RemotePreferencesDialog::populateAdvancedPlaceholders()
@@ -607,7 +683,7 @@ void RemotePreferencesDialog::updateButtons()
     m_removeMapping->setEnabled(selected);
     m_checkMount->setEnabled(selected);
     if (m_applyButton)
-        m_applyButton->setEnabled(!m_changedProfiles.isEmpty());
+        m_applyButton->setEnabled(!m_changedProfiles.isEmpty() || m_behaviorDirty);
 }
 
 bool RemotePreferencesDialog::applyChanges()
@@ -622,6 +698,23 @@ bool RemotePreferencesDialog::applyChanges()
         }
     }
     m_changedProfiles.clear();
+    if (m_behaviorDirty)
+    {
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/AlternatingRows"),
+            m_ui->checkAltRowColors->isChecked());
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/HideZero"),
+            m_ui->checkHideZero->isChecked());
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/HideZeroMode"),
+            m_ui->comboHideZero->currentIndex());
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/DoubleClickDownloading"),
+            m_ui->actionTorrentDlOnDblClBox->currentData().toString());
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/DoubleClickCompleted"),
+            m_ui->actionTorrentFnOnDblClBox->currentData().toString());
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/ShowServerFreeSpace"),
+            m_ui->checkBoxFreeDiskSpaceStatusBar->isChecked());
+        m_behaviorDirty = false;
+        emit localBehaviorApplied();
+    }
     updateButtons();
     return true;
 }

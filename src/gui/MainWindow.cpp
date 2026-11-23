@@ -262,7 +262,13 @@ MainWindow::MainWindow(QWidget *parent, QSettings *settings,
     m_ratesLabel = new QLabel(tr("D: —    U: —"), m_ui->statusBar);
     m_ratesLabel->setObjectName(QStringLiteral("remoteTransferRates"));
     m_ui->statusBar->addPermanentWidget(m_ratesLabel);
+    m_serverFreeSpaceLabel = new QLabel(tr("Free: —"), m_ui->statusBar);
+    m_serverFreeSpaceLabel->setObjectName(QStringLiteral("remoteServerFreeSpace"));
+    m_serverFreeSpaceLabel->setToolTip(tr(
+        "Free space on the selected server's default save drive, not this computer."));
+    m_ui->statusBar->addPermanentWidget(m_serverFreeSpaceLabel);
     restoreWindowLayout();
+    applyLocalBehaviorPreferences();
 
     // Opt-in startup connections run after the event loop begins. Each
     // profile independently uses a blank-password login or secure vault
@@ -459,6 +465,8 @@ void MainWindow::setupActions()
         const auto server = activeConnection();
         const QString profileId = server ? server->profile.id : m_preferredServerId;
         RemotePreferencesDialog dialog(*m_settings, profileId, this);
+        connect(&dialog, &RemotePreferencesDialog::localBehaviorApplied,
+                this, &MainWindow::applyLocalBehaviorPreferences);
         trackDialogGeometry(dialog, QStringLiteral("Preferences"));
         dialog.exec();
     });
@@ -1060,6 +1068,42 @@ void MainWindow::updateTorrentCount()
         .arg(pane->model()->rowCount()));
 }
 
+void MainWindow::applyLocalBehaviorPreferences()
+{
+    const bool alternating = m_settings->value(
+        QStringLiteral("Preferences/Behavior/AlternatingRows"), true).toBool();
+    const bool hideZero = m_settings->value(
+        QStringLiteral("Preferences/Behavior/HideZero"), false).toBool();
+    const int mode = m_settings->value(
+        QStringLiteral("Preferences/Behavior/HideZeroMode"), 0).toInt();
+
+    const auto apply = [alternating, hideZero, mode](ServerPane *pane) {
+        if (!pane)
+            return;
+        pane->table()->setAlternatingRowColors(alternating);
+        pane->model()->setHideZeroValues(hideZero, mode);
+    };
+    apply(m_emptyPane);
+    for (const auto &connection : m_connections)
+        apply(connection->pane);
+    updateServerFreeSpace();
+}
+
+void MainWindow::updateServerFreeSpace()
+{
+    if (!m_serverFreeSpaceLabel)
+        return;
+    const bool show = m_settings->value(
+        QStringLiteral("Preferences/Behavior/ShowServerFreeSpace"), false).toBool();
+    m_serverFreeSpaceLabel->setVisible(show);
+    if (show)
+    {
+        const auto connection = activeConnection();
+        m_serverFreeSpaceLabel->setText(connection && connection->connected
+            ? connection->pane->freeSpaceText() : tr("Free: —"));
+    }
+}
+
 void MainWindow::updateActiveUi()
 {
     if (!m_searchEdit || !m_searchBy || !m_disconnectAction
@@ -1087,6 +1131,7 @@ void MainWindow::updateActiveUi()
     updateTorrentCount();
     m_ratesLabel->setText(connection && ready && pane
                           ? pane->rateText() : tr("D: —    U: —"));
+    updateServerFreeSpace();
 
     if (connection && !m_restoringStartup && !connection->profile.id.isEmpty())
     {
@@ -1166,9 +1211,51 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
     connection->profile = profile;
     connection->pane = new ServerPane(m_views);
     connection->pane->restoreLayout(*m_settings, profile.id);
+    connection->pane->table()->setAlternatingRowColors(m_settings->value(
+        QStringLiteral("Preferences/Behavior/AlternatingRows"), true).toBool());
+    connection->pane->model()->setHideZeroValues(m_settings->value(
+        QStringLiteral("Preferences/Behavior/HideZero"), false).toBool(),
+        m_settings->value(QStringLiteral("Preferences/Behavior/HideZeroMode"), 0).toInt());
     connection->session = new Remote::RemoteSession(this);
     auto *session = connection->session;
     m_connections.append(connection);
+
+    // The user may choose separate double-click actions for downloads and
+    // completed torrents. All actions use this exact remote session.
+    connect(connection->pane->table(), &QTableView::doubleClicked,
+            this, [this, connection](const QModelIndex &index) {
+        if (!index.isValid() || !containsConnection(connection)
+            || !connection->connected || activeConnection() != connection)
+            return;
+        const QStringList selected = selectedTorrentHashes();
+        if (selected.size() != 1)
+            return;
+        const QJsonObject torrent = connection->pane->model()->torrents()
+            .value(selected.first());
+        if (torrent.isEmpty())
+            return;
+        const bool complete = torrent.value(QStringLiteral("progress")).toDouble() >= 1.0;
+        const QString key = complete
+            ? QStringLiteral("Preferences/Behavior/DoubleClickCompleted")
+            : QStringLiteral("Preferences/Behavior/DoubleClickDownloading");
+        const QString action = m_settings->value(key,
+            complete ? QStringLiteral("folder") : QStringLiteral("toggle")).toString();
+        if (action == QLatin1String("folder"))
+            openSelectedTorrentDestinations();
+        else if (action == QLatin1String("options"))
+            emit connection->pane->torrentContextActionRequested(
+                ServerPane::TorrentContextAction::TorrentOptions);
+        else if (action == QLatin1String("toggle"))
+        {
+            const QString state = torrent.value(QStringLiteral("state")).toString();
+            const bool stopped = state.startsWith(QLatin1String("stopped"))
+                || state.startsWith(QLatin1String("paused"));
+            connection->session->commandTorrents(
+                stopped ? Remote::RemoteSession::TorrentCommand::Start
+                        : Remote::RemoteSession::TorrentCommand::Stop, selected);
+        }
+        // "none" deliberately does nothing; the preview choice is absent.
+    });
 
     // Properties always use the selected server's own authenticated session,
     // certificate pin and cookie jar. Inactive tabs remain independent.
@@ -1701,6 +1788,7 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
             if (activeConnection() == connection)
             {
                 m_ratesLabel->setText(connection->pane->rateText());
+                updateServerFreeSpace();
                 updateTorrentCount();
                 updateTorrentActionState();
             }

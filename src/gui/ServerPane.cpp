@@ -348,6 +348,24 @@ QString ServerPane::rateText() const
     return tr("D: %1    U: %2").arg(rate(down), rate(up));
 }
 
+QString ServerPane::freeSpaceText() const
+{
+    const QJsonValue value = m_serverState.value(QStringLiteral("free_space_on_disk"));
+    if (!value.isDouble() || value.toDouble() < 0)
+        return tr("Free: —");
+    double amount = value.toDouble();
+    static const char *units[] = {"B", "KiB", "MiB", "GiB", "TiB", "PiB"};
+    int unit = 0;
+    while (amount >= 1024 && unit < 5)
+    {
+        amount /= 1024;
+        ++unit;
+    }
+    return tr("Free: %1 %2").arg(
+        QLocale().toString(amount, 'f', unit == 0 ? 0 : 1),
+        QString::fromLatin1(units[unit]));
+}
+
 void ServerPane::setSearchTerm(const QString &text)
 {
     m_search = text;

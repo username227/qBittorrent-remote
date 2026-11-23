@@ -179,6 +179,24 @@ QVariant TorrentModel::data(const QModelIndex &index, int role) const
         return {};
     if (value.isUndefined() || value.isNull())
         return QStringLiteral("—");
+    // Native "Hide zero and infinity values" changes presentation only.
+    // UserRole retains the complete server value for sorting/actions.
+    if (role == Qt::DisplayRole && m_hideZeroValues && value.isDouble())
+    {
+        const QString state = record.value(QStringLiteral("state")).toString();
+        const bool applies = m_hideZeroMode == 0
+            || state.startsWith(QLatin1String("stopped"));
+        const double number = value.toDouble();
+        const bool numericColumn = col == 4 || col == 5 || col == 6
+            || col == 7 || col == 8 || col == 9 || col == 12
+            || col == 17 || col == 18 || col == 19 || col == 20
+            || col == 21 || col == 22 || col == 23 || col == 24
+            || col == 28 || col == 34;
+        const bool infinite = number < 0
+            && (col == 8 || col == 9 || col == 28 || col == 34);
+        if (applies && numericColumn && (number == 0 || infinite))
+            return QString();
+    }
     if (col == 3)
         return stateText(value.toString());
     if (value.isBool())
@@ -269,6 +287,18 @@ void TorrentModel::applySync(const QJsonObject &payload)
                              {Qt::DisplayRole, Qt::UserRole, Qt::DecorationRole});
         }
     }
+}
+
+void TorrentModel::setHideZeroValues(bool enabled, int mode)
+{
+    mode = qBound(0, mode, 1);
+    if (m_hideZeroValues == enabled && m_hideZeroMode == mode)
+        return;
+    m_hideZeroValues = enabled;
+    m_hideZeroMode = mode;
+    if (!m_hashes.isEmpty())
+        emit dataChanged(index(0, 0), index(m_hashes.size() - 1, columnCount() - 1),
+                         {Qt::DisplayRole});
 }
 
 void TorrentModel::clear()

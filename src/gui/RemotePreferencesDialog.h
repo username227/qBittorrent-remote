@@ -31,10 +31,14 @@ public:
                                      QWidget *parent = nullptr);
     ~RemotePreferencesDialog() override;
 
+signals:
+    void localBehaviorApplied();
+
 private:
     void buildRemotePathsPage(const QString &preferredProfileId);
     void populateAdvancedPlaceholders();
     void disableUnimplementedControls();
+    void loadLocalBehaviorControls();
     void populateServerSelector(const QString &preferredProfileId);
     void showServerMappings();
     void stageCurrentMappings();
@@ -60,4 +64,5 @@ private:
     QPushButton *m_applyButton = nullptr;
     QHash<QString, QList<Remote::PathMapping>> m_staged;
     QSet<QString> m_changedProfiles;
+    bool m_behaviorDirty = false;
 };

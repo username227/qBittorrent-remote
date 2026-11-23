@@ -51,6 +51,8 @@ private:
     void updateActiveUi();
     void updateTorrentCount();
     void updateTorrentActionState();
+    void applyLocalBehaviorPreferences();
+    void updateServerFreeSpace();
     QStringList selectedTorrentHashes() const;
     void openSelectedTorrentDestinations();
     void setSelectedTorrentLocation();
@@ -66,6 +68,7 @@ private:
     QList<std::shared_ptr<SessionContext>> m_connections;
     QLabel *m_torrentCountLabel = nullptr;
     QLabel *m_ratesLabel = nullptr;
+    QLabel *m_serverFreeSpaceLabel = nullptr;
     QLineEdit *m_searchEdit = nullptr;
     QComboBox *m_searchBy = nullptr;
     QAction *m_connectAction = nullptr;

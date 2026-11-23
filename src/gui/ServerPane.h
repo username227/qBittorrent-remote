@@ -42,6 +42,7 @@ public:
 
     void applySync(const QJsonObject &payload);
     QString rateText() const;
+    QString freeSpaceText() const;
     void setSearchTerm(const QString &text);
     const QString &searchTerm() const noexcept { return m_search; }
     void setSearchColumn(int index);

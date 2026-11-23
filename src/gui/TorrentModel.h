@@ -23,10 +23,13 @@ public:
 
     void applySync(const QJsonObject &payload);
     void clear();
+    void setHideZeroValues(bool enabled, int mode);
     QString hashForRow(int row) const;
     const QHash<QString, QJsonObject> &torrents() const noexcept;
 
 private:
     QHash<QString, QJsonObject> m_torrents;
     QStringList m_hashes;
+    bool m_hideZeroValues = false;
+    int m_hideZeroMode = 0;
 };
