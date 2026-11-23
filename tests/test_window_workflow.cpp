@@ -3,6 +3,11 @@
 
 #include <QAction>
 #include <QIcon>
+#include <QImage>
+#include <QPalette>
+#include <QSettings>
+#include <QSystemTrayIcon>
+#include <QTemporaryDir>
 #include <QListWidget>
 #include <QMenu>
 #include <QMenuBar>
@@ -104,6 +109,76 @@ private slots:
         }
     }
 #endif
+
+    void savedTrayStyleRendersReadableArtworkAcrossThemes()
+    {
+        QTemporaryDir tmp;
+        QVERIFY(tmp.isValid());
+        QSettings settings(tmp.filePath(QStringLiteral("icons.ini")), QSettings::IniFormat);
+        const QString style = QStringLiteral("Preferences/Behavior/TrayIconStyle");
+        // Inspect the actual tray widget, even in CI without a native tray host.
+        settings.setValue(style, 0);
+        {
+            MainWindow window(nullptr, &settings);
+            window.show();
+            QTRY_VERIFY(window.isVisible());
+            auto *tray = window.findChild<QSystemTrayIcon *>(QStringLiteral("remoteTrayIcon"));
+            QVERIFY(tray);
+            const QImage normal = tray->icon().pixmap(32, 32).toImage();
+            QVERIFY(!normal.isNull());
+            const QColor background = normal.pixelColor(16, 5);
+            QVERIFY(background.alpha() > 200);
+            QVERIFY(background.green() > background.red() + 30);
+            QVERIFY(background.green() >= background.blue());
+            QCOMPARE(window.windowIcon().pixmap(32, 32).toImage(), normal);
+        }
+        // Reopen with saved Monochrome, then change the live window palette.
+        settings.setValue(style, 1);
+        MainWindow window(nullptr, &settings);
+        window.show();
+        auto *tray = window.findChild<QSystemTrayIcon *>(QStringLiteral("remoteTrayIcon"));
+        QVERIFY(tray);
+        const auto checkSymbolic = [tray](bool lightInk) {
+            const QImage img = tray->icon().pixmap(32, 32).toImage();
+            QVERIFY(!img.isNull());
+            int opaqueInterior = 0;
+            int transparentInterior = 0;
+            int appropriateInk = 0;
+            for (int y = 5; y < 27; ++y)
+                for (int x = 5; x < 27; ++x)
+                {
+                    if ((x - 16) * (x - 16) + (y - 16) * (y - 16) > 100)
+                        continue;
+                    const QColor pixel = img.pixelColor(x, y);
+                    if (pixel.alpha() < 20) ++transparentInterior;
+                    if (pixel.alpha() > 180)
+                    {
+                        ++opaqueInterior;
+                        if (lightInk ? pixel.lightness() > 180 : pixel.lightness() < 100)
+                            ++appropriateInk;
+                    }
+                }
+            // A solid disc had no transparent interior; require real letter strokes.
+            QVERIFY(opaqueInterior > 15);
+            QVERIFY(transparentInterior > 40);
+            QVERIFY(appropriateInk > 15);
+        };
+        QPalette light = window.palette();
+        light.setColor(QPalette::Window, QColor(Qt::white));
+        light.setColor(QPalette::WindowText, QColor(Qt::black));
+        window.setPalette(light);
+        QCoreApplication::processEvents();
+        checkSymbolic(false);
+        QPalette dark = light;
+        dark.setColor(QPalette::Window, QColor(QStringLiteral("#202020")));
+        dark.setColor(QPalette::WindowText, QColor(Qt::white));
+        window.setPalette(dark);
+        QCoreApplication::processEvents();
+        checkSymbolic(true);
+        const QColor windowColor = window.windowIcon().pixmap(32, 32)
+            .toImage().pixelColor(16, 5);
+        QVERIFY(windowColor.green() > windowColor.red() + 30);
+    }
 
     void userCanHideAndRestoreFiltersSidebar()
     {
