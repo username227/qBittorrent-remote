@@ -5,6 +5,7 @@
 #include <QDateTime>
 #include <QFileInfo>
 #include <QRegularExpression>
+#include <QSet>
 #include <QUuid>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -770,6 +771,7 @@ void RemoteSession::addTorrentTrackers(const QString &hash, const QStringList &u
                    tr("Merge torrent trackers"), true);
 }
 
+
 void RemoteSession::addTorrentFile(const QString &filename, const QByteArray &contents)
 {
     addTorrentFile(filename, contents, {});
@@ -778,38 +780,83 @@ void RemoteSession::addTorrentFile(const QString &filename, const QByteArray &co
 void RemoteSession::addTorrentFile(const QString &filename, const QByteArray &contents,
                                    const AddTorrentOptions &options)
 {
-    // A .torrent file contains bencoded metadata, not downloaded content.
-    // Keep the payload bounded and never substitute a local save path.
-    if (contents.isEmpty() || contents.size() > (32 * 1024 * 1024))
+    addTorrentFiles({{filename, contents}}, options);
+}
+
+void RemoteSession::addTorrentFiles(const QList<TorrentUpload> &files,
+                                    const AddTorrentOptions &options)
+{
+    const QString description = files.size() == 1
+        ? tr("Add torrent file") : tr("Add %1 torrent files").arg(files.size());
+    // Bound the total request before allocating the multipart body. Metadata
+    // uploads only; never upload downloaded content or local mount paths.
+    constexpr qint64 maxSingleBytes = 32LL * 1024 * 1024;
+    constexpr qint64 maxBatchBytes = 128LL * 1024 * 1024;
+    if (files.isEmpty() || files.size() > 256)
     {
-        emit operationFailed(tr("Add torrent file"), tr("The torrent file is empty or exceeds 32 MiB."));
+        emit operationFailed(description, tr("Select between 1 and 256 torrent files."));
         return;
     }
-
-    QString cleanName = QFileInfo(filename).fileName();
-    cleanName.replace(QRegularExpression(QStringLiteral("[^A-Za-z0-9._-]")),
-                      QStringLiteral("_"));
-    if (cleanName.isEmpty())
-        cleanName = QStringLiteral("upload.torrent");
+    qint64 total = 0;
+    for (const TorrentUpload &file : files)
+    {
+        if (file.contents.isEmpty() || file.contents.size() > maxSingleBytes
+            || total > maxBatchBytes - file.contents.size())
+        {
+            emit operationFailed(description,
+                tr("Torrent metadata must be nonempty, at most 32 MiB each and 128 MiB total."));
+            return; // No partially submitted batches.
+        }
+        total += file.contents.size();
+    }
 
     const QByteArray boundary = QByteArrayLiteral("qbtRemote-")
         + QUuid::createUuid().toString(QUuid::WithoutBraces).toLatin1();
     QByteArray body;
-    body.reserve(contents.size() + 2048);
+    body.reserve(static_cast<qsizetype>(total + 8192 + files.size() * 384));
+
     QUrlQuery fields;
     appendAddOptions(fields, options);
     for (const auto &field : fields.queryItems(QUrl::FullyDecoded))
         appendMultipartField(body, boundary, field.first.toLatin1(), field.second);
-    body += QByteArrayLiteral("--") + boundary + QByteArrayLiteral("\r\n");
-    body += QByteArrayLiteral("Content-Disposition: form-data; name=\"torrents\"; filename=\"")
-        + cleanName.toUtf8() + QByteArrayLiteral("\"\r\n");
-    body += QByteArrayLiteral("Content-Type: application/x-bittorrent\r\n\r\n");
-    body += contents;
-    body += QByteArrayLiteral("\r\n--") + boundary + QByteArrayLiteral("--\r\n");
 
+    QSet<QString> usedNames;
+    for (const TorrentUpload &file : files)
+    {
+        // An upstream parser may key uploads by filename. Avoid collisions
+        // when users select same-basename files from different directories.
+        QString cleanName = QFileInfo(file.filename).fileName();
+        cleanName.replace(QRegularExpression(QStringLiteral("[^A-Za-z0-9._-]")),
+                          QStringLiteral("_"));
+        if (cleanName.isEmpty())
+            cleanName = QStringLiteral("upload.torrent");
+        const QString original = cleanName;
+        int suffix = 2;
+        while (usedNames.contains(cleanName))
+        {
+            const int dot = original.lastIndexOf(QLatin1Char('.'));
+            cleanName = dot > 0
+                ? original.left(dot) + QLatin1Char('_') + QString::number(suffix++)
+                    + original.mid(dot)
+                : original + QLatin1Char('_') + QString::number(suffix++);
+        }
+        usedNames.insert(cleanName);
+
+        body += QByteArrayLiteral("--") + boundary + QByteArrayLiteral("\r\n");
+        body += QByteArrayLiteral(
+            "Content-Disposition: form-data; name=\"torrents\"; filename=\"")
+            + cleanName.toUtf8() + QByteArrayLiteral("\"\r\n");
+        body += QByteArrayLiteral("Content-Type: application/x-bittorrent\r\n\r\n");
+        body += file.contents;
+        body += QByteArrayLiteral("\r\n");
+    }
+    body += QByteArrayLiteral("--") + boundary + QByteArrayLiteral("--\r\n");
+
+    // A single authenticated multipart POST passes shared remote add options
+    // and all selected .torrent files to qBittorrent's real Web API.
     queueOperation(QStringLiteral("api/v2/torrents/add"), body,
                    QByteArrayLiteral("multipart/form-data; boundary=") + boundary,
-                   tr("Add torrent file"), true);
+                   description, true);
 }
 
 bool RemoteSession::isConnected() const noexcept
