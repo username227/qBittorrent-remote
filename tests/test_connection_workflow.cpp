@@ -1111,6 +1111,7 @@ private slots:
 
         // Open the actual Qt menu used by the system-tray icon. The native
         // .ui actions are reused, rather than unrelated fake tray callbacks.
+        qInfo("TRAYCHECK 01 menu-popup");
         menu->popup(QPoint(25, 25));
         QTRY_VERIFY(menu->isVisible());
         QCOMPARE(menu->actions().first(), show);
@@ -1126,10 +1127,12 @@ private slots:
         QVERIFY(!limits->icon().isNull());
         QVERIFY(!pause->icon().isNull());
         menu->close();
+        qInfo("TRAYCHECK 02 menu-closed");
 
         openConnectDialog(window, server.url());
         QTRY_VERIFY_WITH_TIMEOUT(alternate->isEnabled() && limits->isEnabled()
             && pause->isEnabled(), 7000);
+        qInfo("TRAYCHECK 03 connected");
         QVERIFY(!alternate->isChecked());
         QVERIFY(pause->isVisible());
         QVERIFY(!resume->isVisible());
@@ -1138,6 +1141,7 @@ private slots:
         // window is hidden. In CI, menu popup is simulated without an OS tray.
         window.hide();
         QVERIFY(!window.isVisible());
+        qInfo("TRAYCHECK 04 window-hidden");
 
         QTimer::singleShot(0, &window, []() {
             if (auto *dlg = qobject_cast<RemoteAddTorrentDialog *>(
@@ -1145,6 +1149,7 @@ private slots:
                 dlg->reject();
         });
         link->trigger();
+        qInfo("TRAYCHECK 05 link-dialog-closed");
         QVERIFY(!window.isVisible());
 
         QTimer::singleShot(0, &window, []() {
@@ -1153,9 +1158,11 @@ private slots:
                 picker->reject();
         });
         file->trigger();
+        qInfo("TRAYCHECK 06 file-dialog-closed");
         QVERIFY(!window.isVisible());
 
         alternate->trigger();
+        qInfo("TRAYCHECK 07 alternative-requested");
         QTRY_VERIFY_WITH_TIMEOUT(server.trayAlternative(), 7000);
         QTRY_VERIFY_WITH_TIMEOUT(alternate->isChecked(), 7000);
         QCOMPARE(server.commandsFor("/api/v2/transfer/setSpeedLimitsMode"), 1);
@@ -1202,7 +1209,9 @@ private slots:
         });
         poll.start();
         watchdog.start(8000);
+        qInfo("TRAYCHECK 08 speed-dialog-open");
         limits->trigger();
+        qInfo("TRAYCHECK 09 speed-dialog-closed");
         watchdog.stop();
         poll.stop();
         QVERIFY2(dialogError.isEmpty(), qPrintable(dialogError));
@@ -1219,6 +1228,7 @@ private slots:
         QCOMPARE(changes.size(), 1);
         QCOMPARE(changes.value(QStringLiteral("up_limit")).toInt(), 57 * 1024);
 
+        qInfo("TRAYCHECK 10 pause-requested");
         pause->trigger();
         QTRY_VERIFY_WITH_TIMEOUT(server.trayPaused(), 7000);
         QTRY_VERIFY_WITH_TIMEOUT(resume->isVisible() && resume->isEnabled(), 7000);
@@ -1229,6 +1239,7 @@ private slots:
         QCOMPARE(server.commandsFor("/api/v2/transfer/pauseSession"), 1);
         QCOMPARE(server.commandsFor("/api/v2/transfer/resumeSession"), 1);
 
+        qInfo("TRAYCHECK 11 show-requested");
         show->trigger();
         QTRY_VERIFY(window.isVisible());
 
@@ -1240,6 +1251,7 @@ private slots:
                     QApplication::activeModalWidget()))
                 question->done(QMessageBox::No);
         });
+        qInfo("TRAYCHECK 12 exit-confirmation");
         exit->trigger();
         QVERIFY(window.isVisible());
         QCOMPARE(server.trayPaused(), false);
