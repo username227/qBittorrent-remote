@@ -282,6 +282,12 @@ MainWindow::MainWindow(QWidget *parent, QSettings *settings,
     // Required when SVG resources live in a linked static library.
     Q_INIT_RESOURCE(qbittorrent_icons);
 
+    // Under Wayland the compositor resolves task-list icons through the
+    // toplevel app_id and a matching freedesktop .desktop entry, not just
+    // QWidget::setWindowIcon(). Use our installed desktop entry name for the
+    // main window and all modal dialogs, before any platform window exists.
+    QGuiApplication::setDesktopFileName(QStringLiteral("qbittorrent-remote"));
+
     // Preserve the existing torrent-list font as the smallest permitted
     // point size. All widgets share the Qt application font, never a
     // per-table stylesheet or a smaller imitation of upstream's text.
@@ -294,7 +300,13 @@ MainWindow::MainWindow(QWidget *parent, QSettings *settings,
     // original toolbar and status bar, not a visual imitation.
     m_ui->setupUi(this);
     setWindowTitle(tr("qBittorrent Remote"));
-    setWindowIcon(upstreamIcon("qbittorrent-tray"));
+    // The main window alone is not enough: secondary dialogs and native
+    // modal windows can become the active top-level window, particularly on
+    // Linux desktops. Provide one native application-wide default icon so
+    // those windows do not replace our app identity with a blank icon.
+    const QIcon appIcon = upstreamIcon("qbittorrent-tray");
+    qApp->setWindowIcon(appIcon);
+    setWindowIcon(appIcon);
     resize(1280, 800);
 
     setupMainArea();

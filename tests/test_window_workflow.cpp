@@ -2,6 +2,10 @@
 #include "gui/MainWindow.h"
 
 #include <QAction>
+#include <QApplication>
+#include <QDialog>
+#include <QMessageBox>
+#include <QTimer>
 #include <QIcon>
 #include <QListWidget>
 #include <QMenu>
@@ -52,6 +56,55 @@ private slots:
         exit->trigger();
 
         QTRY_VERIFY(!window.isVisible());
+    }
+
+    void modalWindowsRetainTheNativeApplicationIcon()
+    {
+        MainWindow window;
+        window.show();
+        QTRY_VERIFY(window.isVisible());
+        // This is what Wayland uses to associate a Qt toplevel (including
+        // secondary dialogs) with an installed desktop-entry icon.
+        QCOMPARE(QApplication::desktopFileName(), QStringLiteral("qbittorrent-remote"));
+
+        // A parented Rename, Set Location, or Add Torrent dialog must retain
+        // the same native application icon as the main window. Also verify
+        // the QApplication fallback for a separate top-level dialog.
+        const QPixmap mainIcon = window.windowIcon().pixmap(QSize(32, 32));
+        QVERIFY2(!mainIcon.isNull(), "Main window app icon must render");
+        QVERIFY2(!qApp->windowIcon().pixmap(QSize(32, 32)).isNull(),
+                 "Application-wide default icon must render");
+        QDialog child(&window);
+        QVERIFY2(!child.windowIcon().pixmap(QSize(32, 32)).isNull(),
+                 "Parented dialog must inherit the application icon");
+        QDialog independent;
+        QVERIFY2(!independent.windowIcon().pixmap(QSize(32, 32)).isNull(),
+                 "Other top-level dialogs must use the application icon");
+
+        // Exercise the actual Help > About modal, not only a synthetic
+        // QDialog, and verify the Qt window icon on its real top-level window.
+        QAction *about = menuAction(window, QStringLiteral("Help"), QStringLiteral("About"));
+        QVERIFY2(about, "About action should exist");
+        bool observed = false;
+        bool renderedIcon = false;
+        QTimer::singleShot(0, &window, [&]() {
+            for (QWidget *top : QApplication::topLevelWidgets())
+            {
+                auto *dialog = qobject_cast<QMessageBox *>(top);
+                if (dialog && dialog->objectName() == QLatin1String("aboutDialog"))
+                {
+                    observed = true;
+                    renderedIcon = !dialog->windowIcon().pixmap(QSize(32, 32)).isNull();
+                    dialog->accept();
+                    break;
+                }
+            }
+        });
+        about->trigger();
+        QVERIFY2(observed, "Help > About should open its real modal dialog");
+        QVERIFY2(renderedIcon, "About dialog must retain the native application icon");
+        QVERIFY2(!window.windowIcon().pixmap(QSize(32, 32)).isNull(),
+                 "Closing the dialog must not clear the main window icon");
     }
 
     void bundledSvgIconsRenderOnToolbarAndSidebar()
