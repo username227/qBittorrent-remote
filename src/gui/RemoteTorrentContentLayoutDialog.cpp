@@ -146,6 +146,10 @@ void RemoteTorrentContentLayoutDialog::updateApply()
 {
     if (m_loading || m_pending)
         return;
+    // Marking an edited path in italics changes the model's FontRole;
+    // without blocking those signals, itemChanged recursively re-enters
+    // this slot and overflows the stack.
+    const QSignalBlocker block(m_model);
     bool modified = false;
     for (int row = 0; row < m_model->rowCount(); ++row)
     {
