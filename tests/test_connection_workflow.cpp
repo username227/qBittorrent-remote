@@ -146,7 +146,12 @@ public:
                             else if (!m_demoTorrents)
                                 response = R"({"rid":1,"full_update":true,"torrents":{},"server_state":{"dl_info_speed":0,"up_info_speed":0}})";
                             else if (rid == 0)
+                            {
                                 response = R"({"rid":1,"full_update":true,"torrents":{"0123456789abcdef0123456789abcdef01234567":{"name":"Demo Linux ISO","size":1048576,"progress":0.25,"state":"downloading","dlspeed":2048,"upspeed":1024,"category":"linux"}},"server_state":{"dl_info_speed":2048,"up_info_speed":1024}})";
+                                if (m_queueingEnabled)
+                                    response.replace(QByteArrayLiteral("\"up_info_speed\":1024}"),
+                                        QByteArrayLiteral("\"up_info_speed\":1024,\"queueing\":true}"));
+                            }
                             else if (rid == 1)
                                 response = R"({"rid":2,"full_update":false,"torrents":{"0123456789abcdef0123456789abcdef01234567":{"name":"Updated Linux ISO","progress":0.5,"dlspeed":4096}},"server_state":{"dl_info_speed":4096}})";
                             else if (m_keepDemoTorrents)
@@ -222,6 +227,7 @@ public:
     int logouts() const noexcept { return m_logouts; }
     int syncRequests() const noexcept { return m_syncRequests; }
     void enableTorrentSyncDemo() { m_demoTorrents = true; }
+    void enableQueueingDemo() { m_queueingEnabled = true; }
     void setExistingTorrentHash(const QString &hash) { m_existingTorrentHash = hash; }
     void setExistingTorrentPrivate(bool value) { m_existingTorrentPrivate = value; }
     void enableNativePresentationDemo() { m_demoNativePresentation = true; }
@@ -262,6 +268,7 @@ private:
     bool m_acceptBlank;
     int m_logouts = 0;
     bool m_demoTorrents = false;
+    bool m_queueingEnabled = false;
     QString m_existingTorrentHash;
     bool m_existingTorrentPrivate = false;
     bool m_demoNativePresentation = false;
@@ -1471,6 +1478,87 @@ private slots:
                  QStringLiteral("https://first.example/announce\nudp://second.example:80/announce"));
     }
 
+
+
+    void userQueueSubmenuSendsSelectedTorrentCommandsToAuthenticatedServer()
+    {
+        // The user opens the actual main window, logs into a disposable
+        // qBittorrent Web API server, selects a torrent and picks each
+        // visible item from the native Queue submenu.
+        DemoQbittorrentServer server(true);
+        server.enableTorrentSyncDemo();
+        server.enableQueueingDemo();
+        server.keepDemoTorrents();
+        QVERIFY(server.start());
+
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("profiles.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        QTRY_VERIFY(window.isVisible());
+        openConnectDialog(window, server.url());
+
+        auto *table = window.findChild<QTableView *>(QStringLiteral("torrentList"));
+        QVERIFY(table);
+        QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 1, 6000);
+        table->selectRow(0);
+        QVERIFY(table->selectionModel()->hasSelection());
+
+        const QString hash = QStringLiteral("0123456789abcdef0123456789abcdef01234567");
+        const struct {const char *name; const char *endpoint;} commands[] = {
+            {"torrentQueueTop", "/api/v2/torrents/topPrio"},
+            {"torrentQueueUp", "/api/v2/torrents/increasePrio"},
+            {"torrentQueueDown", "/api/v2/torrents/decreasePrio"},
+            {"torrentQueueBottom", "/api/v2/torrents/bottomPrio"}
+        };
+        for (const auto &command : commands)
+        {
+            QString error;
+            QTimer::singleShot(0, &window, [&]() {
+                auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+                if (!menu || menu->objectName() != QLatin1String("torrentListContextMenu"))
+                {
+                    error = QStringLiteral("The native torrent context menu did not open");
+                    if (menu) menu->close();
+                    return;
+                }
+                QAction *submenuEntry = nullptr;
+                for (QAction *action : menu->actions())
+                    if (action->objectName() == QLatin1String("torrentContextQueueMenu"))
+                        submenuEntry = action;
+                auto *queue = submenuEntry ? submenuEntry->menu() : nullptr;
+                QAction *action = nullptr;
+                if (queue)
+                    for (QAction *candidate : queue->actions())
+                        if (candidate->objectName() == QString::fromLatin1(command.name))
+                            action = candidate;
+                if (!action || !action->isEnabled())
+                    error = QStringLiteral("Queue submenu action missing or disabled: ")
+                        + QString::fromLatin1(command.name);
+                else
+                    action->trigger();
+                menu->close();
+            });
+
+            const QModelIndex selected = table->selectionModel()->selectedRows(0).value(0);
+            QVERIFY(selected.isValid());
+            QVERIFY(QMetaObject::invokeMethod(table, "customContextMenuRequested",
+                Qt::DirectConnection, Q_ARG(QPoint, table->visualRect(selected).center())));
+            QVERIFY2(error.isEmpty(), qPrintable(error));
+
+            const QByteArray endpoint(command.endpoint);
+            QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor(endpoint), 1, 6000);
+            const QUrlQuery request(QString::fromUtf8(server.lastCommandBody(endpoint)));
+            QCOMPARE(request.queryItemValue(QStringLiteral("hashes")), hash);
+        }
+
+        // Verify command routing through the authenticated server, not
+        // qBittorrent scheduling outcomes; the latter requires a separate
+        // real-world saturated-queue test and is intentionally deferred.
+        QVERIFY(table->selectionModel()->hasSelection());
+    }
 
     void userForceActionsReachSelectedAuthenticatedRemoteServer()
     {

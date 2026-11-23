@@ -874,6 +874,18 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
         case ServerPane::TorrentContextAction::Remove:
             m_ui->actionDelete->trigger();
             break;
+        case ServerPane::TorrentContextAction::QueueTop:
+            m_ui->actionTopQueuePos->trigger();
+            break;
+        case ServerPane::TorrentContextAction::QueueUp:
+            m_ui->actionIncreaseQueuePos->trigger();
+            break;
+        case ServerPane::TorrentContextAction::QueueDown:
+            m_ui->actionDecreaseQueuePos->trigger();
+            break;
+        case ServerPane::TorrentContextAction::QueueBottom:
+            m_ui->actionBottomQueuePos->trigger();
+            break;
         }
     });
     connect(session, &Remote::RemoteSession::torrentDetailsReceived,

@@ -496,6 +496,43 @@ void ServerPane::showTorrentContextMenu(const QPoint &position)
     });
     menu.addSeparator();
 
+    // Original qBittorrent shows Queue only when server-side queueing is
+    // enabled and the selection includes at least one incomplete torrent.
+    // /sync/maindata reports queueing in server_state, and progress on each
+    // torrent; never infer an enabled queueing system from local preferences.
+    const bool hasIncompleteTorrent = std::any_of(torrents.cbegin(), torrents.cend(),
+        [](const SelectedTorrent &t) {
+            const QJsonValue progress = t.record.value(QStringLiteral("progress"));
+            return progress.isDouble() && progress.toDouble() < 1.0;
+        });
+    if (m_serverState.value(QStringLiteral("queueing")).toBool() && hasIncompleteTorrent)
+    {
+        QMenu *queue = menu.addMenu(icon("queued"), tr("Queue"));
+        queue->setObjectName(QStringLiteral("torrentContextQueueMenu"));
+        queue->menuAction()->setObjectName(QStringLiteral("torrentContextQueueMenu"));
+        queue->menuAction()->setIconVisibleInMenu(true);
+
+        const auto queueAction = [this, queue, &icon](
+            const QString &title, const char *objectName,
+            const char *iconName, TorrentContextAction command) {
+            QAction *action = queue->addAction(icon(iconName), title);
+            action->setObjectName(QString::fromLatin1(objectName));
+            action->setIconVisibleInMenu(true);
+            connect(action, &QAction::triggered, this, [this, command]() {
+                emit torrentContextActionRequested(command);
+            });
+        };
+        queueAction(tr("Move to top"), "torrentQueueTop", "go-top",
+                    TorrentContextAction::QueueTop);
+        queueAction(tr("Move up"), "torrentQueueUp", "go-up",
+                    TorrentContextAction::QueueUp);
+        queueAction(tr("Move down"), "torrentQueueDown", "go-down",
+                    TorrentContextAction::QueueDown);
+        queueAction(tr("Move to bottom"), "torrentQueueBottom", "go-bottom",
+                    TorrentContextAction::QueueBottom);
+        menu.addSeparator();
+    }
+
     QMenu *copy = menu.addMenu(icon("edit-copy"), tr("Copy"));
     copy->menuAction()->setIconVisibleInMenu(true);
     copy->setObjectName(QStringLiteral("torrentContextCopyMenu"));
