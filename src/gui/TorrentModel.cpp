@@ -210,6 +210,27 @@ QVariant TorrentModel::data(const QModelIndex &index, int role) const
 
     if (role != Qt::DisplayRole && role != Qt::ToolTipRole)
         return {};
+
+    // As in upstream TransferListModel::displayValue(TR_SEEDS / TR_PEERS):
+    // first show connected peers (num_seeds / num_leechs), then the total
+    // swarm reported by the server (num_complete / num_incomplete).
+    // UserRole above remains the numeric connected count for proper sorting.
+    if (col == 4 || col == 5)
+    {
+        const QJsonValue total = record.value(col == 4
+            ? QStringLiteral("num_complete") : QStringLiteral("num_incomplete"));
+        if (!value.isDouble() || !total.isDouble())
+            return QStringLiteral("—"); // Never pretend an unknown total is zero.
+        const qint64 connected = static_cast<qint64>(value.toDouble());
+        const qint64 totalCount = static_cast<qint64>(total.toDouble());
+        const QString state = record.value(QStringLiteral("state")).toString();
+        const bool hideZeros = m_hideZeroValues && (m_hideZeroMode == 0
+            || state.startsWith(QLatin1String("stopped")));
+        if (role == Qt::DisplayRole && hideZeros && connected == 0 && totalCount == 0)
+            return QString();
+        return QStringLiteral("%1 (%2)").arg(QString::number(connected),
+                                              QString::number(totalCount));
+    }
     if (value.isUndefined() || value.isNull())
         return QStringLiteral("—");
     // Native "Hide zero and infinity values" changes presentation only.
