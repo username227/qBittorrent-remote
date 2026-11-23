@@ -337,6 +337,37 @@ FilterSidebar::FilterSidebar(QWidget *parent)
     updateCounts({});
 }
 
+void FilterSidebar::setHideZeroStatusFilters(bool hide)
+{
+    if (m_hideZeroStatusFilters == hide)
+        return;
+    m_hideZeroStatusFilters = hide;
+    applyStatusVisibility();
+}
+
+void FilterSidebar::applyStatusVisibility()
+{
+    if (!m_status)
+        return;
+    bool resetSelection = false;
+    int visible = 0;
+    for (int i = 0; i < m_status->count(); ++i)
+    {
+        QListWidgetItem *item = m_status->item(i);
+        const QString key = item->data(Qt::UserRole).toString();
+        const bool hidden = m_hideZeroStatusFilters && key != QLatin1String("all")
+            && m_statusCounts.value(key) == 0;
+        resetSelection |= hidden && m_status->currentItem() == item;
+        item->setHidden(hidden);
+        visible += !hidden;
+    }
+    if (resetSelection)
+        m_status->setCurrentRow(0);
+    const int rowHeight = qMax(m_status->fontMetrics().height() + 4,
+                               m_status->iconSize().height() + 4);
+    m_status->setFixedHeight(rowHeight * visible + 2 * m_status->frameWidth());
+}
+
 void FilterSidebar::refreshFontMetrics()
 {
     for (auto *list : {m_status, m_categories, m_tags, m_trackers})
@@ -344,7 +375,10 @@ void FilterSidebar::refreshFontMetrics()
         const int rowHeight = qMax(list->fontMetrics().height() + 4,
                                    list->iconSize().height() + 4);
         list->doItemsLayout();
-        list->setFixedHeight(rowHeight * list->count() + 2 * list->frameWidth());
+        int visible = 0;
+        for (int row = 0; row < list->count(); ++row)
+            visible += !list->item(row)->isHidden();
+        list->setFixedHeight(rowHeight * visible + 2 * list->frameWidth());
     }
     resizeDirectoryTree();
 }
@@ -373,6 +407,10 @@ void FilterSidebar::updateCounts(const QHash<QString, QJsonObject> &torrents,
             count += statusMatches(key, torrent);
         statusRows.append({key, tr(status.label), status.icon, count});
     }
+
+    m_statusCounts.clear();
+    for (const Entry &entry : std::as_const(statusRows))
+        m_statusCounts.insert(entry.key, entry.count);
 
     QSet<QString> categoryNames = categories;
     QSet<QString> tagNames = tags;
@@ -471,6 +509,7 @@ void FilterSidebar::updateCounts(const QHash<QString, QJsonObject> &torrents,
 
     bool lostSelection = false;
     lostSelection |= updateList(m_status, statusRows);
+    applyStatusVisibility();
     lostSelection |= updateList(m_categories, categoryRows);
     lostSelection |= updateList(m_tags, tagRows);
     lostSelection |= updateList(m_trackers, trackerRows);

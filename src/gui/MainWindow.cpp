@@ -1077,11 +1077,14 @@ void MainWindow::applyLocalBehaviorPreferences()
     const int mode = m_settings->value(
         QStringLiteral("Preferences/Behavior/HideZeroMode"), 0).toInt();
 
-    const auto apply = [alternating, hideZero, mode](ServerPane *pane) {
+    const bool hideZeroStatus = m_settings->value(
+        QStringLiteral("Preferences/Behavior/HideZeroStatusFilters"), false).toBool();
+    const auto apply = [alternating, hideZero, mode, hideZeroStatus](ServerPane *pane) {
         if (!pane)
             return;
         pane->table()->setAlternatingRowColors(alternating);
         pane->model()->setHideZeroValues(hideZero, mode);
+        pane->sidebar()->setHideZeroStatusFilters(hideZeroStatus);
     };
     apply(m_emptyPane);
     for (const auto &connection : m_connections)
@@ -1216,6 +1219,8 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
     connection->pane->model()->setHideZeroValues(m_settings->value(
         QStringLiteral("Preferences/Behavior/HideZero"), false).toBool(),
         m_settings->value(QStringLiteral("Preferences/Behavior/HideZeroMode"), 0).toInt());
+    connection->pane->sidebar()->setHideZeroStatusFilters(m_settings->value(
+        QStringLiteral("Preferences/Behavior/HideZeroStatusFilters"), false).toBool());
     connection->session = new Remote::RemoteSession(this);
     auto *session = connection->session;
     m_connections.append(connection);

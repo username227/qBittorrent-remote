@@ -260,6 +260,7 @@ void RemotePreferencesDialog::loadLocalBehaviorControls()
     unlock(m_ui->actionTorrentDlOnDblClBox);
     unlock(m_ui->actionTorrentFnOnDblClBox);
     unlock(m_ui->checkBoxFreeDiskSpaceStatusBar);
+    unlock(m_ui->checkBoxHideZeroStatusFilters);
 
     m_ui->checkAltRowColors->setChecked(m_settings.value(
         QStringLiteral("Preferences/Behavior/AlternatingRows"), true).toBool());
@@ -296,6 +297,8 @@ void RemotePreferencesDialog::loadLocalBehaviorControls()
     loadAction(m_ui->actionTorrentFnOnDblClBox,
         QStringLiteral("Preferences/Behavior/DoubleClickCompleted"),
         QStringLiteral("folder"));
+    m_ui->checkBoxHideZeroStatusFilters->setChecked(m_settings.value(
+        QStringLiteral("Preferences/Behavior/HideZeroStatusFilters"), false).toBool());
     m_ui->checkBoxFreeDiskSpaceStatusBar->setChecked(m_settings.value(
         QStringLiteral("Preferences/Behavior/ShowServerFreeSpace"), false).toBool());
     m_ui->checkBoxFreeDiskSpaceStatusBar->setToolTip(tr(
@@ -318,6 +321,8 @@ void RemotePreferencesDialog::loadLocalBehaviorControls()
         connect(box, QOverload<int>::of(&QComboBox::currentIndexChanged),
                 this, [dirty](int) { dirty(); });
     connect(m_ui->checkBoxFreeDiskSpaceStatusBar, &QCheckBox::toggled,
+            this, dirty);
+    connect(m_ui->checkBoxHideZeroStatusFilters, &QCheckBox::toggled,
             this, dirty);
 }
 
@@ -712,6 +717,8 @@ bool RemotePreferencesDialog::applyChanges()
             m_ui->actionTorrentFnOnDblClBox->currentData().toString());
         m_settings.setValue(QStringLiteral("Preferences/Behavior/ShowServerFreeSpace"),
             m_ui->checkBoxFreeDiskSpaceStatusBar->isChecked());
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/HideZeroStatusFilters"),
+            m_ui->checkBoxHideZeroStatusFilters->isChecked());
         m_behaviorDirty = false;
         emit localBehaviorApplied();
     }

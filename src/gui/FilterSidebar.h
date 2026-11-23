@@ -24,6 +24,7 @@ public:
     explicit FilterSidebar(QWidget *parent = nullptr);
 
     void refreshFontMetrics();
+    void setHideZeroStatusFilters(bool hide);
     void updateCounts(const QHash<QString, QJsonObject> &torrents,
                       const QSet<QString> &categories = {},
                       const QSet<QString> &tags = {},
@@ -58,6 +59,9 @@ private:
     QSet<QString> m_expandedDirectories;
     QString m_selectedDirectory;
     bool m_includeSubfolders = false;
+    bool m_hideZeroStatusFilters = false;
+    QHash<QString, int> m_statusCounts;
+    void applyStatusVisibility();
     bool m_expansionInitialized = false;
     QHash<QString, QSet<QString>> m_trackerHosts;
     QSet<QString> m_torrentsWithTrackers;
