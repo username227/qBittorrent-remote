@@ -812,6 +812,46 @@ void RemoteSession::setTorrentAutoManagement(const QStringList &hashes, bool ena
                    tr("Automatic Torrent Management"));
 }
 
+void RemoteSession::renameTorrentContent(const QString &hash, const QString &oldPath,
+                                         const QString &newPath)
+{
+    static const QRegularExpression validHash(
+        QStringLiteral("^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$"));
+    const auto validRelative = [](const QString &path) {
+        if (path.isEmpty() || path.startsWith(QLatin1Char('/'))
+            || path.contains(QLatin1Char('\\'))
+            || path.contains(QLatin1Char('\r'))
+            || path.contains(QLatin1Char('\n')))
+            return false;
+        const QStringList parts = path.split(QLatin1Char('/'));
+        return std::all_of(parts.cbegin(), parts.cend(), [](const QString &part) {
+            return !part.isEmpty() && part != QLatin1String(".")
+                && part != QLatin1String("..");
+        });
+    };
+    if (!validHash.match(hash).hasMatch() || !validRelative(oldPath)
+        || !validRelative(newPath))
+    {
+        emit operationFailed(tr("Rename torrent file"), tr("Invalid torrent or file path."));
+        emit torrentContentRenameFinished(hash, oldPath, false, tr("Invalid file path."));
+        return;
+    }
+    QUrlQuery form;
+    form.addQueryItem(QStringLiteral("hash"), hash);
+    form.addQueryItem(QStringLiteral("oldPath"), oldPath);
+    form.addQueryItem(QStringLiteral("newPath"), newPath);
+    queueOperation(QStringLiteral("api/v2/torrents/renameFile"),
+        form.toString(QUrl::FullyEncoded).toUtf8(),
+        QByteArrayLiteral("application/x-www-form-urlencoded"),
+        tr("Rename torrent file"), true,
+        [this, hash, oldPath]() {
+            emit torrentContentRenameFinished(hash, oldPath, true, {});
+        },
+        [this, hash, oldPath](const QString &reason) {
+            emit torrentContentRenameFinished(hash, oldPath, false, reason);
+        });
+}
+
 void RemoteSession::setSuperSeeding(const QStringList &hashes, bool enabled)
 {
     if (!validSelectedTorrentHashes(hashes))

@@ -7,6 +7,7 @@
 #include "gui/RemotePreferencesDialog.h"
 #include "gui/RemoteAddTorrentDialog.h"
 #include "gui/RemoteTrackerEntriesDialog.h"
+#include "gui/RemoteTorrentContentLayoutDialog.h"
 #include "gui/RemoteFileSystemPathComboEdit.h"
 #include "api/RemoteSession.h"
 #include "api/TorrentMetadataReader.h"
@@ -1287,6 +1288,25 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
             break;
         }
         case ServerPane::TorrentContextAction::ManageContent:
+        {
+            const QStringList hashes = selectedTorrentHashes();
+            if (hashes.size() != 1)
+                break;
+            const QString hash = hashes.first();
+            const auto selectionValid = [this, connection, hash]() {
+                return containsConnection(connection) && connection->connected
+                    && activeConnection() == connection
+                    && selectedTorrentHashes() == QStringList{hash}
+                    && connection->pane->model()->torrents().contains(hash);
+            };
+            if (!selectionValid())
+                break;
+            RemoteTorrentContentLayoutDialog dialog(
+                connection->session, hash, selectionValid, this);
+            trackDialogGeometry(dialog, QStringLiteral("ManageTorrentContent"));
+            dialog.exec();
+            break;
+        }
         case ServerPane::TorrentContextAction::TorrentOptions:
         case ServerPane::TorrentContextAction::ExportTorrent:
         case ServerPane::TorrentContextAction::SuperSeeding:

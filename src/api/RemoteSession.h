@@ -93,6 +93,8 @@ public:
     void setTorrentAutoManagement(const QStringList &hashes, bool enabled);
     void setSuperSeeding(const QStringList &hashes, bool enabled);
     void toggleTorrentMode(const QStringList &hashes, bool sequential);
+    void renameTorrentContent(const QString &hash, const QString &oldPath,
+                              const QString &newPath);
     void addTorrentUrls(const QString &urls);
     void addTorrentUrls(const QString &urls, const AddTorrentOptions &options);
     void addTorrentFile(const QString &filename, const QByteArray &contents);
@@ -124,6 +126,8 @@ signals:
     // Identifies the exact edit for bulk progress and rejected requests.
     void torrentTrackerEditFinished(const QString &hash, const QString &oldUrl,
                                     bool success, const QString &reason);
+    void torrentContentRenameFinished(const QString &hash, const QString &oldPath,
+                                      bool success, const QString &reason);
     void torrentDetailsFailed(const QString &hash, int tab, const QString &reason);
 
 private:
