@@ -495,6 +495,12 @@ void ServerPane::showTorrentContextMenu(const QPoint &position)
         emit torrentContextActionRequested(TorrentContextAction::ForceReannounce);
     });
     menu.addSeparator();
+    QAction *openFolder = menu.addAction(icon("directory"), tr("Open destination folder"));
+    openFolder->setObjectName(QStringLiteral("torrentContextOpenDestinationFolder"));
+    openFolder->setIconVisibleInMenu(true);
+    connect(openFolder, &QAction::triggered, this, [this]() {
+        emit torrentContextActionRequested(TorrentContextAction::OpenDestinationFolder);
+    });
 
     // Original qBittorrent shows Queue only when server-side queueing is
     // enabled and the selection includes at least one incomplete torrent.
@@ -507,6 +513,7 @@ void ServerPane::showTorrentContextMenu(const QPoint &position)
         });
     if (m_serverState.value(QStringLiteral("queueing")).toBool() && hasIncompleteTorrent)
     {
+        menu.addSeparator();
         QMenu *queue = menu.addMenu(icon("queued"), tr("Queue"));
         queue->setObjectName(QStringLiteral("torrentContextQueueMenu"));
         queue->menuAction()->setObjectName(QStringLiteral("torrentContextQueueMenu"));
@@ -530,7 +537,6 @@ void ServerPane::showTorrentContextMenu(const QPoint &position)
                     TorrentContextAction::QueueDown);
         queueAction(tr("Move to bottom"), "torrentQueueBottom", "go-bottom",
                     TorrentContextAction::QueueBottom);
-        menu.addSeparator();
     }
 
     QMenu *copy = menu.addMenu(icon("edit-copy"), tr("Copy"));
