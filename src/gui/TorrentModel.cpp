@@ -181,12 +181,29 @@ QVariant TorrentModel::data(const QModelIndex &index, int role) const
     {
         const QString state = record.value(QStringLiteral("state")).toString();
         const bool dark = QGuiApplication::palette().color(QPalette::Base).lightness() < 128;
+
+        // Approximate upstream qBittorrent's native light/dark torrent-state
+        // colors. Explicit state groups prevent stalled, queued, or stopped
+        // torrents from inheriting active download/upload colors.
         if (state == QLatin1String("error") || state == QLatin1String("missingFiles"))
-            return QColor(dark ? QStringLiteral("#ff8d80") : QStringLiteral("#ad2929"));
-        if (state.contains(QLatin1String("DL")) || state.contains(QLatin1String("downloading"), Qt::CaseInsensitive))
-            return QColor(dark ? QStringLiteral("#82b5ff") : QStringLiteral("#215ba5"));
-        if (state.contains(QLatin1String("UP")) || state.contains(QLatin1String("uploading"), Qt::CaseInsensitive))
-            return QColor(dark ? QStringLiteral("#8ad9a1") : QStringLiteral("#277a48"));
+            return QColor(QStringLiteral("#ff0000"));
+        if (state == QLatin1String("downloading") || state == QLatin1String("forcedDL")
+            || state == QLatin1String("metaDL"))
+            return QColor(dark ? QStringLiteral("#32cd32") : QStringLiteral("#228b22"));
+        if (state == QLatin1String("uploading") || state == QLatin1String("forcedUP"))
+            return QColor(dark ? QStringLiteral("#63b8ff") : QStringLiteral("#4169e1"));
+        if (state == QLatin1String("pausedDL") || state == QLatin1String("stoppedDL"))
+            return QColor(QStringLiteral("#fa8072"));
+        if (state == QLatin1String("pausedUP") || state == QLatin1String("stoppedUP"))
+            return QColor(dark ? QStringLiteral("#4f94cd") : QStringLiteral("#00008b"));
+        if (state == QLatin1String("queuedDL") || state == QLatin1String("queuedUP")
+            || state == QLatin1String("checkingDL") || state == QLatin1String("checkingUP")
+            || state == QLatin1String("checkingResumeData") || state == QLatin1String("moving"))
+            return QColor(dark ? QStringLiteral("#00cdcd") : QStringLiteral("#008080"));
+        if (state == QLatin1String("stalledDL") || state == QLatin1String("stalledUP")
+            || state == QLatin1String("allocating"))
+            return dark ? QColor(QStringLiteral("#cccccc"))
+                        : QGuiApplication::palette().color(QPalette::Text);
     }
 
     if (role != Qt::DisplayRole && role != Qt::ToolTipRole)
