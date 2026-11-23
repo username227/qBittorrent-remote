@@ -2102,6 +2102,7 @@ private slots:
             QString wanted;
             QString problem;
             int dialogs = 0;
+            int firstWidth = 0;
             bool eventFilter(QObject *obj, QEvent *event) override {
                 if (event->type() != QEvent::Show)
                     return QObject::eventFilter(obj, event);
@@ -2109,13 +2110,28 @@ private slots:
                 if (!dialog || dialog->objectName() != QLatin1String("renameTorrentDialog"))
                     return QObject::eventFilter(obj, event);
                 ++dialogs;
-                QTimer::singleShot(0, dialog, [this, dialog]() {
+                const int pass = dialogs;
+                QTimer::singleShot(0, dialog, [this, dialog, pass]() {
                     if (dialog->windowTitle() != QStringLiteral("Rename")
-                        || dialog->labelText() != QStringLiteral("New name:")
-                        || dialog->textValue() != initial)
-                        problem = QStringLiteral("Dialog does not reflect the selected torrent");
-                    dialog->setTextValue(wanted);
-                    dialog->accept();
+                        || dialog->labelText() != QStringLiteral("New name:"))
+                        problem = QStringLiteral("Rename dialog heading or label is incorrect");
+                    if (pass == 1)
+                    {
+                        if (dialog->textValue() != initial || dialog->width() < 480)
+                            problem = QStringLiteral("Rename dialog has wrong name or default size");
+                        dialog->resize(710, 185);
+                        firstWidth = dialog->width();
+                        dialog->setTextValue(wanted);
+                        dialog->accept();
+                    }
+                    else
+                    {
+                        // The next invocation must restore the person's
+                        // resized dialog. Cancel must not issue another POST.
+                        if (dialog->width() != firstWidth)
+                            problem = QStringLiteral("Resized rename geometry was not restored");
+                        dialog->reject();
+                    }
                 });
                 return QObject::eventFilter(obj, event);
             }
@@ -2156,6 +2172,40 @@ private slots:
         QCOMPARE(form.queryItemValue(QStringLiteral("hash")),
                  QStringLiteral("0123456789abcdef0123456789abcdef01234567"));
         QCOMPARE(form.queryItemValue(QStringLiteral("name")), renamed);
+        QVERIFY(driver.firstWidth >= 700);
+        QVERIFY(!settings.value(QStringLiteral("Layout/Dialogs/RenameTorrent"))
+                     .toByteArray().isEmpty());
+
+        // Reopen the same real menu/dialog to verify geometry is restored,
+        // then cancel: this must not send a second rename operation.
+        QTimer::singleShot(0, &window, [&]() {
+            auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+            if (!menu)
+            {
+                error = QStringLiteral("Rename menu did not reopen");
+                return;
+            }
+            QAction *rename = nullptr;
+            for (QAction *candidate : menu->actions())
+                if (candidate->objectName() == QLatin1String("torrentContextRename"))
+                    rename = candidate;
+            if (!rename)
+                error = QStringLiteral("Rename item absent on reopen");
+            else
+                rename->trigger();
+            menu->close();
+        });
+        QApplication::instance()->installEventFilter(&driver);
+        const QModelIndex selectedAgain = table->selectionModel()->selectedRows(0).value(0);
+        QVERIFY(selectedAgain.isValid());
+        QVERIFY(QMetaObject::invokeMethod(table, "customContextMenuRequested",
+            Qt::DirectConnection, Q_ARG(QPoint, table->visualRect(selectedAgain).center())));
+        QApplication::instance()->removeEventFilter(&driver);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QVERIFY2(driver.problem.isEmpty(), qPrintable(driver.problem));
+        QCOMPARE(driver.dialogs, 2);
+        QCOMPARE(server.commandsFor("/api/v2/torrents/rename"), 1);
+
         // Changing a display name must never rename the remote files,
         // move the save path, or change the selected torrent's queue slot.
         QCOMPARE(server.commandsFor("/api/v2/torrents/setLocation"), 0);
