@@ -16,6 +16,7 @@
 #include <QCryptographicHash>
 #include <QJsonArray>
 #include <QSettings>
+#include <QShortcut>
 #include <QTreeWidget>
 #include <QTableWidget>
 #include <QHeaderView>
@@ -154,6 +155,18 @@ ServerPane::ServerPane(QWidget *parent) : QWidget(parent)
     m_table->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_table, &QWidget::customContextMenuRequested,
             this, &ServerPane::showTorrentContextMenu);
+
+    // F2 matches the native torrent-list Rename command, but only while
+    // focus is in this server's torrent table (never in toolbar search or
+    // another server tab). Reuse the exact context-menu action signal.
+    auto *renameShortcut = new QShortcut(QKeySequence(Qt::Key_F2), m_table);
+    renameShortcut->setObjectName(QStringLiteral("torrentRenameShortcut"));
+    renameShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(renameShortcut, &QShortcut::activated, this, [this]() {
+        if (m_table->selectionModel()
+            && m_table->selectionModel()->selectedRows(0).size() == 1)
+            emit torrentContextActionRequested(TorrentContextAction::Rename);
+    });
 
     for (int col = 13; col < m_model->columnCount(); ++col)
         m_table->hideColumn(col);
