@@ -231,6 +231,24 @@ void RemotePreferencesDialog::disableUnimplementedControls()
         QWidget *page = m_ui->tabOption->widget(pageIndex);
         for (QWidget *widget : page->findChildren<QWidget *>())
         {
+            // QComboBox owns a popup QAbstractItemView. Disabling its view
+            // separately leaves every popup item visually disabled even after
+            // we re-enable the combo in Behavior. Treat the combo as one
+            // control and never disable its internal widgets independently.
+            bool insideComboBox = false;
+            for (QWidget *ancestor = widget->parentWidget();
+                 ancestor && ancestor != page;
+                 ancestor = ancestor->parentWidget())
+            {
+                if (qobject_cast<QComboBox *>(ancestor))
+                {
+                    insideComboBox = true;
+                    break;
+                }
+            }
+            if (insideComboBox)
+                continue;
+
             if (auto *group = qobject_cast<QGroupBox *>(widget))
             {
                 if (group->isCheckable())
@@ -255,6 +273,10 @@ void RemotePreferencesDialog::loadLocalBehaviorControls()
     const auto unlock = [](QWidget *widget, const QString &tooltip = {}) {
         widget->setEnabled(true);
         widget->setToolTip(tooltip);
+        // Also repair popups disabled by earlier initialization; enabling a
+        // QComboBox alone does not undo an explicit disable on its view.
+        if (auto *combo = qobject_cast<QComboBox *>(widget))
+            combo->view()->setEnabled(true);
     };
     unlock(m_ui->checkAltRowColors);
     unlock(m_ui->checkHideZero);
