@@ -8,11 +8,14 @@
 #include "gui/RemoteAddTorrentDialog.h"
 #include "api/RemoteSession.h"
 #include "api/TorrentMetadataReader.h"
+#include "api/PathMappingStore.h"
 #include "gui/upstream/hidabletabwidget.h"
 
 #include "ui_mainwindow.h"
 
 #include <QDialog>
+#include <QDesktopServices>
+#include <QDir>
 #include <QCloseEvent>
 #include <QGuiApplication>
 #include <QScreen>
@@ -356,6 +359,11 @@ void MainWindow::setupActions()
         action->setEnabled(false);
 
     m_ui->actionLock->setVisible(false);
+
+    // The original toolbar action and the native context menu share the same
+    // selected-server behavior. Never open raw remote POSIX paths locally.
+    connect(m_ui->actionOpenDestinationFolder, &QAction::triggered,
+            this, [this]() { openSelectedTorrentDestinations(); });
 
     // Keep the relevant original menus; remove local-engine-only and
     // otherwise unimplemented actions until the remote features exist.
@@ -738,6 +746,71 @@ void MainWindow::setupActions()
     });
 }
 
+
+void MainWindow::openSelectedTorrentDestinations()
+{
+    const auto connection = activeConnection();
+    if (!connection || !connection->connected)
+        return;
+    const QStringList hashes = selectedTorrentHashes();
+    if (hashes.isEmpty())
+        return;
+
+    const Remote::PathMappingStore store(*m_settings);
+    const auto mappings = store.mappings(connection->profile.id);
+    QSet<QString> opened;
+    QStringList unavailable;
+
+    // A qBittorrent remote path is not directly accessible on the desktop.
+    // Open only an existing local mount covered by this server's mappings.
+    for (const QString &hash : hashes)
+    {
+        const QJsonObject record = connection->pane->model()->torrents().value(hash);
+        if (record.isEmpty())
+            continue;
+
+        const QString content = record.value(QStringLiteral("content_path")).toString();
+        const QString save = record.value(QStringLiteral("save_path")).toString();
+        QStringList candidates;
+        if (!content.isEmpty()) candidates.append(content);
+        if (!save.isEmpty() && save != content) candidates.append(save);
+
+        QString destination;
+        for (const QString &remote : candidates)
+        {
+            const QString local = Remote::PathMappingStore::toLocal(remote, mappings);
+            if (local.isEmpty())
+                continue;
+            const QFileInfo localInfo(local);
+            if (localInfo.isDir())
+                destination = localInfo.absoluteFilePath();
+            else if (localInfo.isFile())
+                destination = localInfo.absolutePath(); // Reveal single-file location.
+            if (!destination.isEmpty())
+                break;
+        }
+
+        if (destination.isEmpty())
+        {
+            unavailable.append(record.value(QStringLiteral("name")).toString(hash));
+            continue;
+        }
+        const QString normalized = QDir::cleanPath(destination);
+        if (opened.contains(normalized))
+            continue;
+        opened.insert(normalized);
+        if (!QDesktopServices::openUrl(QUrl::fromLocalFile(normalized)))
+            unavailable.append(record.value(QStringLiteral("name")).toString(hash));
+    }
+
+    if (!unavailable.isEmpty())
+        QMessageBox::information(this, tr("Cannot open destination folder"),
+            tr("No accessible local mapped folder was found for:\n%1\n\n"
+               "Check the mounted NAS share and its mapping under "
+               "Preferences → Servers. The remote torrent location was not changed.")
+                .arg(unavailable.join(QLatin1Char('\n'))));
+}
+
 QStringList MainWindow::selectedTorrentHashes() const
 {
     const auto server = activeConnection();
@@ -772,6 +845,7 @@ void MainWindow::updateTorrentActionState()
 
     m_ui->actionOpen->setEnabled(ready);
     m_ui->actionDownloadFromURL->setEnabled(ready);
+    m_ui->actionOpenDestinationFolder->setEnabled(selected);
     for (QAction *action : {
         m_ui->actionDelete, m_ui->actionStart, m_ui->actionStop,
         m_ui->actionTopQueuePos, m_ui->actionIncreaseQueuePos,
@@ -976,6 +1050,9 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
             break;
         case ServerPane::TorrentContextAction::QueueBottom:
             m_ui->actionBottomQueuePos->trigger();
+            break;
+        case ServerPane::TorrentContextAction::OpenDestinationFolder:
+            m_ui->actionOpenDestinationFolder->trigger();
             break;
         }
     });

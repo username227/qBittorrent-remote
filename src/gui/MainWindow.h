@@ -51,6 +51,7 @@ private:
     void updateActiveUi();
     void updateTorrentActionState();
     QStringList selectedTorrentHashes() const;
+    void openSelectedTorrentDestinations();
 
     std::unique_ptr<Ui::MainWindow> m_ui;
     QSettings m_defaultSettings;

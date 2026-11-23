@@ -8,9 +8,12 @@
 #include "api/CredentialVault.h"
 #include "api/RemoteSession.h"
 #include "api/TorrentMetadataReader.h"
+#include "api/PathMappingStore.h"
 
 #include <QAction>
 #include <QApplication>
+#include <QDesktopServices>
+#include <QDir>
 #include <QEvent>
 #include <QDateTime>
 #include <QCheckBox>
@@ -150,6 +153,13 @@ public:
                             else if (rid == 0)
                             {
                                 response = R"({"rid":1,"full_update":true,"torrents":{"0123456789abcdef0123456789abcdef01234567":{"name":"Demo Linux ISO","size":1048576,"progress":0.25,"state":"downloading","dlspeed":2048,"upspeed":1024,"category":"linux"}},"server_state":{"dl_info_speed":2048,"up_info_speed":1024}})";
+                                if (m_mappedFolderDemo)
+                                    response.replace(
+                                        QByteArrayLiteral("\"state\":\"downloading\",\"dlspeed\""),
+                                        QByteArrayLiteral("\"state\":\"downloading\","
+                                            "\"save_path\":\"/share/NAS/Music\","
+                                            "\"content_path\":\"/share/NAS/Music/recording.flac\","
+                                            "\"dlspeed\""));
                                 if (m_queueingEnabled)
                                     response.replace(QByteArrayLiteral("\"up_info_speed\":1024}"),
                                         QByteArrayLiteral("\"up_info_speed\":1024,\"queueing\":true}"));
@@ -246,6 +256,7 @@ public:
         return m_detailRequests.isEmpty() ? QByteArray() : m_detailRequests.last();
     }
     void keepDemoTorrents() { m_keepDemoTorrents = true; }
+    void enableMappedFolderDemo() { m_mappedFolderDemo = true; }
     void rejectTorrentCommands() { m_rejectCommands = true; }
     int commandsFor(const QByteArray &endpoint) const
     {
@@ -271,6 +282,7 @@ private:
     int m_logouts = 0;
     bool m_demoTorrents = false;
     bool m_queueingEnabled = false;
+    bool m_mappedFolderDemo = false;
     QString m_existingTorrentHash;
     bool m_existingTorrentPrivate = false;
     bool m_demoNativePresentation = false;
@@ -537,6 +549,12 @@ private:
 class ConnectionWorkflowTest final : public QObject
 {
     Q_OBJECT
+
+private:
+    QList<QUrl> m_fileOpenRequests;
+
+private slots:
+    void recordFileOpenRequest(const QUrl &url) { m_fileOpenRequests.append(url); }
 
 private:
     void openConnectDialog(MainWindow &window, const QString &url,
@@ -1660,6 +1678,85 @@ private slots:
     }
 
 
+
+
+    void userOpensMappedRemoteTorrentLocationInDesktopFileManager()
+    {
+        DemoQbittorrentServer server(true);
+        server.enableTorrentSyncDemo();
+        server.enableMappedFolderDemo();
+        server.keepDemoTorrents();
+        QVERIFY(server.start());
+
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        const QString root = temp.filePath(QStringLiteral("NAS"));
+        const QString music = temp.filePath(QStringLiteral("NAS/Music"));
+        QVERIFY(QDir().mkpath(music));
+        QFile localFile(QDir(music).filePath(QStringLiteral("recording.flac")));
+        QVERIFY(localFile.open(QIODevice::WriteOnly));
+        QCOMPARE(localFile.write(QByteArrayLiteral("metadata-free test file")), qint64(23));
+        localFile.close();
+
+        QSettings settings(temp.filePath(QStringLiteral("profiles.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        QTRY_VERIFY(window.isVisible());
+        openConnectDialog(window, server.url());
+
+        auto *table = window.findChild<QTableView *>(QStringLiteral("torrentList"));
+        QVERIFY(table);
+        QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 1, 6000);
+        const auto saved = Remote::ProfileStore(settings).profiles();
+        QCOMPARE(saved.size(), 1);
+        Remote::PathMappingStore mapping(settings);
+        QVERIFY(mapping.replace(saved.first().id, {{root, QStringLiteral("/share/NAS")}}));
+
+        table->selectRow(0);
+        const QModelIndex row = table->selectionModel()->selectedRows(0).value(0);
+        QVERIFY(row.isValid());
+
+        // Intercept the actual desktop file-open request without spawning a
+        // local file manager during CI. The user action and mapping remain real.
+        struct RestoreDesktopOpen {
+            ~RestoreDesktopOpen() { QDesktopServices::unsetUrlHandler(QStringLiteral("file")); }
+        } restoreHandler;
+        m_fileOpenRequests.clear();
+        QDesktopServices::setUrlHandler(QStringLiteral("file"),
+                                      this, "recordFileOpenRequest");
+
+        QString error;
+        QTimer::singleShot(0, &window, [&]() {
+            auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+            if (!menu || menu->objectName() != QLatin1String("torrentListContextMenu"))
+            {
+                error = QStringLiteral("Native torrent context menu did not open");
+                if (menu) menu->close();
+                return;
+            }
+            QAction *open = nullptr;
+            for (QAction *action : menu->actions())
+                if (action->objectName() == QLatin1String("torrentContextOpenDestinationFolder"))
+                    open = action;
+            const QPixmap expected = QIcon(
+                QStringLiteral(":/icons/directory.svg")).pixmap(16, 16);
+            if (!open || !open->isEnabled() || !open->isIconVisibleInMenu()
+                || open->icon().pixmap(16, 16).toImage() != expected.toImage())
+                error = QStringLiteral("Open destination folder has wrong Qt menu or icon");
+            else
+                open->trigger();
+            menu->close();
+        });
+
+        QVERIFY(QMetaObject::invokeMethod(table, "customContextMenuRequested",
+            Qt::DirectConnection, Q_ARG(QPoint, table->visualRect(row).center())));
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QCOMPARE(m_fileOpenRequests.size(), 1);
+        QCOMPARE(m_fileOpenRequests.first(), QUrl::fromLocalFile(music));
+        // Opening a local folder must NOT send any torrent mutation.
+        QCOMPARE(server.commandsFor("/api/v2/torrents/setLocation"), 0);
+    }
 
     void userQueueSubmenuSendsSelectedTorrentCommandsToAuthenticatedServer()
     {
