@@ -68,6 +68,8 @@ private:
     void updateTorrentActionState();
     void applyLocalBehaviorPreferences();
     void updateServerFreeSpace();
+    void updateStatusBarFieldWidths();
+    void updateTransferRates(const ServerPane *pane);
     QStringList selectedTorrentHashes() const;
     void openSelectedTorrentDestinations();
     void setSelectedTorrentLocation();
@@ -83,7 +85,9 @@ private:
     ServerPane *m_emptyPane = nullptr;
     QList<std::shared_ptr<SessionContext>> m_connections;
     QLabel *m_torrentCountLabel = nullptr;
-    QLabel *m_ratesLabel = nullptr;
+    QLabel *m_downloadRateLabel = nullptr;
+    QLabel *m_uploadRateLabel = nullptr;
+    QLabel *m_freeSpaceSeparator = nullptr;
     QLabel *m_serverFreeSpaceLabel = nullptr;
     QSystemTrayIcon *m_trayIcon = nullptr;
     QMenu *m_trayMenu = nullptr;

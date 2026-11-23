@@ -57,6 +57,7 @@
 #include <QAbstractItemModel>
 #include <QListWidget>
 #include <QLabel>
+#include <QLocale>
 #include <QInputDialog>
 #include <QPlainTextEdit>
 #include <QStandardItemModel>
@@ -149,7 +150,16 @@ public:
                             ++m_syncRequests;
                             const QUrlQuery query(QString::fromLatin1(path.mid(path.indexOf('?') + 1)));
                             const int rid = query.queryItemValue(QStringLiteral("rid")).toInt();
-                            if (m_trayDemo)
+                            if (m_statusRatesDemo)
+                            {
+                                response = QJsonDocument(QJsonObject{
+                                    {QStringLiteral("rid"), rid + 1},
+                                    {QStringLiteral("full_update"), rid == 0},
+                                    {QStringLiteral("torrents"), QJsonObject()},
+                                    {QStringLiteral("server_state"), m_statusRates}
+                                }).toJson(QJsonDocument::Compact);
+                            }
+                            else if (m_trayDemo)
                             {
                                 // Stateful authenticated sync/maindata for the
                                 // selected NAS alternative speed setting.
@@ -555,6 +565,11 @@ public:
     int logouts() const noexcept { return m_logouts; }
     int syncRequests() const noexcept { return m_syncRequests; }
     void enableTorrentSyncDemo() { m_demoTorrents = true; }
+    void setStatusRates(const QJsonObject &rates)
+    {
+        m_statusRatesDemo = true;
+        m_statusRates = rates;
+    }
     void enableNativeTrayDemo(bool alternative = false)
     {
         m_trayDemo = true;
@@ -698,6 +713,8 @@ private:
     QByteArray m_reportedApiVersion = QByteArrayLiteral("2.11.3");
     int m_logouts = 0;
     bool m_demoTorrents = false;
+    bool m_statusRatesDemo = false;
+    QJsonObject m_statusRates;
     bool m_trayDemo = false;
     bool m_trayAltMode = false;
     QJsonObject m_traySpeedLimits;
@@ -1800,12 +1817,14 @@ private slots:
         QCOMPARE(table->model()->index(0, 0).data().toString(), QStringLiteral("Demo Linux ISO"));
         auto *count = window.statusBar()->findChild<QLabel *>(
             QStringLiteral("visibleTorrentCount"));
-        auto *rates = window.statusBar()->findChild<QLabel *>(
-            QStringLiteral("remoteTransferRates"));
-        QVERIFY(count && rates);
+        auto *down = window.statusBar()->findChild<QLabel *>(
+            QStringLiteral("remoteDownloadRate"));
+        auto *up = window.statusBar()->findChild<QLabel *>(
+            QStringLiteral("remoteUploadRate"));
+        QVERIFY(count && down && up);
         QCOMPARE(count->text(), QStringLiteral("Torrents: 1 / 1"));
-        // A permanent torrent counter belongs before the D/U rates.
-        QVERIFY(count->geometry().right() < rates->geometry().left());
+        QVERIFY(count->geometry().right() < down->geometry().left());
+        QVERIFY(down->geometry().right() < up->geometry().left());
         const QString identity = window.statusBar()->currentMessage();
         QVERIFY(identity.contains(QStringLiteral("Demo seedbox")));
         QVERIFY(identity.contains(server.reportedQbtVersion()));
@@ -1859,6 +1878,113 @@ private slots:
             .contains(server.reportedQbtVersion()), 1500);
         QVERIFY(window.statusBar()->currentMessage().contains(server.reportedApiVersion()));
         QVERIFY(window.statusBar()->currentMessage().contains(QStringLiteral("Demo seedbox")));
+    }
+
+    void statusBarFieldsStayFixedDuringAuthenticatedRateUpdates()
+    {
+        DemoQbittorrentServer server(true);
+        server.setStatusRates({
+            {QStringLiteral("dl_info_speed"), 0},
+            {QStringLiteral("up_info_speed"), 0},
+            {QStringLiteral("free_space_on_disk"), 1024.0 * 1024 * 1024}
+        });
+        QVERIFY(server.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("status.ini")), QSettings::IniFormat);
+        settings.setValue(QStringLiteral("Preferences/Behavior/ShowServerFreeSpace"), true);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.resize(1400, 800);
+        window.show();
+        QTRY_VERIFY(window.isVisible());
+        auto *bar = window.statusBar();
+        auto *count = bar->findChild<QLabel *>(QStringLiteral("visibleTorrentCount"));
+        auto *down = bar->findChild<QLabel *>(QStringLiteral("remoteDownloadRate"));
+        auto *up = bar->findChild<QLabel *>(QStringLiteral("remoteUploadRate"));
+        auto *free = bar->findChild<QLabel *>(QStringLiteral("remoteServerFreeSpace"));
+        auto *sep1 = bar->findChild<QLabel *>(QStringLiteral("torrentCountSeparator"));
+        auto *sep2 = bar->findChild<QLabel *>(QStringLiteral("transferRateSeparator"));
+        auto *sep3 = bar->findChild<QLabel *>(QStringLiteral("freeSpaceSeparator"));
+        QVERIFY(count && down && up && free && sep1 && sep2 && sep3);
+        QCOMPARE(down->text(), QStringLiteral("D: —"));
+        QCOMPARE(up->text(), QStringLiteral("U: —"));
+        openConnectDialog(window, server.url());
+        QTRY_COMPARE_WITH_TIMEOUT(down->text(), QStringLiteral("D: 0 B/s"), 6000);
+        QCOMPARE(up->text(), QStringLiteral("U: 0 B/s"));
+        QTRY_VERIFY(free->text().endsWith(QStringLiteral(" GiB")));
+        QCoreApplication::processEvents();
+        const QList<QLabel *> fields{count, sep1, down, sep2, up, sep3, free};
+        QList<QRect> initial;
+        for (QLabel *label : fields)
+        {
+            QVERIFY(label->isVisible());
+            initial.append(label->geometry());
+        }
+        for (QLabel *sep : {sep1, sep2, sep3})
+            QCOMPARE(sep->text(), QStringLiteral("|"));
+
+        server.setStatusRates({
+            {QStringLiteral("dl_info_speed"), 1023.5 * 1024 * 1024},
+            {QStringLiteral("up_info_speed"), 42.1 * 1024},
+            {QStringLiteral("free_space_on_disk"), 5.9 * 1024 * 1024 * 1024 * 1024}
+        });
+        const QLocale locale;
+        QTRY_COMPARE_WITH_TIMEOUT(down->text(),
+            QStringLiteral("D: %1 MiB/s").arg(locale.toString(1023.5, 'f', 1)), 6000);
+        QCOMPARE(up->text(), QStringLiteral("U: %1 KiB/s").arg(locale.toString(42.1, 'f', 1)));
+        QCOMPARE(free->text(), QStringLiteral("Free: %1 TiB").arg(locale.toString(5.9, 'f', 1)));
+        QCoreApplication::processEvents();
+        for (int i = 0; i < fields.size(); ++i)
+            QCOMPARE(fields.at(i)->geometry(), initial.at(i));
+        for (QLabel *label : {down, up, free})
+            QVERIFY(label->fontMetrics().horizontalAdvance(label->text()) <= label->width());
+
+        // Delta synchronization of only the download speed must preserve the
+        // upload and free-space values and all label positions.
+        server.setStatusRates({{QStringLiteral("dl_info_speed"), 1}});
+        QTRY_COMPARE_WITH_TIMEOUT(down->text(), QStringLiteral("D: 1 B/s"), 6000);
+        QCOMPARE(up->text(), QStringLiteral("U: %1 KiB/s").arg(locale.toString(42.1, 'f', 1)));
+        QCOMPARE(free->text(), QStringLiteral("Free: %1 TiB").arg(locale.toString(5.9, 'f', 1)));
+        QCoreApplication::processEvents();
+        for (int i = 0; i < fields.size(); ++i)
+            QCOMPARE(fields.at(i)->geometry(), initial.at(i));
+
+        auto *increase = window.findChild<QAction *>(QStringLiteral("fontSizeIncrease"));
+        QVERIFY(increase);
+        if (increase->isEnabled())
+        {
+            const int oldPointSize = window.fontPointSize();
+            increase->trigger();
+            QCOMPARE(window.fontPointSize(), oldPointSize + 1);
+            // Font metrics can differ across pixel-sized and point-sized
+            // platform fonts. Check actual readable capacity, not an assumed
+            // monotonic pixel width when the font preference changes.
+            QTRY_VERIFY(down->width() >= down->fontMetrics().horizontalAdvance(
+                QStringLiteral("D: %1 MiB/s").arg(locale.toString(1023.5, 'f', 1))));
+            QTRY_VERIFY(up->width() >= up->fontMetrics().horizontalAdvance(
+                QStringLiteral("U: %1 MiB/s").arg(locale.toString(1023.5, 'f', 1))));
+            QCoreApplication::processEvents();
+            QList<QRect> enlarged;
+            for (QLabel *label : fields)
+                enlarged.append(label->geometry());
+
+            server.setStatusRates({
+                {QStringLiteral("dl_info_speed"), 1023.5 * 1024 * 1024},
+                {QStringLiteral("up_info_speed"), 512.5 * 1024 * 1024}
+            });
+            QTRY_COMPARE_WITH_TIMEOUT(down->text(),
+                QStringLiteral("D: %1 MiB/s").arg(locale.toString(1023.5, 'f', 1)), 6000);
+            QCOMPARE(up->text(), QStringLiteral("U: %1 MiB/s").arg(locale.toString(512.5, 'f', 1)));
+            QCoreApplication::processEvents();
+            for (int i = 0; i < fields.size(); ++i)
+                QCOMPARE(fields.at(i)->geometry(), enlarged.at(i));
+            for (QLabel *label : {down, up, free})
+                QVERIFY(label->fontMetrics().horizontalAdvance(label->text()) <= label->width());
+            auto *reset = window.findChild<QAction *>(QStringLiteral("fontSizeReset"));
+            QVERIFY(reset);
+            reset->trigger();
+        }
     }
 
     void liveTorrentSwarmCountsHonorHideZeroAndIncrementalSync()
