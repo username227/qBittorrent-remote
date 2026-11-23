@@ -33,5 +33,5 @@ private:
     QStringList m_hashes;
     bool m_hideZeroValues = false;
     int m_hideZeroMode = 0;
-    bool m_useStateColors = true;
+    bool m_useStateColors = false;
 };

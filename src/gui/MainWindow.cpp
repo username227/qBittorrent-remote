@@ -223,6 +223,17 @@ MainWindow::MainWindow(QWidget *parent, QSettings *settings,
     // Required when SVG resources live in a linked static library.
     Q_INIT_RESOURCE(qbittorrent_icons);
 
+    // Previous Behavior builds silently defaulted torrent-state coloring on,
+    // changing existing users' appearance. Reset that accidental default
+    // exactly once; subsequent explicit choices remain persistent.
+    if (m_settings->value(QStringLiteral(
+            "Preferences/Behavior/StateColorsOptInVersion"), 0).toInt() < 1)
+    {
+        m_settings->setValue(QStringLiteral("Preferences/Behavior/StateColors"), false);
+        m_settings->setValue(QStringLiteral(
+            "Preferences/Behavior/StateColorsOptInVersion"), 1);
+    }
+
     // Preserve the existing torrent-list font as the smallest permitted
     // point size. All widgets share the Qt application font, never a
     // per-table stylesheet or a smaller imitation of upstream's text.
@@ -1089,7 +1100,7 @@ void MainWindow::applyLocalBehaviorPreferences()
 {
     updateTraySettings();
     const bool stateColors = m_settings->value(
-        QStringLiteral("Preferences/Behavior/StateColors"), true).toBool();
+        QStringLiteral("Preferences/Behavior/StateColors"), false).toBool();
     const bool progressColor = m_settings->value(
         QStringLiteral("Preferences/Behavior/ProgressFollowsState"), false).toBool();
     const bool separateTracker = m_settings->value(
@@ -1369,10 +1380,10 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
     connection->pane->sidebar()->setHideZeroStatusFilters(m_settings->value(
         QStringLiteral("Preferences/Behavior/HideZeroStatusFilters"), false).toBool());
     connection->pane->model()->setUseStateColors(m_settings->value(
-        QStringLiteral("Preferences/Behavior/StateColors"), true).toBool());
+        QStringLiteral("Preferences/Behavior/StateColors"), false).toBool());
     connection->pane->setProgressFollowsStateColors(m_settings->value(
         QStringLiteral("Preferences/Behavior/ProgressFollowsState"), false).toBool()
-        && m_settings->value(QStringLiteral("Preferences/Behavior/StateColors"), true).toBool());
+        && m_settings->value(QStringLiteral("Preferences/Behavior/StateColors"), false).toBool());
     connection->pane->setSeparateTrackerStatusFilter(m_settings->value(
         QStringLiteral("Preferences/Behavior/SeparateTrackerStatus"), false).toBool());
     connection->session = new Remote::RemoteSession(this);
