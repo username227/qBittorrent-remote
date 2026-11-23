@@ -474,15 +474,20 @@ void RemoteSession::requestMainData()
 void RemoteSession::queueOperation(const QString &endpoint, const QByteArray &body,
                                    const QByteArray &contentType,
                                    const QString &description, bool checkAccepted,
-                                   std::function<void()> onAccepted)
+                                   std::function<void()> onAccepted,
+                                   std::function<void(const QString &)> onRejected)
 {
     if (!m_connected || !m_address)
     {
-        emit operationFailed(description, tr("Server is not connected."));
+        const QString reason = tr("Server is not connected.");
+        emit operationFailed(description, reason);
+        if (onRejected)
+            onRejected(reason);
         return;
     }
     QueuedOperation operation{endpoint, body, contentType, description, checkAccepted};
     operation.onAccepted = std::move(onAccepted);
+    operation.onRejected = std::move(onRejected);
     m_operations.enqueue(std::move(operation));
     pumpOperations();
 }
@@ -523,7 +528,12 @@ void RemoteSession::pumpOperations()
                                                            : QJsonValue(json.array()));
             }
             else if (operation.checkAccepted && response.trimmed() == QByteArrayLiteral("Fails."))
-                emit operationFailed(operation.description, tr("The server rejected the request."));
+            {
+                const QString reason = tr("The server rejected the request.");
+                emit operationFailed(operation.description, reason);
+                if (operation.onRejected)
+                    operation.onRejected(reason);
+            }
             else
             {
                 emit operationSucceeded(operation.description);
@@ -534,7 +544,11 @@ void RemoteSession::pumpOperations()
             if (operation.detailsRequest)
                 emit torrentDetailsFailed(operation.detailHash, operation.detailTab, reason);
             else
+            {
                 emit operationFailed(operation.description, reason);
+                if (operation.onRejected)
+                    operation.onRejected(reason);
+            }
         });
         // Continue the queue even when an individual command was rejected.
         if (m_connected && !m_pendingReply)
@@ -937,9 +951,266 @@ void RemoteSession::addTorrentTrackers(const QString &hash, const QStringList &u
     queueOperation(QStringLiteral("api/v2/torrents/addTrackers"),
                    form.toString(QUrl::FullyEncoded).toUtf8(),
                    QByteArrayLiteral("application/x-www-form-urlencoded"),
-                   tr("Merge torrent trackers"), true);
+                   tr("Merge torrent trackers"), true,
+                   [this, hash]() { emit torrentTrackersChanged(hash); });
 }
 
+
+
+namespace
+{
+bool validEditableTrackerUrl(const QString &raw)
+{
+    const QUrl url(raw, QUrl::StrictMode);
+    const QString scheme = url.scheme().toLower();
+    return url.isValid() && !url.host().isEmpty()
+        && (scheme == QLatin1String("https")
+            || scheme == QLatin1String("http")
+            || scheme == QLatin1String("udp"))
+        && !raw.contains(QLatin1Char('|'))
+        && !raw.contains(QLatin1Char('\n'))
+        && !raw.contains(QLatin1Char('\r'));
+}
+}
+
+void RemoteSession::editTorrentTracker(const QString &hash, const QString &oldUrl,
+                                      const QString &newUrl)
+{
+    static const QRegularExpression validHash(
+        QStringLiteral("^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$"));
+    if (!validHash.match(hash).hasMatch()
+        || !validEditableTrackerUrl(oldUrl)
+        || !validEditableTrackerUrl(newUrl)
+        || oldUrl == newUrl)
+    {
+        emit operationFailed(tr("Edit torrent tracker"), tr("Invalid hash or tracker URL."));
+        return;
+    }
+    QUrlQuery form;
+    form.addQueryItem(QStringLiteral("hash"), hash);
+    form.addQueryItem(QStringLiteral("url"), oldUrl);
+    form.addQueryItem(QStringLiteral("newUrl"), newUrl);
+    queueOperation(QStringLiteral("api/v2/torrents/editTracker"),
+                   form.toString(QUrl::FullyEncoded).toUtf8(),
+                   QByteArrayLiteral("application/x-www-form-urlencoded"),
+                   tr("Edit torrent tracker"), true,
+                   [this, hash, oldUrl]() {
+                       emit torrentTrackersChanged(hash);
+                       emit torrentTrackerEditFinished(hash, oldUrl, true, {});
+                   },
+                   [this, hash, oldUrl](const QString &reason) {
+                       emit torrentTrackerEditFinished(hash, oldUrl, false, reason);
+                   });
+}
+
+void RemoteSession::removeTorrentTrackers(const QString &hash, const QStringList &urls)
+{
+    static const QRegularExpression validHash(
+        QStringLiteral("^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$"));
+    if (!validHash.match(hash).hasMatch() || urls.isEmpty() || urls.size() > 128)
+    {
+        emit operationFailed(tr("Remove torrent trackers"), tr("Invalid torrent or tracker list."));
+        return;
+    }
+    QStringList encoded;
+    for (const QString &url : urls)
+    {
+        if (!validEditableTrackerUrl(url))
+        {
+            emit operationFailed(tr("Remove torrent trackers"), tr("Invalid tracker URL."));
+            return;
+        }
+        // removeTrackers decodes each URL after it has parsed the form data.
+        // Preserve tracker query parameters/passkeys across both decodings.
+        const QString item = QString::fromLatin1(QUrl::toPercentEncoding(url));
+        if (!encoded.contains(item))
+            encoded.append(item);
+    }
+    QUrlQuery form;
+    form.addQueryItem(QStringLiteral("hash"), hash);
+    form.addQueryItem(QStringLiteral("urls"), encoded.join(QLatin1Char('|')));
+    queueOperation(QStringLiteral("api/v2/torrents/removeTrackers"),
+                   form.toString(QUrl::FullyEncoded).toUtf8(),
+                   QByteArrayLiteral("application/x-www-form-urlencoded"),
+                   tr("Remove torrent trackers"), true,
+                   [this, hash]() { emit torrentTrackersChanged(hash); });
+}
+
+
+void RemoteSession::replaceTorrentTrackers(const QString &hash,
+                                           const QString &previousEntries,
+                                           const QString &replacementEntries,
+                                           bool privateOrUnknown)
+{
+    static const QRegularExpression validHash(
+        QStringLiteral("^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$"));
+    const auto trackerUrls = [](const QString &text, QStringList &urls) -> bool {
+        urls.clear();
+        for (QString line : text.split(QLatin1Char('\n')))
+        {
+            line = line.trimmed();
+            if (line.isEmpty())
+                continue;
+            const QUrl url(line, QUrl::StrictMode);
+            const QString scheme = url.scheme().toLower();
+            if (!url.isValid() || url.host().isEmpty()
+                || (scheme != QLatin1String("http")
+                    && scheme != QLatin1String("https")
+                    && scheme != QLatin1String("udp"))
+                || line.contains(QLatin1Char('|'))
+                || line.contains(QLatin1Char('\r'))
+                || line.contains(QChar(0)))
+                return false;
+            if (!urls.contains(line))
+                urls.append(line);
+        }
+        return true;
+    };
+
+    QStringList existing, replacement;
+    if (!validHash.match(hash).hasMatch()
+        || !trackerUrls(previousEntries, existing)
+        || !trackerUrls(replacementEntries, replacement))
+    {
+        emit operationFailed(tr("Replace torrent trackers"),
+                             tr("Invalid torrent hash or tracker URL. No trackers were modified."));
+        return;
+    }
+
+    // Defense in depth: never permit the remote API to expand a private
+    // torrent's announce URL count. A trackerless torrent may recover with
+    // ONE new URL; swapping or removing existing URLs is permitted.
+    if (privateOrUnknown && replacement.size() > existing.size()
+        && !(existing.isEmpty() && replacement.size() == 1))
+    {
+        emit operationFailed(tr("Replace torrent trackers"),
+                             tr("Adding additional trackers to private torrents is blocked. "
+                                "Use the server's Web UI if necessary."));
+        return;
+    }
+
+    if (previousEntries == replacementEntries)
+    {
+        emit torrentTrackersChanged(hash);
+        return;
+    }
+
+    // The server parses blank lines as tier boundaries. Preserve the exact
+    // grouped text rather than flattening it into a single tier.
+    const QString newText = replacementEntries;
+    const auto sendReplacement = [this, hash, previousEntries, newText]() {
+        if (newText.trimmed().isEmpty())
+        {
+            emit torrentTrackersChanged(hash);
+            return;
+        }
+        const QByteArray form = QByteArrayLiteral("hash=")
+            + QUrl::toPercentEncoding(hash)
+            + QByteArrayLiteral("&urls=")
+            + QUrl::toPercentEncoding(newText);
+        queueOperation(QStringLiteral("api/v2/torrents/addTrackers"),
+                       form,
+                       QByteArrayLiteral("application/x-www-form-urlencoded"),
+                       tr("Replace torrent trackers"), true,
+                       [this, hash]() { emit torrentTrackersChanged(hash); },
+                       [this, hash, previousEntries](const QString &) {
+                           // If adding the replacement fails after removal,
+                           // make a best-effort restoration of the original
+                           // URLs and tiers. The ordinary operation failure
+                           // remains visible even if restoration succeeds.
+                           if (previousEntries.trimmed().isEmpty())
+                               return;
+                           const QByteArray restore = QByteArrayLiteral("hash=")
+                               + QUrl::toPercentEncoding(hash)
+                               + QByteArrayLiteral("&urls=")
+                               + QUrl::toPercentEncoding(previousEntries);
+                           queueOperation(QStringLiteral("api/v2/torrents/addTrackers"),
+                               restore,
+                               QByteArrayLiteral("application/x-www-form-urlencoded"),
+                               tr("Restore original torrent trackers"), true,
+                               [this, hash]() { emit torrentTrackersChanged(hash); });
+                       });
+    };
+
+    // Keep remote operations serialized and run the full-list update only
+    // after an optional native private-tracker edit has succeeded.
+    const auto removeThenAdd = [this, hash, sendReplacement](
+        const QStringList &current, std::function<void()> undoEdit = {}) {
+        if (current.isEmpty())
+        {
+            sendReplacement();
+            return;
+        }
+
+        QStringList encoded;
+        for (const QString &url : current)
+            encoded.append(QString::fromLatin1(QUrl::toPercentEncoding(url)));
+        QUrlQuery remove;
+        remove.addQueryItem(QStringLiteral("hash"), hash);
+        remove.addQueryItem(QStringLiteral("urls"), encoded.join(QLatin1Char('|')));
+        queueOperation(QStringLiteral("api/v2/torrents/removeTrackers"),
+            remove.toString(QUrl::FullyEncoded).toUtf8(),
+            QByteArrayLiteral("application/x-www-form-urlencoded"),
+            tr("Replace torrent trackers"), true, sendReplacement,
+            [undoEdit](const QString &) {
+                if (undoEdit)
+                    undoEdit();
+            });
+    };
+
+    // On private torrents, qBittorrent's own editTracker Web API calls
+    // TorrentImpl::replaceTrackers(), which clears old peer connections.
+    // A genuine old -> new URL substitution can use that path before
+    // the full replacement. Never create a fake edit just to clear peers.
+    if (privateOrUnknown)
+    {
+        const QSet<QString> oldUrls(existing.cbegin(), existing.cend());
+        const QSet<QString> newUrls(replacement.cbegin(), replacement.cend());
+        QString removed, added;
+        for (const QString &url : existing)
+            if (!newUrls.contains(url))
+            {
+                removed = url;
+                break;
+            }
+        for (const QString &url : replacement)
+            if (!oldUrls.contains(url))
+            {
+                added = url;
+                break;
+            }
+        if (!removed.isEmpty() && !added.isEmpty())
+        {
+            QUrlQuery edit;
+            edit.addQueryItem(QStringLiteral("hash"), hash);
+            edit.addQueryItem(QStringLiteral("url"), removed);
+            edit.addQueryItem(QStringLiteral("newUrl"), added);
+            queueOperation(QStringLiteral("api/v2/torrents/editTracker"),
+                edit.toString(QUrl::FullyEncoded).toUtf8(),
+                QByteArrayLiteral("application/x-www-form-urlencoded"),
+                tr("Replace private torrent tracker"), true,
+                [this, hash, existing, removed, added, removeThenAdd]() {
+                    QStringList currentlyOnServer = existing;
+                    currentlyOnServer.replace(currentlyOnServer.indexOf(removed), added);
+                    const auto undoEdit = [this, hash, removed, added]() {
+                        QUrlQuery undo;
+                        undo.addQueryItem(QStringLiteral("hash"), hash);
+                        undo.addQueryItem(QStringLiteral("url"), added);
+                        undo.addQueryItem(QStringLiteral("newUrl"), removed);
+                        queueOperation(QStringLiteral("api/v2/torrents/editTracker"),
+                            undo.toString(QUrl::FullyEncoded).toUtf8(),
+                            QByteArrayLiteral("application/x-www-form-urlencoded"),
+                            tr("Restore original private tracker"), true);
+                    };
+                    removeThenAdd(currentlyOnServer, undoEdit);
+                });
+            return;
+        }
+    }
+
+    removeThenAdd(existing);
+
+}
 
 void RemoteSession::addTorrentFile(const QString &filename, const QByteArray &contents)
 {

@@ -70,6 +70,7 @@ private slots:
     void renameAppearsOnlyForExactlyOneSelectedTorrent();
     void copySubmenuCopiesRealRemoteFieldsAndDisablesUnavailableMetadata();
     void categoryTagsAutoManagementMatchUpstreamOrderAndSelection();
+    void editTrackersFollowsRenameAndRespectsSelection();
 };
 
 void TorrentContextMenuWorkflowTest::contextMenuUsesNativeQbittorrentIcons()
@@ -894,6 +895,76 @@ void TorrentContextMenuWorkflowTest::categoryTagsAutoManagementMatchUpstreamOrde
     QCOMPARE(tag.last().at(1).toBool(), false);
     QCOMPARE(autoManagement.size(), 2);
     QCOMPARE(autoManagement.last().at(0).toBool(), false);
+}
+
+
+void TorrentContextMenuWorkflowTest::editTrackersFollowsRenameAndRespectsSelection()
+{
+    ServerPane pane;
+    pane.resize(1200, 740);
+    pane.applySync(payload(R"JSON({
+        "full_update":true,
+        "torrents":{
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa":{
+                "name":"Alpha","state":"uploading"
+            },
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb":{
+                "name":"Beta","state":"uploading"
+            }
+        }
+    })JSON"));
+    pane.show();
+    auto *table = pane.table();
+    const QModelIndex first = indexForName(table, QStringLiteral("Alpha"));
+    const QModelIndex second = indexForName(table, QStringLiteral("Beta"));
+    QVERIFY(first.isValid() && second.isValid());
+    QSignalSpy emitted(&pane, &ServerPane::torrentContextActionRequested);
+    table->selectionModel()->select(first,
+        QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    QString error;
+    QTimer::singleShot(0, &pane, [&]() {
+        QMenu *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+        if (!menu) { error = QStringLiteral("Missing context menu"); return; }
+        QAction *rename = actionNamed(menu, QStringLiteral("torrentContextRename"));
+        QAction *trackers = actionNamed(menu, QStringLiteral("torrentContextEditTrackers"));
+        QAction *category = actionNamed(menu, QStringLiteral("torrentContextCategoryMenu"));
+        const auto actions = menu->actions();
+        if (!rename || !trackers || !category || !trackers->isEnabled()
+            || actions.indexOf(trackers) != actions.indexOf(rename) + 1
+            || actions.indexOf(category) != actions.indexOf(trackers) + 1
+            || trackers->icon().pixmap(16, 16).toImage()
+                != QIcon(QStringLiteral(":/icons/edit-rename.svg"))
+                    .pixmap(16, 16).toImage())
+            error = QStringLiteral("Edit trackers icon/order/state incorrect");
+        else
+            trackers->trigger();
+        menu->close();
+    });
+    QVERIFY(QMetaObject::invokeMethod(table, "customContextMenuRequested",
+        Qt::DirectConnection, Q_ARG(QPoint, table->visualRect(first).center())));
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QCOMPARE(emitted.size(), 1);
+    QCOMPARE(emitted.first().first().value<ServerPane::TorrentContextAction>(),
+             ServerPane::TorrentContextAction::EditTrackers);
+
+    table->selectionModel()->select(second,
+        QItemSelectionModel::Select | QItemSelectionModel::Rows);
+    QTimer::singleShot(0, &pane, [&]() {
+        QMenu *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+        if (!menu) { error = QStringLiteral("Missing multi-selection menu"); return; }
+        QAction *trackers = actionNamed(menu, QStringLiteral("torrentContextEditTrackers"));
+        if (!trackers || !trackers->isEnabled())
+            error = QStringLiteral("Bulk tracker edit must be enabled for multiple torrents");
+        else
+            trackers->trigger();
+        menu->close();
+    });
+    QVERIFY(QMetaObject::invokeMethod(table, "customContextMenuRequested",
+        Qt::DirectConnection, Q_ARG(QPoint, table->visualRect(first).center())));
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QCOMPARE(emitted.size(), 2);
+    QCOMPARE(emitted.last().first().value<ServerPane::TorrentContextAction>(),
+             ServerPane::TorrentContextAction::EditTrackers);
 }
 
 QTEST_MAIN(TorrentContextMenuWorkflowTest)

@@ -508,6 +508,16 @@ void ServerPane::showTorrentContextMenu(const QPoint &position)
         });
     }
 
+    QAction *editTrackers = menu.addAction(icon("edit-rename"), tr("Edit trackers..."));
+    editTrackers->setObjectName(QStringLiteral("torrentContextEditTrackers"));
+    editTrackers->setIconVisibleInMenu(true);
+    // Single torrents use the individual editor; multiple selections open
+    // the native qBittorrent tracker-list replacement dialog.
+    editTrackers->setEnabled(!torrents.isEmpty());
+    connect(editTrackers, &QAction::triggered, this, [this]() {
+        emit torrentContextActionRequested(TorrentContextAction::EditTrackers);
+    });
+
     // Mirror the upstream 5.3.0 context-menu group immediately after Rename:
     // Category, Tags, Automatic Torrent Management. The server's sync state,
     // not local settings or another server tab, supplies these options.

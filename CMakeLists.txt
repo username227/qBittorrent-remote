@@ -77,6 +77,9 @@ add_library(qbittorrent_remote_gui STATIC
     src/gui/RemotePreferencesDialog.h
     src/gui/RemoteAddTorrentDialog.cpp
     src/gui/RemoteAddTorrentDialog.h
+    src/gui/RemoteTrackerEntriesDialog.cpp
+    src/gui/RemoteTrackerEntriesDialog.h
+    src/gui/trackerentriesdialog.ui
     src/gui/RemoteFileSystemPathComboEdit.cpp
     src/gui/RemoteFileSystemPathComboEdit.h
     src/gui/RemoteTorrentContentWidget.cpp
