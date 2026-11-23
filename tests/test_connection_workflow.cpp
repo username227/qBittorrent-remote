@@ -2176,35 +2176,27 @@ private slots:
         QVERIFY(!settings.value(QStringLiteral("Layout/Dialogs/RenameTorrent"))
                      .toByteArray().isEmpty());
 
-        // Reopen the same real menu/dialog to verify geometry is restored,
-        // then cancel: this must not send a second rename operation.
-        QTimer::singleShot(0, &window, [&]() {
-            auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
-            if (!menu)
-            {
-                error = QStringLiteral("Rename menu did not reopen");
-                return;
-            }
-            QAction *rename = nullptr;
-            for (QAction *candidate : menu->actions())
-                if (candidate->objectName() == QLatin1String("torrentContextRename"))
-                    rename = candidate;
-            if (!rename)
-                error = QStringLiteral("Rename item absent on reopen");
-            else
-                rename->trigger();
-            menu->close();
-        });
+        // Use keyboard F2 to reopen the SAME Rename dialog, check the
+        // persisted geometry, then cancel without sending another POST.
         QApplication::instance()->installEventFilter(&driver);
         const QModelIndex selectedAgain = table->selectionModel()->selectedRows(0).value(0);
         QVERIFY(selectedAgain.isValid());
-        QVERIFY(QMetaObject::invokeMethod(table, "customContextMenuRequested",
-            Qt::DirectConnection, Q_ARG(QPoint, table->visualRect(selectedAgain).center())));
+        table->setFocus();
+        QVERIFY(table->hasFocus());
+        QTest::keyClick(table, Qt::Key_F2);
         QApplication::instance()->removeEventFilter(&driver);
         QVERIFY2(error.isEmpty(), qPrintable(error));
         QVERIFY2(driver.problem.isEmpty(), qPrintable(driver.problem));
         QCOMPARE(driver.dialogs, 2);
         QCOMPARE(server.commandsFor("/api/v2/torrents/rename"), 1);
+
+        // F2 in the toolbar's search field must not open a Rename dialog.
+        auto *search = window.findChild<QLineEdit *>(QStringLiteral("torrentSearch"));
+        QVERIFY(search);
+        search->setFocus();
+        QVERIFY(search->hasFocus());
+        QTest::keyClick(search, Qt::Key_F2);
+        QCOMPARE(driver.dialogs, 2);
 
         // Changing a display name must never rename the remote files,
         // move the save path, or change the selected torrent's queue slot.

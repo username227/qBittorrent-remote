@@ -657,11 +657,20 @@ void TorrentContextMenuWorkflowTest::renameAppearsOnlyForExactlyOneSelectedTorre
     QVERIFY2(error.isEmpty(), qPrintable(error));
     QCOMPARE(emitted, 1);
 
+    // Keyboard F2 invokes the same Rename signal when focus is in the
+    // torrent list and exactly one torrent is selected.
+    table->setFocus();
+    QVERIFY(table->hasFocus());
+    QTest::keyClick(table, Qt::Key_F2);
+    QCOMPARE(emitted, 2);
+
     // Multi-selection: upstream hides Rename rather than picking a random
     // row and possibly changing the wrong torrent.
     table->selectionModel()->select(second,
         QItemSelectionModel::Select | QItemSelectionModel::Rows);
     QCOMPARE(table->selectionModel()->selectedRows().size(), 2);
+    QTest::keyClick(table, Qt::Key_F2);
+    QCOMPARE(emitted, 2); // No ambiguous rename on multi-selection.
     error.clear();
     QTimer::singleShot(0, &pane, [&]() {
         auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
@@ -673,7 +682,7 @@ void TorrentContextMenuWorkflowTest::renameAppearsOnlyForExactlyOneSelectedTorre
     QVERIFY(QMetaObject::invokeMethod(table, "customContextMenuRequested",
         Qt::DirectConnection, Q_ARG(QPoint, table->visualRect(first).center())));
     QVERIFY2(error.isEmpty(), qPrintable(error));
-    QCOMPARE(emitted, 1);
+    QCOMPARE(emitted, 2);
 }
 
 void TorrentContextMenuWorkflowTest::copySubmenuCopiesRealRemoteFieldsAndDisablesUnavailableMetadata()
