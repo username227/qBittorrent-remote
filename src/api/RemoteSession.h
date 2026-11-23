@@ -84,6 +84,7 @@ public:
 
     void commandTorrents(TorrentCommand command, const QStringList &hashes,
                          bool deleteFiles = false);
+    void setTorrentLocation(const QStringList &hashes, const QString &remotePath);
     void addTorrentUrls(const QString &urls);
     void addTorrentUrls(const QString &urls, const AddTorrentOptions &options);
     void addTorrentFile(const QString &filename, const QByteArray &contents);

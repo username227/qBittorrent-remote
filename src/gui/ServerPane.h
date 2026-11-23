@@ -26,7 +26,8 @@ class ServerPane final : public QWidget
 public:
     enum class TorrentContextAction {
         Start, Stop, ForceStart, Remove, ForceRecheck, ForceReannounce,
-        QueueTop, QueueUp, QueueDown, QueueBottom, OpenDestinationFolder
+        QueueTop, QueueUp, QueueDown, QueueBottom, OpenDestinationFolder,
+        SetLocation
     };
     Q_ENUM(TorrentContextAction)
 
