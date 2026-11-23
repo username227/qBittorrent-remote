@@ -69,6 +69,7 @@ private slots:
     void queueSubmenuReflectsRemoteQueueingAndIncompleteSelections();
     void renameAppearsOnlyForExactlyOneSelectedTorrent();
     void copySubmenuCopiesRealRemoteFieldsAndDisablesUnavailableMetadata();
+    void categoryTagsAutoManagementMatchUpstreamOrderAndSelection();
 };
 
 void TorrentContextMenuWorkflowTest::contextMenuUsesNativeQbittorrentIcons()
@@ -767,6 +768,132 @@ void TorrentContextMenuWorkflowTest::copySubmenuCopiesRealRemoteFieldsAndDisable
         Qt::DirectConnection, Q_ARG(QPoint, table->visualRect(row).center())));
     QVERIFY2(error.isEmpty(), qPrintable(error));
     QVERIFY(foundRemove);
+}
+
+
+void TorrentContextMenuWorkflowTest::categoryTagsAutoManagementMatchUpstreamOrderAndSelection()
+{
+    ServerPane pane;
+    pane.resize(1200, 740);
+    pane.applySync(payload(R"JSON({
+      "full_update":true,
+      "categories":{"Music":{"name":"Music"},"Movies":{"name":"Movies"}},
+      "tags":["favorite","review"],
+      "torrents":{
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa":{
+          "name":"First album","state":"uploading","category":"Music",
+          "tags":"favorite","auto_tmm":true
+        },
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb":{
+          "name":"Second album","state":"uploading","category":"Movies",
+          "tags":"review","auto_tmm":false
+        }
+      }
+    })JSON"));
+    pane.show();
+    auto *table = pane.table();
+    const QModelIndex first = indexForName(table, QStringLiteral("First album"));
+    const QModelIndex second = indexForName(table, QStringLiteral("Second album"));
+    QVERIFY(first.isValid() && second.isValid());
+    table->selectionModel()->select(first,
+        QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    table->selectionModel()->select(second,
+        QItemSelectionModel::Select | QItemSelectionModel::Rows);
+
+    QSignalSpy category(&pane, &ServerPane::torrentCategoryRequested);
+    QSignalSpy tag(&pane, &ServerPane::torrentTagRequested);
+    QSignalSpy autoManagement(&pane, &ServerPane::torrentAutoManagementRequested);
+    QString error;
+    QTimer::singleShot(0, &pane, [&]() {
+        QMenu *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+        if (!menu) { error = QStringLiteral("No visible torrent context menu"); return; }
+        const auto actions = menu->actions();
+        auto indexOf = [&](const QString &name) {
+            for (int i = 0; i < actions.size(); ++i)
+                if (actions.at(i)->objectName() == name) return i;
+            return -1;
+        };
+        const int rename = indexOf(QStringLiteral("torrentContextSetLocation"));
+        const int categories = indexOf(QStringLiteral("torrentContextCategoryMenu"));
+        const int tags = indexOf(QStringLiteral("torrentContextTagsMenu"));
+        const int automatic = indexOf(QStringLiteral("torrentContextAutoManagement"));
+        const int recheck = indexOf(QStringLiteral("torrentContextForceRecheck"));
+        if (!(rename >= 0 && categories > rename && tags > categories
+              && automatic > tags && recheck > automatic))
+            error = QStringLiteral("Category/Tags/Auto TMM are out of upstream order");
+        QMenu *categoryMenu = actionNamed(menu, QStringLiteral("torrentContextCategoryMenu"))
+            ? actionNamed(menu, QStringLiteral("torrentContextCategoryMenu"))->menu() : nullptr;
+        QMenu *tagsMenu = actionNamed(menu, QStringLiteral("torrentContextTagsMenu"))
+            ? actionNamed(menu, QStringLiteral("torrentContextTagsMenu"))->menu() : nullptr;
+        QAction *autoTMM = actionNamed(menu, QStringLiteral("torrentContextAutoManagement"));
+        if (!categoryMenu || !tagsMenu || !autoTMM)
+        {
+            error = QStringLiteral("Context submenus or Auto TMM checkbox missing");
+            menu->close(); return;
+        }
+        QAction *music = nullptr;
+        for (QAction *action : categoryMenu->actions())
+            if (action->data().toString() == QStringLiteral("Music"))
+                music = action;
+        QAction *favorite = nullptr;
+        for (QAction *action : tagsMenu->actions())
+            if (action->data().toString() == QStringLiteral("favorite"))
+                favorite = action;
+        if (!music || !favorite || music->isChecked() || favorite->isChecked()
+            || autoTMM->isChecked())
+            error = QStringLiteral("Mixed selection checkbox/category state incorrect");
+        else
+        {
+            music->trigger();
+            favorite->trigger();
+            autoTMM->trigger();
+        }
+        menu->close();
+    });
+    QVERIFY(QMetaObject::invokeMethod(table, "customContextMenuRequested",
+        Qt::DirectConnection, Q_ARG(QPoint, table->visualRect(first).center())));
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QCOMPARE(category.size(), 1);
+    QCOMPARE(category.first().at(0).toString(), QStringLiteral("Music"));
+    QCOMPARE(tag.size(), 1);
+    QCOMPARE(tag.first().at(0).toString(), QStringLiteral("favorite"));
+    QCOMPARE(tag.first().at(1).toBool(), true);
+    QCOMPARE(autoManagement.size(), 1);
+    QCOMPARE(autoManagement.first().at(0).toBool(), true);
+
+    // A uniform selection must show the checked tag/category/auto state and
+    // offer removal rather than blindly adding the same tag again.
+    table->selectionModel()->select(first,
+        QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    QTimer::singleShot(0, &pane, [&]() {
+        QMenu *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+        if (!menu) { error = QStringLiteral("No single-selection menu"); return; }
+        QMenu *categoryMenu = actionNamed(menu, QStringLiteral("torrentContextCategoryMenu"))->menu();
+        QMenu *tagsMenu = actionNamed(menu, QStringLiteral("torrentContextTagsMenu"))->menu();
+        QAction *favorite = nullptr;
+        QAction *music = nullptr;
+        for (QAction *action : tagsMenu->actions())
+            if (action->data().toString() == QStringLiteral("favorite")) favorite = action;
+        for (QAction *action : categoryMenu->actions())
+            if (action->data().toString() == QStringLiteral("Music")) music = action;
+        QAction *autoTMM = actionNamed(menu, QStringLiteral("torrentContextAutoManagement"));
+        if (!favorite || !music || !favorite->isChecked()
+            || !music->isChecked() || !autoTMM->isChecked())
+            error = QStringLiteral("Single selection check state incorrect");
+        else
+        {
+            favorite->trigger();
+            autoTMM->trigger();
+        }
+        menu->close();
+    });
+    QVERIFY(QMetaObject::invokeMethod(table, "customContextMenuRequested",
+        Qt::DirectConnection, Q_ARG(QPoint, table->visualRect(first).center())));
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QCOMPARE(tag.size(), 2);
+    QCOMPARE(tag.last().at(1).toBool(), false);
+    QCOMPARE(autoManagement.size(), 2);
+    QCOMPARE(autoManagement.last().at(0).toBool(), false);
 }
 
 QTEST_MAIN(TorrentContextMenuWorkflowTest)

@@ -1263,6 +1263,82 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
             break;
         }
     });
+
+    // Category and tag menus operate only on the active server selection.
+    // Never cache selected hashes across a modal dialog or use another tab.
+    const auto selectedForContext = [this, connection]() -> QStringList {
+        if (!containsConnection(connection) || !connection->connected
+            || activeConnection() != connection)
+            return {};
+        return selectedTorrentHashes();
+    };
+    connect(connection->pane, &ServerPane::torrentCategoryRequested, this,
+        [session, selectedForContext](const QString &category) {
+            const QStringList hashes = selectedForContext();
+            if (!hashes.isEmpty())
+                session->setTorrentCategory(hashes, category);
+        });
+    connect(connection->pane, &ServerPane::torrentNewCategoryRequested, this,
+        [this, session, selectedForContext]() {
+            QInputDialog dialog(this);
+            dialog.setObjectName(QStringLiteral("newTorrentCategoryDialog"));
+            dialog.setWindowTitle(tr("New category"));
+            dialog.setLabelText(tr("Category name:"));
+            dialog.setInputMode(QInputDialog::TextInput);
+            trackDialogGeometry(dialog, QStringLiteral("NewTorrentCategory"));
+            if (dialog.exec() != QDialog::Accepted)
+                return;
+            const QString category = dialog.textValue().trimmed();
+            const QStringList hashes = selectedForContext();
+            if (!category.isEmpty() && !hashes.isEmpty())
+                session->createAndAssignTorrentCategory(hashes, category);
+        });
+    connect(connection->pane, &ServerPane::torrentTagRequested, this,
+        [session, selectedForContext](const QString &tag, bool add) {
+            const QStringList hashes = selectedForContext();
+            if (!hashes.isEmpty())
+                session->changeTorrentTags(hashes, {tag}, add);
+        });
+    connect(connection->pane, &ServerPane::torrentNewTagsRequested, this,
+        [this, session, selectedForContext]() {
+            QInputDialog dialog(this);
+            dialog.setObjectName(QStringLiteral("newTorrentTagsDialog"));
+            dialog.setWindowTitle(tr("Add tags"));
+            dialog.setLabelText(tr("Tag names (comma separated):"));
+            dialog.setInputMode(QInputDialog::TextInput);
+            dialog.setMinimumWidth(440);
+            trackDialogGeometry(dialog, QStringLiteral("NewTorrentTags"));
+            if (dialog.exec() != QDialog::Accepted)
+                return;
+            QStringList tags;
+            for (QString value : dialog.textValue().split(QLatin1Char(','), Qt::SkipEmptyParts))
+            {
+                value = value.trimmed();
+                if (!value.isEmpty() && !tags.contains(value))
+                    tags.append(value);
+            }
+            const QStringList hashes = selectedForContext();
+            if (!tags.isEmpty() && !hashes.isEmpty())
+                session->createAndAddTorrentTags(hashes, tags);
+        });
+    connect(connection->pane, &ServerPane::torrentClearTagsRequested, this,
+        [this, session, selectedForContext]() {
+            const QStringList hashes = selectedForContext();
+            if (hashes.isEmpty())
+                return;
+            const auto decision = QMessageBox::question(this, tr("Remove all tags"),
+                tr("Remove all tags from %1 selected torrent(s) on this server? "
+                   "Global tag definitions will be kept.").arg(hashes.size()),
+                QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel);
+            if (decision == QMessageBox::Yes && selectedForContext() == hashes)
+                session->changeTorrentTags(hashes, {}, false);
+        });
+    connect(connection->pane, &ServerPane::torrentAutoManagementRequested, this,
+        [session, selectedForContext](bool enabled) {
+            const QStringList hashes = selectedForContext();
+            if (!hashes.isEmpty())
+                session->setTorrentAutoManagement(hashes, enabled);
+        });
     connect(session, &Remote::RemoteSession::torrentDetailsReceived,
             connection->pane, &ServerPane::displayTorrentDetails);
     connect(session, &Remote::RemoteSession::torrentDetailsFailed,

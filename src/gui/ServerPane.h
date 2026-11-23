@@ -55,6 +55,14 @@ signals:
     // Native torrent-list context menu delegates existing actions to the
     // owning MainWindow; the active server and its selection remain isolated.
     void torrentContextActionRequested(TorrentContextAction action);
+    // The menu displays server-owned categories and tags; MainWindow uses
+    // the active session's selected hashes when dispatching these commands.
+    void torrentCategoryRequested(const QString &category);
+    void torrentNewCategoryRequested();
+    void torrentTagRequested(const QString &tag, bool add);
+    void torrentNewTagsRequested();
+    void torrentClearTagsRequested();
+    void torrentAutoManagementRequested(bool enabled);
     void torrentDetailsRequested(const QString &hash, int tab);
     void filePriorityRequested(const QString &hash, const QList<int> &ids, int priority);
 

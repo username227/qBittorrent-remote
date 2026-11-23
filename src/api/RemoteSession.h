@@ -86,6 +86,11 @@ public:
                          bool deleteFiles = false);
     void renameTorrent(const QString &hash, const QString &name);
     void setTorrentLocation(const QStringList &hashes, const QString &remotePath);
+    void setTorrentCategory(const QStringList &hashes, const QString &category);
+    void createAndAssignTorrentCategory(const QStringList &hashes, const QString &category);
+    void changeTorrentTags(const QStringList &hashes, const QStringList &tags, bool add);
+    void createAndAddTorrentTags(const QStringList &hashes, const QStringList &tags);
+    void setTorrentAutoManagement(const QStringList &hashes, bool enabled);
     void addTorrentUrls(const QString &urls);
     void addTorrentUrls(const QString &urls, const AddTorrentOptions &options);
     void addTorrentFile(const QString &filename, const QByteArray &contents);
@@ -120,7 +125,8 @@ private:
     void pumpOperations();
     void queueOperation(const QString &endpoint, const QByteArray &body,
                         const QByteArray &contentType,
-                        const QString &description, bool checkAccepted = false);
+                        const QString &description, bool checkAccepted = false,
+                        std::function<void()> onAccepted = {});
     void checkReply(QNetworkReply *reply,
                     const std::function<void(const QByteArray &)> &onSuccess,
                     const std::function<void(const QString &)> &onFailure = {});
@@ -136,6 +142,9 @@ private:
         bool detailsRequest = false;
         QString detailHash;
         int detailTab = -1;
+        // Used only for dependent create-then-assign operations. A failed
+        // category/tag creation must never enqueue an invalid assignment.
+        std::function<void()> onAccepted;
     };
 
     QNetworkAccessManager m_network;

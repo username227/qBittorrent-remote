@@ -508,8 +508,105 @@ void ServerPane::showTorrentContextMenu(const QPoint &position)
         });
     }
 
-    // Upstream places these after category/options controls, which can be
-    // inserted above them by subsequent focused context-menu PRs.
+    // Mirror the upstream 5.3.0 context-menu group immediately after Rename:
+    // Category, Tags, Automatic Torrent Management. The server's sync state,
+    // not local settings or another server tab, supplies these options.
+    QMenu *categoryMenu = menu.addMenu(icon("view-categories"), tr("Category"));
+    categoryMenu->setObjectName(QStringLiteral("torrentContextCategoryMenu"));
+    categoryMenu->menuAction()->setObjectName(QStringLiteral("torrentContextCategoryMenu"));
+    categoryMenu->menuAction()->setIconVisibleInMenu(true);
+    QAction *newCategory = categoryMenu->addAction(icon("list-add"), tr("New..."));
+    newCategory->setObjectName(QStringLiteral("torrentCategoryNew"));
+    connect(newCategory, &QAction::triggered, this,
+            [this]() { emit torrentNewCategoryRequested(); });
+    QAction *resetCategory = categoryMenu->addAction(icon("edit-clear"), tr("Reset"));
+    resetCategory->setObjectName(QStringLiteral("torrentCategoryReset"));
+    connect(resetCategory, &QAction::triggered, this,
+            [this]() { emit torrentCategoryRequested(QString()); });
+    categoryMenu->addSeparator();
+    QStringList categories = m_categories.values();
+    std::sort(categories.begin(), categories.end(),
+              [](const QString &a, const QString &b) {
+                  return QString::localeAwareCompare(a, b) < 0;
+              });
+    const QString firstCategory = torrents.first().record.value(
+        QStringLiteral("category")).toString();
+    const bool allSameCategory = std::all_of(torrents.cbegin(), torrents.cend(),
+        [&firstCategory](const SelectedTorrent &t) {
+            return t.record.value(QStringLiteral("category")).toString() == firstCategory;
+        });
+    for (const QString &category : categories)
+    {
+        QString display = category;
+        display.replace(QLatin1Char('&'), QStringLiteral("&&"));
+        QAction *item = categoryMenu->addAction(icon("view-categories"), display);
+        item->setObjectName(QStringLiteral("torrentCategoryValue"));
+        item->setData(category);
+        item->setCheckable(true);
+        item->setChecked(allSameCategory && firstCategory == category);
+        connect(item, &QAction::triggered, this,
+                [this, category]() { emit torrentCategoryRequested(category); });
+    }
+
+    QMenu *tagsMenu = menu.addMenu(icon("tags"), tr("Tags"));
+    tagsMenu->setObjectName(QStringLiteral("torrentContextTagsMenu"));
+    tagsMenu->menuAction()->setObjectName(QStringLiteral("torrentContextTagsMenu"));
+    tagsMenu->menuAction()->setIconVisibleInMenu(true);
+    QAction *addTags = tagsMenu->addAction(icon("list-add"), tr("Add..."));
+    addTags->setObjectName(QStringLiteral("torrentTagsAdd"));
+    connect(addTags, &QAction::triggered, this,
+            [this]() { emit torrentNewTagsRequested(); });
+    QAction *clearTags = tagsMenu->addAction(icon("edit-clear"), tr("Remove All"));
+    clearTags->setObjectName(QStringLiteral("torrentTagsClear"));
+    connect(clearTags, &QAction::triggered, this,
+            [this]() { emit torrentClearTagsRequested(); });
+    tagsMenu->addSeparator();
+    QStringList tags = m_tags.values();
+    std::sort(tags.begin(), tags.end(),
+              [](const QString &a, const QString &b) {
+                  return QString::localeAwareCompare(a, b) < 0;
+              });
+    for (const QString &tag : tags)
+    {
+        const int attached = static_cast<int>(std::count_if(
+            torrents.cbegin(), torrents.cend(), [&tag](const SelectedTorrent &t) {
+                const QStringList selectedTags = t.record.value(QStringLiteral("tags"))
+                    .toString().split(QLatin1Char(','), Qt::SkipEmptyParts);
+                return selectedTags.contains(tag);
+            }));
+        QString display = tag;
+        display.replace(QLatin1Char('&'), QStringLiteral("&&"));
+        QAction *item = tagsMenu->addAction(display);
+        item->setObjectName(QStringLiteral("torrentTagValue"));
+        item->setData(tag);
+        item->setCheckable(true);
+        item->setChecked(attached == torrents.size());
+        if (attached > 0 && attached < torrents.size())
+            item->setToolTip(tr("Applied to some selected torrents; select to apply to all."));
+        const bool add = attached < torrents.size();
+        connect(item, &QAction::triggered, this, [this, tag, add]() {
+            emit torrentTagRequested(tag, add);
+        });
+    }
+
+    const bool allAuto = std::all_of(torrents.cbegin(), torrents.cend(),
+        [](const SelectedTorrent &t) {
+            return t.record.value(QStringLiteral("auto_tmm")).toBool();
+        });
+    QAction *autoTMM = menu.addAction(tr("Automatic Torrent Management"));
+    autoTMM->setObjectName(QStringLiteral("torrentContextAutoManagement"));
+    autoTMM->setCheckable(true);
+    autoTMM->setChecked(allAuto);
+    if (!allAuto && std::any_of(torrents.cbegin(), torrents.cend(),
+        [](const SelectedTorrent &t) {
+            return t.record.value(QStringLiteral("auto_tmm")).toBool();
+        }))
+        autoTMM->setToolTip(tr("Mixed selection; select to enable for all selected torrents."));
+    connect(autoTMM, &QAction::triggered, this, [this, allAuto]() {
+        emit torrentAutoManagementRequested(!allAuto);
+    });
+    menu.addSeparator();
+
     if (hasMetadata)
     {
         QAction *recheck = menu.addAction(icon("force-recheck"), tr("Force Recheck"));
