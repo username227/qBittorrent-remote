@@ -5,6 +5,7 @@
 #include "api/ServerProfile.h"
 
 #include <QAction>
+#include <QAbstractItemView>
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
@@ -302,12 +303,24 @@ private slots:
         auto *limit = dialog.findChild<QSpinBox *>(
             QStringLiteral("spinDownloadLimit"));
         QVERIFY(confirm && limit);
-        QVERIFY(!confirm->isEnabled());
+        QVERIFY(confirm->isEnabled());
         QVERIFY(!limit->isEnabled());
+        // Behavior's local controls are functional; obsolete remote-engine
+        // controls have been removed, not left as disabled placeholders.
+        QVERIFY(!dialog.findChild<QCheckBox *>(QStringLiteral("checkShowSplash")));
+        QVERIFY(!dialog.findChild<QCheckBox *>(QStringLiteral("checkProgramAutoExitConfirm")));
+        QVERIFY(!dialog.findChild<QCheckBox *>(QStringLiteral("checkProgramUpdates")));
+        QVERIFY(!dialog.findChild<QCheckBox *>(
+            QStringLiteral("checkPreventFromSuspendWhenDownloading")));
+        auto *downloadAction = dialog.findChild<QComboBox *>(
+            QStringLiteral("actionTorrentDlOnDblClBox"));
+        QVERIFY(downloadAction);
+        QVERIFY(downloadAction->isEnabled());
+        QVERIFY(downloadAction->view()->isEnabled());
         // The original native dialog has no persistent warning strip:
         // unsupported control tooltips communicate the same limitation.
         QVERIFY(!dialog.findChild<QLabel *>(QStringLiteral("unimplementedNotice")));
-        QVERIFY(navigation->toolTip().contains(QStringLiteral("not live settings")));
+        QVERIFY(navigation->toolTip().contains(QStringLiteral("remain disabled")));
         dialog.resize(765, 550); // keep the native dialog freely resizable
         QCoreApplication::processEvents();
         QVERIFY(dialog.height() < 660);

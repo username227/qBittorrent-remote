@@ -194,8 +194,9 @@ RemotePreferencesDialog::RemotePreferencesDialog(QSettings &settings,
     // Unsupported controls already carry the same explanatory tooltip;
     // a permanent footer warning reduced the height available to settings.
     m_ui->tabSelection->setToolTip(tr(
-        "Unsupported controls remain visible but disabled; displayed "
-        "defaults are not live settings from the remote server."));
+        "Unimplemented controls remain disabled. Local Behavior controls "
+        "use desktop settings; NAS log controls load actual values from the "
+        "connected server."));
 
     m_applyButton = m_ui->buttonBox->button(QDialogButtonBox::Apply);
     m_applyButton->setObjectName(QStringLiteral("preferencesApply"));
