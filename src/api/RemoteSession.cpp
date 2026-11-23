@@ -902,7 +902,7 @@ void RemoteSession::setTorrentSavePath(const QStringList &hashes, const QString 
         return;
     }
     QUrlQuery form;
-    form.addQueryItem(QStringLiteral("hashes"), hashes.join(QLatin1Char('|')));
+    form.addQueryItem(QStringLiteral("id"), hashes.join(QLatin1Char('|')));
     form.addQueryItem(QStringLiteral("path"), path);
     queueOperation(QStringLiteral("api/v2/torrents/setSavePath"),
         form.toString(QUrl::FullyEncoded).toUtf8(),
@@ -923,7 +923,7 @@ void RemoteSession::setTorrentDownloadPath(const QStringList &hashes, const QStr
         return;
     }
     QUrlQuery form;
-    form.addQueryItem(QStringLiteral("hashes"), hashes.join(QLatin1Char('|')));
+    form.addQueryItem(QStringLiteral("id"), hashes.join(QLatin1Char('|')));
     form.addQueryItem(QStringLiteral("path"), path);
     queueOperation(QStringLiteral("api/v2/torrents/setDownloadPath"),
         form.toString(QUrl::FullyEncoded).toUtf8(),
