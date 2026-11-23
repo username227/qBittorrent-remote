@@ -4,6 +4,8 @@
 #include "gui/ConnectionDialog.h"
 #include "gui/RemoteAddTorrentDialog.h"
 #include "gui/RemoteTrackerEntriesDialog.h"
+#include "gui/RemoteTorrentContentLayoutDialog.h"
+#include "gui/RemoteTorrentOptionsDialog.h"
 #include "gui/upstream/transferlistdelegate.h"
 #include "gui/upstream/proptabbar.h"
 #include "api/CredentialVault.h"
@@ -44,6 +46,9 @@
 #include <QLabel>
 #include <QInputDialog>
 #include <QPlainTextEdit>
+#include <QStandardItemModel>
+#include <QSpinBox>
+#include <QDoubleSpinBox>
 #include <QDialogButtonBox>
 #include <QImage>
 #include <QProgressBar>
@@ -193,6 +198,15 @@ public:
                                 response = QJsonDocument(m_trackerEntries.value(hash))
                                     .toJson(QJsonDocument::Compact);
                             }
+                            else if (path.startsWith("/api/v2/torrents/files?")
+                                     && m_statefulContentDemo)
+                            {
+                                const QString hash = QUrlQuery(QString::fromLatin1(
+                                    path.mid(path.indexOf('?') + 1)))
+                                    .queryItemValue(QStringLiteral("hash"));
+                                response = QJsonDocument(m_contentEntries.value(hash))
+                                    .toJson(QJsonDocument::Compact);
+                            }
                             else if (path.startsWith("/api/v2/torrents/properties?"))
                                 response = R"DEMO({"save_path":"/share/NAS/torrents","comment":"Get it at https://example.test/files?id=7&part=2 and <b>plain markup</b>; javascript:alert(1)","total_downloaded":1048576,"total_uploaded":2048,"total_size":1048576,"time_elapsed":3600,"eta":0,"share_ratio":1.25,"pieces_num":4,"seeds":2,"peers":1})DEMO";
                             else if (path.startsWith("/api/v2/torrents/trackers?"))
@@ -228,12 +242,110 @@ public:
                             else
                                 response = R"([{"index":0,"name":"data/file-one.bin","size":512,"progress":1,"priority":1},{"index":1,"name":"data/file-two.bin","size":512,"progress":0.5,"priority":6}])";
                         }
+                        else if (path.startsWith("/api/v2/torrents/export?") && hasCookie)
+                        {
+                            const QString hash = QUrlQuery(QString::fromLatin1(
+                                path.mid(path.indexOf('?') + 1)))
+                                .queryItemValue(QStringLiteral("hash"));
+                            if (m_statefulOptionsDemo && m_optionStates.contains(hash))
+                                response = m_exportedTorrent;
+                            else
+                            {
+                                code = 404;
+                                response = "Unknown torrent";
+                            }
+                        }
                         else if (path.startsWith("/api/v2/torrents/") && hasCookie)
                         {
                             m_commands.append({path, body});
                             code = m_rejectCommands ? 400 : 200;
                             response = m_rejectCommands ? QByteArrayLiteral("Rejected")
                                                         : QByteArrayLiteral("Ok.");
+
+                            // Real user-visible effects of content renames
+                            // and options changes, not protocol implementation
+                            // details such as exact API request counts.
+                            const QUrlQuery form(QString::fromUtf8(body));
+                            if (m_statefulContentDemo && !m_rejectCommands
+                                && path == "/api/v2/torrents/renameFile")
+                            {
+                                const QString hash = form.queryItemValue(QStringLiteral("hash"));
+                                const QString before = form.queryItemValue(
+                                    QStringLiteral("oldPath"), QUrl::FullyDecoded);
+                                const QString after = form.queryItemValue(
+                                    QStringLiteral("newPath"), QUrl::FullyDecoded);
+                                QJsonArray updated;
+                                bool found = false;
+                                for (const QJsonValue &v : m_contentEntries.value(hash))
+                                {
+                                    QJsonObject row = v.toObject();
+                                    if (row.value(QStringLiteral("name")).toString() == before)
+                                    {
+                                        row.insert(QStringLiteral("name"), after);
+                                        found = true;
+                                    }
+                                    updated.append(row);
+                                }
+                                if (!found)
+                                {
+                                    code = 409;
+                                    response = "File not found";
+                                }
+                                else
+                                    m_contentEntries.insert(hash, updated);
+                            }
+                            if (m_statefulOptionsDemo && !m_rejectCommands)
+                            {
+                                const QByteArray op = path.mid(QByteArrayLiteral("/api/v2/torrents/").size());
+                                const QString hashes = form.queryItemValue(QStringLiteral("hashes"));
+                                for (const QString &hash : hashes.split(QLatin1Char('|'), Qt::SkipEmptyParts))
+                                {
+                                    if (!m_optionStates.contains(hash))
+                                        continue;
+                                    QJsonObject state = m_optionStates.value(hash);
+                                    if (op == "setUploadLimit")
+                                        state.insert(QStringLiteral("up_limit"),
+                                            form.queryItemValue(QStringLiteral("limit")).toInt());
+                                    else if (op == "setDownloadLimit")
+                                        state.insert(QStringLiteral("dl_limit"),
+                                            form.queryItemValue(QStringLiteral("limit")).toInt());
+                                    else if (op == "toggleSequentialDownload")
+                                        state.insert(QStringLiteral("seq_dl"),
+                                            !state.value(QStringLiteral("seq_dl")).toBool());
+                                    else if (op == "toggleFirstLastPiecePrio")
+                                        state.insert(QStringLiteral("f_l_piece_prio"),
+                                            !state.value(QStringLiteral("f_l_piece_prio")).toBool());
+                                    else if (op == "setSuperSeeding")
+                                        state.insert(QStringLiteral("super_seeding"),
+                                            form.queryItemValue(QStringLiteral("value")) == QStringLiteral("true"));
+                                    else if (op == "setAutoManagement")
+                                        state.insert(QStringLiteral("auto_tmm"),
+                                            form.queryItemValue(QStringLiteral("enable")) == QStringLiteral("true"));
+                                    else if (op == "setSavePath")
+                                        state.insert(QStringLiteral("save_path"),
+                                            form.queryItemValue(QStringLiteral("path")));
+                                    else if (op == "setDownloadPath")
+                                        state.insert(QStringLiteral("download_path"),
+                                            form.queryItemValue(QStringLiteral("path")));
+                                    else if (op == "setCategory")
+                                        state.insert(QStringLiteral("category"),
+                                            form.queryItemValue(QStringLiteral("category")));
+                                    else if (op == "setShareLimits")
+                                    {
+                                        state.insert(QStringLiteral("ratio_limit"),
+                                            form.queryItemValue(QStringLiteral("ratioLimit")).toDouble());
+                                        state.insert(QStringLiteral("seeding_time_limit"),
+                                            form.queryItemValue(QStringLiteral("seedingTimeLimit")).toInt());
+                                        state.insert(QStringLiteral("inactive_seeding_time_limit"),
+                                            form.queryItemValue(QStringLiteral("inactiveSeedingTimeLimit")).toInt());
+                                        state.insert(QStringLiteral("share_limits_mode"),
+                                            form.queryItemValue(QStringLiteral("shareLimitsMode")));
+                                        state.insert(QStringLiteral("share_limit_action"),
+                                            form.queryItemValue(QStringLiteral("shareLimitAction")));
+                                    }
+                                    m_optionStates.insert(hash, state);
+                                }
+                            }
 
                             // For the functional tracker workflow, model the
                             // actual server-side result of Web API mutations.
@@ -369,6 +481,53 @@ public:
     void enableNativePresentationDemo() { m_demoNativePresentation = true; }
     void enableDetailsDemo() { m_demoDetails = true; }
     void enableDistinctTrackerPasskeyDemo() { m_distinctTrackerPasskeys = true; }
+    void enableRemoteContentAndOptionsDemo()
+    {
+        m_statefulContentDemo = true;
+        m_statefulOptionsDemo = true;
+        const QString first(40, QLatin1Char('a'));
+        const QString second(40, QLatin1Char('b'));
+        m_contentEntries.insert(first, QJsonArray{
+            QJsonObject{{QStringLiteral("index"), 0},
+                        {QStringLiteral("name"), QStringLiteral("music/song-one.flac")},
+                        {QStringLiteral("size"), 1024}},
+            QJsonObject{{QStringLiteral("index"), 1},
+                        {QStringLiteral("name"), QStringLiteral("music/song-two.flac")},
+                        {QStringLiteral("size"), 2048}}
+        });
+        QJsonObject firstState{
+            {QStringLiteral("name"), QStringLiteral("Album one")},
+            {QStringLiteral("auto_tmm"), false},
+            {QStringLiteral("save_path"), QStringLiteral("/share/NAS/torrents")},
+            {QStringLiteral("download_path"), QString()},
+            {QStringLiteral("category"), QStringLiteral("music")},
+            {QStringLiteral("up_limit"), 512 * 1024},
+            {QStringLiteral("dl_limit"), 1024 * 1024},
+            {QStringLiteral("ratio_limit"), -2},
+            {QStringLiteral("seeding_time_limit"), -2},
+            {QStringLiteral("inactive_seeding_time_limit"), -2},
+            {QStringLiteral("share_limits_mode"), QStringLiteral("Default")},
+            {QStringLiteral("share_limit_action"), QStringLiteral("Default")},
+            {QStringLiteral("seq_dl"), false},
+            {QStringLiteral("f_l_piece_prio"), false},
+            {QStringLiteral("super_seeding"), false},
+            {QStringLiteral("private"), false}
+        };
+        m_optionStates.insert(first, firstState);
+        firstState.insert(QStringLiteral("ratio_limit"), 2.0);
+        firstState.insert(QStringLiteral("up_limit"), 256 * 1024);
+        m_optionStates.insert(second, firstState);
+    }
+    QJsonArray contentEntries(const QString &hash) const
+    {
+        return m_contentEntries.value(hash);
+    }
+    QJsonObject optionState(const QString &hash) const
+    {
+        return m_optionStates.value(hash);
+    }
+    QByteArray exportedTorrent() const { return m_exportedTorrent; }
+
     void enableStatefulTrackerEditingDemo()
     {
         m_statefulTrackerDemo = true;
@@ -446,6 +605,12 @@ private:
     bool m_demoDetails = false;
     bool m_distinctTrackerPasskeys = false;
     bool m_statefulTrackerDemo = false;
+    bool m_statefulContentDemo = false;
+    bool m_statefulOptionsDemo = false;
+    QHash<QString, QJsonArray> m_contentEntries;
+    QHash<QString, QJsonObject> m_optionStates;
+    QByteArray m_exportedTorrent = QByteArrayLiteral(
+        "d4:infod6:lengthi1e4:name4:testee");
     QHash<QString, QJsonArray> m_trackerEntries;
     QHash<QString, int> m_peerConnections;
     QList<QByteArray> m_detailRequests;
@@ -2662,6 +2827,8 @@ private slots:
 
     void nativeTrackerListEditorReplacesAllSelectedTorrents();
     void privateTrackerAdditionPolicyThroughEditor();
+    void nativeManageContentAndTorrentOptionsChangeServerState();
+    void remoteTorrentExportReturnsActualMetadata();
 
     void userSeesAuthenticationFailure()
     {
@@ -2931,6 +3098,139 @@ void ConnectionWorkflowTest::privateTrackerAdditionPolicyThroughEditor()
     edit({publicHash}, {}, oldUrl + QStringLiteral("\n\n") + backup, false);
     const QJsonArray publicExpected {entry(oldUrl), entry(backup, 1)};
     QTRY_COMPARE_WITH_TIMEOUT(server.trackerEntries(publicHash), publicExpected, 7000);
+}
+
+
+void ConnectionWorkflowTest::nativeManageContentAndTorrentOptionsChangeServerState()
+{
+    DemoQbittorrentServer server(true);
+    server.enableDetailsDemo();
+    server.enableRemoteContentAndOptionsDemo();
+    QVERIFY(server.start());
+
+    Remote::RemoteSession session;
+    Remote::ServerProfile profile {{}, QStringLiteral("NAS"), server.url(),
+                                    QStringLiteral("demo"), false, false};
+    QSignalSpy connected(&session, &Remote::RemoteSession::connected);
+    session.connectToServer(profile, QStringLiteral("demo-password"));
+    QTRY_COMPARE_WITH_TIMEOUT(connected.size(), 1, 6000);
+
+    const QString first(40, QLatin1Char('a'));
+    const QString second(40, QLatin1Char('b'));
+    const QJsonArray initialFiles = server.contentEntries(first);
+
+    // User opens the native Manage Content dialog and changes a file path.
+    RemoteTorrentContentLayoutDialog manage(&session, first, [] { return true; });
+    manage.show();
+    auto *tree = manage.findChild<QTreeView *>(QStringLiteral("pathListView"));
+    auto *buttons = manage.findChild<QDialogButtonBox *>(QStringLiteral("buttonBox"));
+    QVERIFY(tree && buttons);
+    auto *model = qobject_cast<QStandardItemModel *>(tree->model());
+    QVERIFY(model);
+    QTRY_COMPARE_WITH_TIMEOUT(model->rowCount(), 2, 7000);
+    QCOMPARE(model->item(1, 1)->text(), QStringLiteral("music/song-two.flac"));
+    QCOMPARE(server.contentEntries(first), initialFiles);
+
+    model->item(1, 1)->setText(QStringLiteral("music/renamed-song.flac"));
+    QVERIFY(buttons->button(QDialogButtonBox::Apply)->isEnabled());
+    buttons->button(QDialogButtonBox::Apply)->click();
+    QTRY_COMPARE_WITH_TIMEOUT(server.contentEntries(first).at(1).toObject()
+        .value(QStringLiteral("name")).toString(),
+        QStringLiteral("music/renamed-song.flac"), 7000);
+    QTRY_VERIFY_WITH_TIMEOUT(!buttons->button(QDialogButtonBox::Apply)->isEnabled(), 7000);
+    manage.reject();
+
+    // The remote file list survives closing and reopening the native editor.
+    RemoteTorrentContentLayoutDialog reopened(&session, first, [] { return true; });
+    reopened.show();
+    auto *reopenedTree = reopened.findChild<QTreeView *>(QStringLiteral("pathListView"));
+    QVERIFY(reopenedTree);
+    QTRY_COMPARE_WITH_TIMEOUT(reopenedTree->model()->rowCount(), 2, 7000);
+    QCOMPARE(reopenedTree->model()->index(1, 1).data().toString(),
+             QStringLiteral("music/renamed-song.flac"));
+    reopened.reject();
+
+    const QJsonObject initialFirst = server.optionState(first);
+    const QJsonObject initialSecond = server.optionState(second);
+    // Open and Cancel must not change anything on either torrent.
+    {
+        RemoteTorrentOptionsDialog dialog(&session,
+            {{first, initialFirst}, {second, initialSecond}},
+            {QStringLiteral("music")}, {}, [] { return true; });
+        dialog.show();
+        dialog.reject();
+    }
+    QCOMPARE(server.optionState(first), initialFirst);
+    QCOMPARE(server.optionState(second), initialSecond);
+
+    // Mixed selection: changing only the upload limit must preserve each
+    // torrent's existing ratio/other options and not overwrite with a default.
+    {
+        RemoteTorrentOptionsDialog dialog(&session,
+            {{first, initialFirst}, {second, initialSecond}},
+            {QStringLiteral("music")}, {}, [] { return true; });
+        dialog.show();
+        auto *upload = dialog.findChild<QSpinBox *>(QStringLiteral("spinUploadLimit"));
+        QVERIFY(upload);
+        upload->setValue(768);
+        auto *actions = dialog.findChild<QDialogButtonBox *>(QStringLiteral("buttonBox"));
+        QVERIFY(actions);
+        actions->button(QDialogButtonBox::Ok)->click();
+    }
+    QTRY_COMPARE_WITH_TIMEOUT(server.optionState(first).value(QStringLiteral("up_limit"))
+        .toInt(), 768 * 1024, 7000);
+    QTRY_COMPARE_WITH_TIMEOUT(server.optionState(second).value(QStringLiteral("up_limit"))
+        .toInt(), 768 * 1024, 7000);
+    QCOMPARE(server.optionState(first).value(QStringLiteral("ratio_limit")),
+             initialFirst.value(QStringLiteral("ratio_limit")));
+    QCOMPARE(server.optionState(second).value(QStringLiteral("ratio_limit")),
+             initialSecond.value(QStringLiteral("ratio_limit")));
+
+    // Reopen with actual server state: changing sequential download and
+    // an explicit ratio must update only the requested settings.
+    {
+        RemoteTorrentOptionsDialog dialog(&session,
+            {{first, server.optionState(first)}}, {QStringLiteral("music")},
+            {}, [] { return true; });
+        dialog.show();
+        auto *sequential = dialog.findChild<QCheckBox *>(QStringLiteral("checkSequential"));
+        auto *ratioMode = dialog.findChild<QComboBox *>(QStringLiteral("comboBoxRatioMode"));
+        auto *ratioValue = dialog.findChild<QDoubleSpinBox *>(
+            QStringLiteral("spinBoxRatioValue"));
+        auto *actions = dialog.findChild<QDialogButtonBox *>(QStringLiteral("buttonBox"));
+        QVERIFY(sequential && ratioMode && ratioValue && actions);
+        sequential->click();
+        ratioMode->setCurrentIndex(2);
+        ratioValue->setValue(1.5);
+        actions->button(QDialogButtonBox::Ok)->click();
+    }
+    QTRY_VERIFY_WITH_TIMEOUT(server.optionState(first).value(QStringLiteral("seq_dl"))
+        .toBool(), 7000);
+    QTRY_COMPARE_WITH_TIMEOUT(server.optionState(first).value(QStringLiteral("ratio_limit"))
+        .toDouble(), 1.5, 7000);
+    QCOMPARE(server.optionState(second).value(QStringLiteral("ratio_limit")),
+             initialSecond.value(QStringLiteral("ratio_limit")));
+}
+
+void ConnectionWorkflowTest::remoteTorrentExportReturnsActualMetadata()
+{
+    DemoQbittorrentServer server(true);
+    server.enableRemoteContentAndOptionsDemo();
+    QVERIFY(server.start());
+
+    Remote::RemoteSession session;
+    Remote::ServerProfile profile {{}, QStringLiteral("NAS"), server.url(),
+                                    QStringLiteral("demo"), false, false};
+    QSignalSpy connected(&session, &Remote::RemoteSession::connected);
+    session.connectToServer(profile, QStringLiteral("demo-password"));
+    QTRY_COMPARE_WITH_TIMEOUT(connected.size(), 1, 6000);
+
+    QSignalSpy received(&session, &Remote::RemoteSession::torrentExportReceived);
+    const QString first(40, QLatin1Char('a'));
+    session.requestTorrentExport(first);
+    QTRY_COMPARE_WITH_TIMEOUT(received.size(), 1, 7000);
+    QCOMPARE(received.first().at(0).toString(), first);
+    QCOMPARE(received.first().at(1).toByteArray(), server.exportedTorrent());
 }
 
 QTEST_MAIN(ConnectionWorkflowTest)
