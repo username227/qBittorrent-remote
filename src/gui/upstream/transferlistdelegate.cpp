@@ -74,5 +74,8 @@ void TransferListDelegate::paint(QPainter *painter, const QStyleOptionViewItem &
 
     QStyleOptionViewItem customOption {option};
     customOption.state.setFlag(QStyle::State_Enabled, enabled);
-    m_progressBarPainter.paint(painter, customOption, index.data().toString(), progress);
+    const QColor stateColor = m_progressFollowsTextColor
+        ? index.data(Qt::ForegroundRole).value<QColor>() : QColor();
+    m_progressBarPainter.paint(painter, customOption,
+                               index.data().toString(), progress, stateColor);
 }

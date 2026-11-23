@@ -561,7 +561,7 @@
                   <string>Shows a confirmation dialog when exiting with active torrents</string>
                  </property>
                  <property name="text">
-                  <string>Confirmation on exit when torrents are active</string>
+                  <string>Confirm before quitting qBittorrent Remote</string>
                  </property>
                  <property name="checked">
                   <bool>true</bool>

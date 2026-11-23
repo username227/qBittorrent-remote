@@ -25,6 +25,7 @@ public:
 
     void refreshFontMetrics();
     void setHideZeroStatusFilters(bool hide);
+    void setSeparateTrackerStatusFilter(bool separate);
     void updateCounts(const QHash<QString, QJsonObject> &torrents,
                       const QSet<QString> &categories = {},
                       const QSet<QString> &tags = {},
@@ -52,6 +53,8 @@ private:
     QListWidget *m_categories = nullptr;
     QListWidget *m_tags = nullptr;
     QListWidget *m_trackers = nullptr;
+    QListWidget *m_trackerStatuses = nullptr;
+    TransferListFiltersWidgetItem *m_trackerStatusSection = nullptr;
     QTreeWidget *m_directories = nullptr;
     TransferListFiltersWidgetItem *m_directorySection = nullptr;
     QHash<QString, QTreeWidgetItem *> m_directoryItems;
@@ -60,6 +63,7 @@ private:
     QString m_selectedDirectory;
     bool m_includeSubfolders = false;
     bool m_hideZeroStatusFilters = false;
+    bool m_separateTrackerStatus = false;
     QHash<QString, int> m_statusCounts;
     void applyStatusVisibility();
     bool m_expansionInitialized = false;

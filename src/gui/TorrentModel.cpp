@@ -3,6 +3,9 @@
 
 #include <QDateTime>
 #include <QIcon>
+#include <QGuiApplication>
+#include <QPalette>
+#include <QColor>
 #include <QJsonArray>
 #include <QJsonValue>
 #include <QLocale>
@@ -174,6 +177,17 @@ QVariant TorrentModel::data(const QModelIndex &index, int role) const
         return static_cast<int>(Qt::AlignVCenter | Qt::AlignRight);
     if (role == Qt::UserRole)
         return value.isUndefined() ? QVariant() : value.toVariant();
+    if (role == Qt::ForegroundRole && m_useStateColors)
+    {
+        const QString state = record.value(QStringLiteral("state")).toString();
+        const bool dark = QGuiApplication::palette().color(QPalette::Base).lightness() < 128;
+        if (state == QLatin1String("error") || state == QLatin1String("missingFiles"))
+            return QColor(dark ? QStringLiteral("#ff8d80") : QStringLiteral("#ad2929"));
+        if (state.contains(QLatin1String("DL")) || state.contains(QLatin1String("downloading"), Qt::CaseInsensitive))
+            return QColor(dark ? QStringLiteral("#82b5ff") : QStringLiteral("#215ba5"));
+        if (state.contains(QLatin1String("UP")) || state.contains(QLatin1String("uploading"), Qt::CaseInsensitive))
+            return QColor(dark ? QStringLiteral("#8ad9a1") : QStringLiteral("#277a48"));
+    }
 
     if (role != Qt::DisplayRole && role != Qt::ToolTipRole)
         return {};
@@ -299,6 +313,16 @@ void TorrentModel::setHideZeroValues(bool enabled, int mode)
     if (!m_hashes.isEmpty())
         emit dataChanged(index(0, 0), index(m_hashes.size() - 1, columnCount() - 1),
                          {Qt::DisplayRole});
+}
+
+void TorrentModel::setUseStateColors(bool enabled)
+{
+    if (m_useStateColors == enabled)
+        return;
+    m_useStateColors = enabled;
+    if (!m_hashes.isEmpty())
+        emit dataChanged(index(0, 0), index(m_hashes.size() - 1, columnCount() - 1),
+                         {Qt::ForegroundRole});
 }
 
 void TorrentModel::clear()

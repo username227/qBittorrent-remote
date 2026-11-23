@@ -531,6 +531,17 @@ void MainWindow::setupActions()
         if (!server || !server->connected || hashes.isEmpty())
             return;
 
+        const bool confirmDeletion = m_settings->value(
+            QStringLiteral("Preferences/Behavior/ConfirmTorrentDeletion"), true).toBool();
+        if (!confirmDeletion)
+        {
+            // With confirmations disabled, perform metadata-only deletion.
+            // Never silently delete downloaded NAS content.
+            server->session->commandTorrents(
+                Remote::RemoteSession::TorrentCommand::Delete, hashes, false);
+            return;
+        }
+
         QMessageBox prompt(this);
         prompt.setObjectName(QStringLiteral("removeTorrentsDialog"));
         prompt.setIcon(QMessageBox::Warning);
@@ -1076,6 +1087,12 @@ void MainWindow::updateTorrentCount()
 void MainWindow::applyLocalBehaviorPreferences()
 {
     updateTraySettings();
+    const bool stateColors = m_settings->value(
+        QStringLiteral("Preferences/Behavior/StateColors"), true).toBool();
+    const bool progressColor = m_settings->value(
+        QStringLiteral("Preferences/Behavior/ProgressFollowsState"), false).toBool();
+    const bool separateTracker = m_settings->value(
+        QStringLiteral("Preferences/Behavior/SeparateTrackerStatus"), false).toBool();
     const bool alternating = m_settings->value(
         QStringLiteral("Preferences/Behavior/AlternatingRows"), true).toBool();
     const bool hideZero = m_settings->value(
@@ -1085,12 +1102,16 @@ void MainWindow::applyLocalBehaviorPreferences()
 
     const bool hideZeroStatus = m_settings->value(
         QStringLiteral("Preferences/Behavior/HideZeroStatusFilters"), false).toBool();
-    const auto apply = [alternating, hideZero, mode, hideZeroStatus](ServerPane *pane) {
+    const auto apply = [alternating, hideZero, mode, hideZeroStatus,
+                        stateColors, progressColor, separateTracker](ServerPane *pane) {
         if (!pane)
             return;
         pane->table()->setAlternatingRowColors(alternating);
         pane->model()->setHideZeroValues(hideZero, mode);
         pane->sidebar()->setHideZeroStatusFilters(hideZeroStatus);
+        pane->model()->setUseStateColors(stateColors);
+        pane->setProgressFollowsStateColors(progressColor && stateColors);
+        pane->setSeparateTrackerStatusFilter(separateTracker);
     };
     apply(m_emptyPane);
     for (const auto &connection : m_connections)
@@ -1342,6 +1363,13 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
         m_settings->value(QStringLiteral("Preferences/Behavior/HideZeroMode"), 0).toInt());
     connection->pane->sidebar()->setHideZeroStatusFilters(m_settings->value(
         QStringLiteral("Preferences/Behavior/HideZeroStatusFilters"), false).toBool());
+    connection->pane->model()->setUseStateColors(m_settings->value(
+        QStringLiteral("Preferences/Behavior/StateColors"), true).toBool());
+    connection->pane->setProgressFollowsStateColors(m_settings->value(
+        QStringLiteral("Preferences/Behavior/ProgressFollowsState"), false).toBool()
+        && m_settings->value(QStringLiteral("Preferences/Behavior/StateColors"), true).toBool());
+    connection->pane->setSeparateTrackerStatusFilter(m_settings->value(
+        QStringLiteral("Preferences/Behavior/SeparateTrackerStatus"), false).toBool());
     connection->session = new Remote::RemoteSession(this);
     auto *session = connection->session;
     m_connections.append(connection);
@@ -2132,6 +2160,20 @@ void MainWindow::closeEvent(QCloseEvent *event)
         event->ignore();
         hide();
         return;
+    }
+    if (m_settings->value(
+            QStringLiteral("Preferences/Behavior/ConfirmExit"), false).toBool())
+    {
+        const auto response = QMessageBox::question(this,
+            tr("Quit qBittorrent Remote?"),
+            tr("Close qBittorrent Remote? Remote server torrents will continue running."),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (response != QMessageBox::Yes)
+        {
+            m_forceExit = false;
+            event->ignore();
+            return;
+        }
     }
     for (const auto &connection : m_connections)
         if (connection->pane)

@@ -366,6 +366,19 @@ QString ServerPane::freeSpaceText() const
         QString::fromLatin1(units[unit]));
 }
 
+void ServerPane::setProgressFollowsStateColors(bool enabled)
+{
+    auto *delegate = static_cast<TransferListDelegate *>(m_table->itemDelegate());
+    delegate->setProgressFollowsTextColor(enabled);
+    m_table->viewport()->update();
+}
+
+void ServerPane::setSeparateTrackerStatusFilter(bool enabled)
+{
+    m_sidebar->setSeparateTrackerStatusFilter(enabled);
+    m_sidebar->updateCounts(m_model->torrents(), m_categories, m_tags, m_trackers);
+}
+
 void ServerPane::setSearchTerm(const QString &text)
 {
     m_search = text;

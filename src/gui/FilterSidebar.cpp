@@ -257,6 +257,12 @@ FilterSidebar::FilterSidebar(QWidget *parent)
     m_categories = section(tr("Categories"), QStringLiteral("categoryFilterList"));
     m_tags = section(tr("Tags"), QStringLiteral("tagFilterList"));
     m_trackers = section(tr("Trackers"), QStringLiteral("trackerFilterList"));
+    m_trackerStatuses = section(tr("Tracker status"),
+                                QStringLiteral("trackerStatusFilterList"));
+    m_trackerStatusSection = qobject_cast<TransferListFiltersWidgetItem *>(
+        m_trackerStatuses->parentWidget());
+    if (m_trackerStatusSection)
+        m_trackerStatusSection->hide();
 
     // The section caption and collapse arrow are the exact same upstream
     // widget used for Status/Categories/Tags/Trackers. A native QTreeWidget
@@ -337,6 +343,15 @@ FilterSidebar::FilterSidebar(QWidget *parent)
     updateCounts({});
 }
 
+void FilterSidebar::setSeparateTrackerStatusFilter(bool separate)
+{
+    if (m_separateTrackerStatus == separate)
+        return;
+    m_separateTrackerStatus = separate;
+    if (m_trackerStatusSection)
+        m_trackerStatusSection->setVisible(separate);
+}
+
 void FilterSidebar::setHideZeroStatusFilters(bool hide)
 {
     if (m_hideZeroStatusFilters == hide)
@@ -370,7 +385,8 @@ void FilterSidebar::applyStatusVisibility()
 
 void FilterSidebar::refreshFontMetrics()
 {
-    for (auto *list : {m_status, m_categories, m_tags, m_trackers})
+    for (auto *list : {m_status, m_categories, m_tags, m_trackers,
+                       m_trackerStatuses})
     {
         const int rowHeight = qMax(list->fontMetrics().height() + 4,
                                    list->iconSize().height() + 4);
@@ -495,12 +511,18 @@ void FilterSidebar::updateCounts(const QHash<QString, QJsonObject> &torrents,
     }
 
     QList<Entry> trackerRows {
+        {QStringLiteral("all"), tr("All"), "trackers", static_cast<int>(torrents.size())}
+    };
+    const QList<Entry> trackerStatusRows {
         {QStringLiteral("all"), tr("All"), "trackers", static_cast<int>(torrents.size())},
         {QStringLiteral("trackerless"), tr("Trackerless"), "trackerless", trackerless},
         {QStringLiteral("tracker-error"), tr("Tracker error"), "tracker-error", trackerError},
         {QStringLiteral("other-error"), tr("Other error"), "tracker-error", otherError},
         {QStringLiteral("warning"), tr("Warning"), "tracker-warning", warning}
     };
+    if (!m_separateTrackerStatus)
+        for (int i = 1; i < trackerStatusRows.size(); ++i)
+            trackerRows.append(trackerStatusRows.at(i));
     QStringList sortedHosts = m_trackerHosts.keys();
     sortedHosts.sort(Qt::CaseInsensitive);
     for (const QString &host : sortedHosts)
@@ -513,6 +535,7 @@ void FilterSidebar::updateCounts(const QHash<QString, QJsonObject> &torrents,
     lostSelection |= updateList(m_categories, categoryRows);
     lostSelection |= updateList(m_tags, tagRows);
     lostSelection |= updateList(m_trackers, trackerRows);
+    lostSelection |= updateList(m_trackerStatuses, trackerStatusRows);
     updateDirectoryTree(torrents);
     if (lostSelection)
         emit filtersChanged();
@@ -748,16 +771,18 @@ bool FilterSidebar::matches(const QString &hash, const QJsonObject &torrent) con
     }
 
     const QString tracker = choice(m_trackers);
-    if (tracker == QLatin1String("trackerless")
+    const QString statusFilter = m_separateTrackerStatus
+        ? choice(m_trackerStatuses) : tracker;
+    if (statusFilter == QLatin1String("trackerless")
         && m_torrentsWithTrackers.contains(hash))
         return false;
-    if (tracker == QLatin1String("tracker-error")
+    if (statusFilter == QLatin1String("tracker-error")
         && !torrent.value(QStringLiteral("has_tracker_error")).toBool())
         return false;
-    if (tracker == QLatin1String("other-error")
+    if (statusFilter == QLatin1String("other-error")
         && !torrent.value(QStringLiteral("has_other_announce_error")).toBool())
         return false;
-    if (tracker == QLatin1String("warning")
+    if (statusFilter == QLatin1String("warning")
         && !torrent.value(QStringLiteral("has_tracker_warning")).toBool())
         return false;
     if (tracker.startsWith(QLatin1String("tracker:"))

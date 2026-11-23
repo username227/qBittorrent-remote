@@ -278,6 +278,11 @@ void RemotePreferencesDialog::loadLocalBehaviorControls()
         if (auto *combo = qobject_cast<QComboBox *>(widget))
             combo->view()->setEnabled(true);
     };
+    unlock(m_ui->confirmDeletion);
+    unlock(m_ui->checkUseTorrentStatesColors);
+    unlock(m_ui->checkProgressBarFollowsTextColor);
+    unlock(m_ui->checkBoxUseSeparateTrackerStatusFilter);
+    unlock(m_ui->checkProgramExitConfirm);
     unlock(m_ui->checkAltRowColors);
     unlock(m_ui->checkHideZero);
     unlock(m_ui->comboHideZero);
@@ -327,6 +332,18 @@ void RemotePreferencesDialog::loadLocalBehaviorControls()
     };
     updateTrayInputs();
 
+    m_ui->confirmDeletion->setChecked(m_settings.value(
+        QStringLiteral("Preferences/Behavior/ConfirmTorrentDeletion"), true).toBool());
+    m_ui->checkProgramExitConfirm->setChecked(m_settings.value(
+        QStringLiteral("Preferences/Behavior/ConfirmExit"), false).toBool());
+    m_ui->checkUseTorrentStatesColors->setChecked(m_settings.value(
+        QStringLiteral("Preferences/Behavior/StateColors"), true).toBool());
+    m_ui->checkProgressBarFollowsTextColor->setChecked(m_settings.value(
+        QStringLiteral("Preferences/Behavior/ProgressFollowsState"), false).toBool());
+    m_ui->checkProgressBarFollowsTextColor->setEnabled(
+        m_ui->checkUseTorrentStatesColors->isChecked());
+    m_ui->checkBoxUseSeparateTrackerStatusFilter->setChecked(m_settings.value(
+        QStringLiteral("Preferences/Behavior/SeparateTrackerStatus"), false).toBool());
     m_ui->checkAltRowColors->setChecked(m_settings.value(
         QStringLiteral("Preferences/Behavior/AlternatingRows"), true).toBool());
     const bool hideZero = m_settings.value(
@@ -383,6 +400,17 @@ void RemotePreferencesDialog::loadLocalBehaviorControls()
     connect(m_ui->checkCloseToSystray, &QCheckBox::toggled, this, dirty);
     connect(m_ui->comboTrayIcon, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [dirty](int) { dirty(); });
+    connect(m_ui->confirmDeletion, &QCheckBox::toggled, this, dirty);
+    connect(m_ui->checkProgramExitConfirm, &QCheckBox::toggled, this, dirty);
+    connect(m_ui->checkUseTorrentStatesColors, &QCheckBox::toggled, this,
+            [this, dirty](bool enabled) {
+                m_ui->checkProgressBarFollowsTextColor->setEnabled(enabled);
+                dirty();
+            });
+    connect(m_ui->checkProgressBarFollowsTextColor, &QCheckBox::toggled,
+            this, dirty);
+    connect(m_ui->checkBoxUseSeparateTrackerStatusFilter, &QCheckBox::toggled,
+            this, dirty);
     connect(m_ui->checkAltRowColors, &QCheckBox::toggled, this, dirty);
     connect(m_ui->checkHideZero, &QCheckBox::toggled, this, [this, dirty](bool value) {
         m_ui->comboHideZero->setEnabled(value);
@@ -809,6 +837,16 @@ bool RemotePreferencesDialog::applyChanges()
             m_ui->checkCloseToSystray->isChecked());
         m_settings.setValue(QStringLiteral("Preferences/Behavior/TrayIconStyle"),
             m_ui->comboTrayIcon->currentIndex());
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/ConfirmTorrentDeletion"),
+            m_ui->confirmDeletion->isChecked());
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/ConfirmExit"),
+            m_ui->checkProgramExitConfirm->isChecked());
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/StateColors"),
+            m_ui->checkUseTorrentStatesColors->isChecked());
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/ProgressFollowsState"),
+            m_ui->checkProgressBarFollowsTextColor->isChecked());
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/SeparateTrackerStatus"),
+            m_ui->checkBoxUseSeparateTrackerStatusFilter->isChecked());
         m_settings.setValue(QStringLiteral("Preferences/Behavior/AlternatingRows"),
             m_ui->checkAltRowColors->isChecked());
         m_settings.setValue(QStringLiteral("Preferences/Behavior/HideZero"),
