@@ -593,7 +593,11 @@ void RemoteSession::requestTorrentDetails(const QString &hash, int tab)
     const QString url = QStringLiteral("api/v2/%1?hash=%2%3")
         .arg(endpoints.at(tab), QString::fromLatin1(QUrl::toPercentEncoding(hash)),
              tab == 2 ? QStringLiteral("&rid=0") : QString());
-    m_operations.enqueue({url, {}, {}, {}, false, true, hash, tab});
+    QueuedOperation request {url, {}, {}, {}, false};
+    request.detailsRequest = true;
+    request.detailHash = hash;
+    request.detailTab = tab;
+    m_operations.enqueue(std::move(request));
     pumpOperations();
 }
 
