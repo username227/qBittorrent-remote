@@ -114,7 +114,7 @@ ServerPane::ServerPane(QWidget *parent) : QWidget(parent)
 
     m_sidebar = new FilterSidebar(outer);
     m_sidebar->setMinimumWidth(185);
-    m_sidebar->setMaximumWidth(320);
+    m_sidebar->setMaximumWidth(900);
 
     auto *vertical = new QSplitter(Qt::Vertical, outer);
     vertical->setObjectName(QStringLiteral("torrentDetailsSplitter"));
@@ -257,6 +257,9 @@ ServerPane::ServerPane(QWidget *parent) : QWidget(parent)
     outer->addWidget(vertical);
     outer->setStretchFactor(0, 0);
     outer->setStretchFactor(1, 1);
+    // Use a readable first-run width, but saved splitter sizes still win on
+    // reconnect. Users can widen the sidebar for long remote paths.
+    outer->setSizes({350, 930});
 }
 
 void ServerPane::applySync(const QJsonObject &payload)
@@ -703,6 +706,7 @@ void ServerPane::saveLayout(QSettings &settings, const QString &profileId) const
     settings.setValue(root + QStringLiteral("/detailsTab"), m_details->currentTab());
     settings.setValue(root + QStringLiteral("/detailsVisible"),
                       m_detailTabs->currentIndex() >= 0);
+    m_sidebar->saveDirectoryState(settings, root);
 
     const auto saveHeader = [&](const char *objectName, const char *key) {
         if (auto *view = m_details->findChild<QTreeWidget *>(
@@ -723,6 +727,7 @@ void ServerPane::restoreLayout(QSettings &settings, const QString &profileId)
     if (profileId.isEmpty())
         return;
     const QString root = serverLayoutPrefix(profileId);
+    m_sidebar->restoreDirectoryState(settings, root);
 
     const auto restoreSplitter = [&settings, &root](QSplitter *splitter, const char *key) {
         const QByteArray data = settings.value(

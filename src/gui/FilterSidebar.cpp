@@ -2,19 +2,29 @@
 #include "gui/FilterSidebar.h"
 #include "gui/upstream/transferlistfilterswidgetitem.h"
 
+#include <QCheckBox>
 #include <QFrame>
+#include <QHeaderView>
 #include <QIcon>
 #include <QJsonArray>
 #include <QListWidget>
 #include <QListWidgetItem>
+#include <QLayout>
+#include <QLocale>
+#include <QMenu>
 #include <QPalette>
+#include <QScrollBar>
+#include <QSettings>
 #include <QSignalBlocker>
 #include <QSizePolicy>
+#include <QTreeWidget>
+#include <QTreeWidgetItem>
 #include <QUrl>
 #include <QVBoxLayout>
 #include <QWidget>
 
 #include <algorithm>
+#include <utility>
 
 namespace
 {
@@ -52,6 +62,64 @@ QStringList torrentTags(const QJsonObject &torrent)
             result.append(tag);
     }
     return result;
+}
+
+
+constexpr char unknownLocation[] = "<unknown-save-path>";
+
+// Parse only the textual remote save_path. No QDir::canonicalPath, symlink
+// lookup, mount discovery, or merging of apparent QNAP aliases.
+QStringList directoryHierarchy(const QString &path)
+{
+    QStringList dirs;
+    QChar separator;
+    QString prefix;
+    if (path.startsWith(QLatin1Char('/')))
+        separator = QLatin1Char('/');
+    else if (path.size() >= 3 && path.at(1) == QLatin1Char(':')
+             && path.at(2) == QLatin1Char('\\'))
+        separator = QLatin1Char('\\');
+    else
+        return dirs;
+
+    for (const QString &part : path.split(separator, Qt::SkipEmptyParts))
+    {
+        if (separator == QLatin1Char('/') || !prefix.isEmpty())
+            prefix += separator;
+        prefix += part;
+        dirs.append(prefix);
+    }
+    if (dirs.isEmpty() && separator == QLatin1Char('/'))
+        dirs.append(QStringLiteral("/"));
+    return dirs;
+}
+
+QString torrentDirectory(const QJsonObject &torrent)
+{
+    const QStringList dirs = directoryHierarchy(
+        torrent.value(QStringLiteral("save_path")).toString());
+    return dirs.isEmpty() ? QString::fromLatin1(unknownLocation) : dirs.constLast();
+}
+
+QString parentDirectory(const QString &path)
+{
+    if (path == QLatin1String("/") || path == QLatin1String(unknownLocation))
+        return {};
+    const QChar sep = path.startsWith(QLatin1Char('/'))
+        ? QLatin1Char('/') : QLatin1Char('\\');
+    const int index = path.lastIndexOf(sep);
+    return index <= 0 ? QString() : path.left(index);
+}
+
+QString directoryName(const QString &path)
+{
+    if (path == QLatin1String(unknownLocation))
+        return QObject::tr("No save path reported");
+    if (path == QLatin1String("/"))
+        return path;
+    const QChar sep = path.startsWith(QLatin1Char('/'))
+        ? QLatin1Char('/') : QLatin1Char('\\');
+    return path.mid(path.lastIndexOf(sep) + 1);
 }
 
 bool statusMatches(const QString &key, const QJsonObject &torrent)
@@ -162,6 +230,7 @@ bool updateList(QListWidget *list, const QList<Entry> &entries)
 FilterSidebar::FilterSidebar(QWidget *parent)
     : QScrollArea(parent)
 {
+    Q_INIT_RESOURCE(qbittorrent_icons);
     setObjectName(QStringLiteral("filterSidebar"));
     setWidgetResizable(true);
     setFrameShape(QFrame::NoFrame);
@@ -189,6 +258,80 @@ FilterSidebar::FilterSidebar(QWidget *parent)
     m_tags = section(tr("Tags"), QStringLiteral("tagFilterList"));
     m_trackers = section(tr("Trackers"), QStringLiteral("trackerFilterList"));
 
+    // The section caption and collapse arrow are the exact same upstream
+    // widget used for Status/Categories/Tags/Trackers. A native QTreeWidget
+    // supplies the hierarchy, without a separate nested scrollbar.
+    m_directories = new QTreeWidget(container);
+    m_directories->setObjectName(QStringLiteral("directoryFilterTree"));
+    m_directories->setColumnCount(2);
+    m_directories->setHeaderHidden(true);
+    m_directories->setFrameShape(QFrame::NoFrame);
+    m_directories->setRootIsDecorated(true);
+    m_directories->setIndentation(15);
+    m_directories->setUniformRowHeights(true);
+    m_directories->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_directories->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_directories->setIconSize(QSize(16, 16));
+    m_directories->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    m_directories->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    // A single outer *vertical* scrollbar is retained. Horizontal scrolling
+    // of the tree itself is allowed, so deeply nested/long names and the
+    // right-aligned size column are never permanently cut off.
+    m_directories->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    m_directories->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
+    m_directories->setTextElideMode(Qt::ElideNone);
+    m_directories->header()->setStretchLastSection(false);
+    m_directories->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    m_directories->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    m_directorySection = new TransferListFiltersWidgetItem(
+        tr("Directories"), m_directories, container);
+    m_directorySection->setObjectName(QStringLiteral("directoryFilterSection"));
+    m_directorySection->setChecked(true);
+    // The upstream section wrapper aligns its contents left. Override only
+    // this added tree's alignment so it uses the full available sidebar width.
+    m_directorySection->layout()->setAlignment(m_directories, Qt::AlignTop);
+    m_directorySection->setToolTip(tr(
+        "Select All to show every torrent. Directory counts and filtering "
+        "match only their exact save paths unless Include subfolders is enabled "
+        "in the right-click menu."));
+    layout->addWidget(m_directorySection);
+
+    connect(m_directories, &QTreeWidget::currentItemChanged, this,
+            [this](QTreeWidgetItem *item) {
+        const QString path = item ? item->data(0, Qt::UserRole).toString() : QString();
+        if (m_selectedDirectory != path)
+        {
+            m_selectedDirectory = path;
+            emit filtersChanged();
+        }
+    });
+    connect(m_directories, &QTreeWidget::itemExpanded, this,
+            [this](QTreeWidgetItem *item) {
+        const QString path = item->data(0, Qt::UserRole).toString();
+        if (!path.isEmpty())
+            m_expandedDirectories.insert(path);
+        resizeDirectoryTree();
+    });
+    connect(m_directories, &QTreeWidget::itemCollapsed, this,
+            [this](QTreeWidgetItem *item) {
+        m_expandedDirectories.remove(item->data(0, Qt::UserRole).toString());
+        resizeDirectoryTree();
+    });
+
+    // Right-click the section caption or any directory row to toggle
+    // "Include subfolders". Direct-only counts/filtering is the default.
+    const auto enableMenu = [this](QWidget *target) {
+        target->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(target, &QWidget::customContextMenuRequested, this,
+                [this, target](const QPoint &p) { showDirectoryOptions(p, target); });
+    };
+    if (auto *caption = m_directorySection->findChild<QCheckBox *>())
+        enableMenu(caption);
+    // QAbstractScrollArea handles context menus through its own viewport
+    // event machinery. The view itself must own the custom context menu,
+    // not its viewport; connect it only once.
+    enableMenu(m_directories);
+
     layout->addStretch();
     setWidget(container);
     updateCounts({});
@@ -203,6 +346,7 @@ void FilterSidebar::refreshFontMetrics()
         list->doItemsLayout();
         list->setFixedHeight(rowHeight * list->count() + 2 * list->frameWidth());
     }
+    resizeDirectoryTree();
 }
 
 void FilterSidebar::updateCounts(const QHash<QString, QJsonObject> &torrents,
@@ -330,8 +474,211 @@ void FilterSidebar::updateCounts(const QHash<QString, QJsonObject> &torrents,
     lostSelection |= updateList(m_categories, categoryRows);
     lostSelection |= updateList(m_tags, tagRows);
     lostSelection |= updateList(m_trackers, trackerRows);
+    updateDirectoryTree(torrents);
     if (lostSelection)
         emit filtersChanged();
+}
+
+
+void FilterSidebar::updateDirectoryTree(const QHash<QString, QJsonObject> &torrents)
+{
+    QHash<QString, DirectoryTotals> next;
+    for (const QJsonObject &torrent : torrents)
+    {
+        QStringList hierarchy = directoryHierarchy(
+            torrent.value(QStringLiteral("save_path")).toString());
+        if (hierarchy.isEmpty())
+            hierarchy.append(QString::fromLatin1(unknownLocation));
+        const qint64 size = qMax<qint64>(0,
+            static_cast<qint64>(torrent.value(QStringLiteral("size")).toDouble()));
+        for (int i = 0; i < hierarchy.size(); ++i)
+        {
+            DirectoryTotals &entry = next[hierarchy.at(i)];
+            ++entry.recursiveCount;
+            entry.recursiveBytes += size;
+            if (i == hierarchy.size() - 1)
+            {
+                ++entry.directCount;
+                entry.directBytes += size;
+            }
+        }
+    }
+
+    QSet<QString> existing;
+    for (auto it = m_directoryItems.cbegin(); it != m_directoryItems.cend(); ++it)
+        if (!it.key().isEmpty())
+            existing.insert(it.key());
+    QSet<QString> incoming;
+    for (auto it = next.cbegin(); it != next.cend(); ++it)
+        incoming.insert(it.key());
+    const bool rebuild = m_directoryItems.isEmpty() || existing != incoming;
+    m_directoryTotals = std::move(next);
+    if (rebuild)
+    {
+        // Most sync updates change torrent rates, not directory names.
+        // Preserve selection, expanded branches and outer scroll position.
+        const int scrollY = verticalScrollBar()->value();
+        const QSignalBlocker blocker(m_directories);
+        m_directories->clear();
+        m_directoryItems.clear();
+
+        auto *all = new QTreeWidgetItem(m_directories);
+        all->setData(0, Qt::UserRole, QString());
+        all->setIcon(0, QIcon(QStringLiteral(":/icons/filter-all.svg")));
+        all->setTextAlignment(1, Qt::AlignRight | Qt::AlignVCenter);
+        m_directoryItems.insert(QString(), all);
+
+        QStringList paths = m_directoryTotals.keys();
+        paths.sort(Qt::CaseInsensitive);
+        if (!m_expansionInitialized && !paths.isEmpty())
+        {
+            // The sidebar is intentionally vertically scrollable. Show all
+            // discovered save-directory branches initially: deeper paths
+            // must not seem absent simply because a parent was collapsed.
+            // Subsequent collapses and expansion state remain user-controlled.
+            for (const QString &path : paths)
+                m_expandedDirectories.insert(path);
+            m_expansionInitialized = true;
+        }
+        for (const QString &path : paths)
+        {
+            const QString parentPath = parentDirectory(path);
+            auto *parent = parentPath.isEmpty()
+                ? nullptr : m_directoryItems.value(parentPath);
+            auto *item = parent ? new QTreeWidgetItem(parent)
+                                : new QTreeWidgetItem(m_directories);
+            item->setData(0, Qt::UserRole, path);
+            item->setIcon(0, QIcon(QStringLiteral(":/icons/directory.svg")));
+            item->setTextAlignment(1, Qt::AlignRight | Qt::AlignVCenter);
+            item->setToolTip(0, path);
+            m_directoryItems.insert(path, item);
+        }
+        for (auto it = m_directoryItems.cbegin(); it != m_directoryItems.cend(); ++it)
+            if (!it.key().isEmpty())
+                it.value()->setExpanded(m_expandedDirectories.contains(it.key()));
+
+        if (!m_directoryItems.contains(m_selectedDirectory))
+            m_selectedDirectory.clear();
+        m_directories->setCurrentItem(m_directoryItems.value(m_selectedDirectory));
+        resizeDirectoryTree();
+        verticalScrollBar()->setValue(scrollY);
+    }
+    updateDirectoryLabels();
+}
+
+void FilterSidebar::updateDirectoryLabels()
+{
+    if (!m_directories)
+        return;
+
+    int totalCount = 0;
+    qint64 totalBytes = 0;
+    for (const DirectoryTotals &stats : m_directoryTotals)
+    {
+        totalCount += stats.directCount;
+        totalBytes += stats.directBytes;
+    }
+    if (auto *all = m_directoryItems.value(QString()))
+    {
+        all->setText(0, tr("All (%1)").arg(totalCount));
+        all->setText(1, QLocale().formattedDataSize(totalBytes));
+    }
+    for (auto it = m_directoryTotals.cbegin(); it != m_directoryTotals.cend(); ++it)
+    {
+        auto *item = m_directoryItems.value(it.key());
+        if (!item)
+            continue;
+        const DirectoryTotals &stats = it.value();
+        const int count = m_includeSubfolders ? stats.recursiveCount : stats.directCount;
+        const qint64 bytes = m_includeSubfolders ? stats.recursiveBytes : stats.directBytes;
+        item->setText(0, tr("%1 (%2)").arg(directoryName(it.key())).arg(count));
+        item->setText(1, QLocale().formattedDataSize(bytes));
+    }
+}
+
+void FilterSidebar::resizeDirectoryTree()
+{
+    if (!m_directories)
+        return;
+
+    const auto countVisible = [&](const auto &self, QTreeWidgetItem *item) -> int {
+        int count = 1;
+        if (item->isExpanded())
+            for (int i = 0; i < item->childCount(); ++i)
+                count += self(self, item->child(i));
+        return count;
+    };
+    int rows = 0;
+    for (int i = 0; i < m_directories->topLevelItemCount(); ++i)
+        rows += countVisible(countVisible, m_directories->topLevelItem(i));
+
+    const int heightPerRow = std::max({
+        m_directories->fontMetrics().height() + 4,
+        m_directories->iconSize().height() + 4,
+        m_directories->sizeHintForRow(0)
+    });
+    // Only the containing FilterSidebar scrolls; no nested scrollbars.
+    const int horizontalBarHeight = m_directories->horizontalScrollBar()->sizeHint().height();
+    m_directories->setFixedHeight(qMax(1, rows) * heightPerRow
+                                  + horizontalBarHeight
+                                  + 2 * m_directories->frameWidth());
+}
+
+void FilterSidebar::showDirectoryOptions(const QPoint &position, QWidget *source)
+{
+    QMenu menu(source);
+    menu.setObjectName(QStringLiteral("directoryFilterOptions"));
+    auto *toggle = menu.addAction(tr("Include subfolders"));
+    toggle->setObjectName(QStringLiteral("directoryIncludeSubfolders"));
+    toggle->setCheckable(true);
+    toggle->setChecked(m_includeSubfolders);
+    connect(toggle, &QAction::toggled, this, [this](const bool checked) {
+        if (m_includeSubfolders == checked)
+            return;
+        m_includeSubfolders = checked;
+        updateDirectoryLabels();
+        emit filtersChanged();
+    });
+    menu.exec(source->mapToGlobal(position));
+}
+
+void FilterSidebar::saveDirectoryState(QSettings &settings, const QString &layoutRoot) const
+{
+    const QString root = layoutRoot + QStringLiteral("/directories");
+    settings.setValue(root + QStringLiteral("/includeSubfolders"), m_includeSubfolders);
+    settings.setValue(root + QStringLiteral("/selectedPath"), m_selectedDirectory);
+    QStringList expanded = m_expandedDirectories.values();
+    expanded.sort(Qt::CaseSensitive);
+    settings.setValue(root + QStringLiteral("/expandedPaths"), expanded);
+    settings.setValue(root + QStringLiteral("/sectionExpanded"),
+                      m_directorySection->isChecked());
+}
+
+void FilterSidebar::restoreDirectoryState(QSettings &settings, const QString &layoutRoot)
+{
+    const QString root = layoutRoot + QStringLiteral("/directories");
+    m_includeSubfolders = settings.value(
+        root + QStringLiteral("/includeSubfolders"), false).toBool();
+    m_selectedDirectory = settings.value(root + QStringLiteral("/selectedPath")).toString();
+    m_expansionInitialized = settings.contains(root + QStringLiteral("/expandedPaths"));
+    m_expandedDirectories.clear();
+    for (const QString &path : settings.value(
+             root + QStringLiteral("/expandedPaths")).toStringList())
+        m_expandedDirectories.insert(path);
+    m_directorySection->setChecked(
+        settings.value(root + QStringLiteral("/sectionExpanded"), true).toBool());
+    if (!m_directoryItems.isEmpty())
+    {
+        const QSignalBlocker block(m_directories);
+        for (auto it = m_directoryItems.cbegin(); it != m_directoryItems.cend(); ++it)
+            if (!it.key().isEmpty())
+                it.value()->setExpanded(m_expandedDirectories.contains(it.key()));
+        if (auto *selected = m_directoryItems.value(m_selectedDirectory))
+            m_directories->setCurrentItem(selected);
+    }
+    resizeDirectoryTree();
+    updateDirectoryLabels();
+    emit filtersChanged();
 }
 
 bool FilterSidebar::matches(const QString &hash, const QJsonObject &torrent) const
@@ -362,15 +709,38 @@ bool FilterSidebar::matches(const QString &hash, const QJsonObject &torrent) con
     }
 
     const QString tracker = choice(m_trackers);
-    if (tracker == QLatin1String("trackerless"))
-        return !m_torrentsWithTrackers.contains(hash);
-    if (tracker == QLatin1String("tracker-error"))
-        return torrent.value(QStringLiteral("has_tracker_error")).toBool();
-    if (tracker == QLatin1String("other-error"))
-        return torrent.value(QStringLiteral("has_other_announce_error")).toBool();
-    if (tracker == QLatin1String("warning"))
-        return torrent.value(QStringLiteral("has_tracker_warning")).toBool();
-    if (tracker.startsWith(QLatin1String("tracker:")))
-        return m_trackerHosts.value(tracker.mid(8)).contains(hash);
+    if (tracker == QLatin1String("trackerless")
+        && m_torrentsWithTrackers.contains(hash))
+        return false;
+    if (tracker == QLatin1String("tracker-error")
+        && !torrent.value(QStringLiteral("has_tracker_error")).toBool())
+        return false;
+    if (tracker == QLatin1String("other-error")
+        && !torrent.value(QStringLiteral("has_other_announce_error")).toBool())
+        return false;
+    if (tracker == QLatin1String("warning")
+        && !torrent.value(QStringLiteral("has_tracker_warning")).toBool())
+        return false;
+    if (tracker.startsWith(QLatin1String("tracker:"))
+        && !m_trackerHosts.value(tracker.mid(8)).contains(hash))
+        return false;
+
+    // One additional AND term, never an alternate filtering mode.
+    if (!m_selectedDirectory.isEmpty())
+    {
+        const QString path = torrentDirectory(torrent);
+        if (path != m_selectedDirectory)
+        {
+            if (!m_includeSubfolders
+                || m_selectedDirectory == QLatin1String(unknownLocation))
+                return false;
+            const QChar separator = m_selectedDirectory.startsWith(QLatin1Char('/'))
+                ? QLatin1Char('/') : QLatin1Char('\\');
+            const QString prefix = m_selectedDirectory == QLatin1String("/")
+                ? QStringLiteral("/") : m_selectedDirectory + separator;
+            if (!path.startsWith(prefix, Qt::CaseSensitive))
+                return false;
+        }
+    }
     return true;
 }

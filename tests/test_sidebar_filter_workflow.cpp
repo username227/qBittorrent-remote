@@ -10,6 +10,9 @@
 #include <QHeaderView>
 #include <QJsonDocument>
 #include <QListWidget>
+#include <QMenu>
+#include <QTimer>
+#include <QTreeWidget>
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QSortFilterProxyModel>
@@ -285,6 +288,7 @@ private slots:
 
     void combineStatusCategoryTagTrackerAndSearch();
     void independentServerTabsKeepIndependentSidebarStates();
+    void locationTreeFiltersTogetherWithNativeSidebarAndPersists();
 };
 
 void SidebarWorkflowTest::combineStatusCategoryTagTrackerAndSearch()
@@ -406,5 +410,181 @@ void SidebarWorkflowTest::independentServerTabsKeepIndependentSidebarStates()
         QCOMPARE(first.proxy()->rowCount(), 0);
         QCOMPARE(visible(second), QStringList({"x"}));
     }
+
+void SidebarWorkflowTest::locationTreeFiltersTogetherWithNativeSidebarAndPersists()
+{
+    const auto data = payload(R"JSON({
+      "full_update":true,
+      "torrents":{
+        "a":{"name":"Alpha","state":"downloading","progress":0.4,
+             "category":"Music","tags":"FLAC","save_path":"/share/Public/Music","size":1024},
+        "b":{"name":"Beta","state":"uploading","progress":1.0,
+             "category":"Music","tags":"FLAC","save_path":"/share/Public/Music/Country","size":2048},
+        "c":{"name":"Charlie","state":"uploading","progress":1.0,
+             "category":"Music","tags":"MP3","save_path":"/share/Public/Music/Country","size":4096},
+        "d":{"name":"Delta","state":"downloading","progress":0.2,
+             "category":"Books","tags":"PDF","save_path":"/share/Public/Books","size":8192},
+        "e":{"name":"Echo","state":"uploading","progress":1.0,
+             "category":"Other","tags":"FLAC","save_path":"/share/Public","size":512},
+        "f":{"name":"Foxtrot","state":"uploading","progress":1.0,
+             "category":"Music","tags":"FLAC","save_path":"/share/CACHEDEV1_DATA/Public","size":256},
+        "g":{"name":"Golf","state":"stoppedUP","progress":1.0,
+             "category":"Other","tags":"","size":128}
+      }
+    })JSON");
+
+    ServerPane pane;
+    pane.resize(1350, 1000);
+    pane.show();
+    QTRY_VERIFY(pane.isVisible());
+    pane.applySync(data);
+    auto *tree = pane.sidebar()->findChild<QTreeWidget *>(
+        QStringLiteral("directoryFilterTree"));
+    auto *status = list(pane, "filterList");
+    auto *categories = list(pane, "categoryFilterList");
+    auto *tags = list(pane, "tagFilterList");
+    auto *trackers = list(pane, "trackerFilterList");
+    QVERIFY(tree && status && categories && tags && trackers);
+    QVERIFY(pane.sidebar()->findChild<QWidget *>(
+        QStringLiteral("directoryFilterSection")));
+    QVERIFY(tree->header()->isHidden());
+    QCOMPARE(tree->columnCount(), 2);
+    QCOMPARE(tree->verticalScrollBarPolicy(), Qt::ScrollBarAlwaysOff);
+    QCOMPARE(tree->horizontalScrollBarPolicy(), Qt::ScrollBarAsNeeded);
+    QVERIFY(!tree->header()->stretchLastSection());
+    QCOMPARE(visible(pane), (QStringList{"a","b","c","d","e","f","g"}));
+
+    const auto locate = [](QTreeWidget *view, const QString &path)
+        -> QTreeWidgetItem * {
+        for (QTreeWidgetItemIterator it(view); *it; ++it)
+            if ((*it)->data(0, Qt::UserRole).toString() == path)
+                return *it;
+        return nullptr;
+    };
+    const auto choose = [&locate](ServerPane &server, const QString &path) {
+        auto *view = server.sidebar()->findChild<QTreeWidget *>(
+            QStringLiteral("directoryFilterTree"));
+        QVERIFY(view);
+        auto *node = locate(view, path);
+        QVERIFY2(node, qPrintable(QStringLiteral("Missing directory: ") + path));
+        for (auto *ancestor = node->parent(); ancestor; ancestor = ancestor->parent())
+            ancestor->setExpanded(true);
+        server.sidebar()->ensureWidgetVisible(view);
+        view->scrollToItem(node);
+        const QRect bounds = view->visualItemRect(node);
+        QVERIFY(bounds.isValid());
+        QTest::mouseClick(view->viewport(), Qt::LeftButton, Qt::NoModifier,
+                          bounds.center());
+        QCOMPARE(view->currentItem(), node);
+    };
+
+    auto *music = locate(tree, QStringLiteral("/share/Public/Music"));
+    auto *publicDir = locate(tree, QStringLiteral("/share/Public"));
+    auto *alias = locate(tree, QStringLiteral("/share/CACHEDEV1_DATA/Public"));
+    QVERIFY(music && publicDir && alias);
+    QCOMPARE(music->text(0), QStringLiteral("Music (1)"));
+    QCOMPARE(publicDir->text(0), QStringLiteral("Public (1)"));
+    QCOMPARE(tree->topLevelItem(0)->text(0), QStringLiteral("All (7)"));
+    QVERIFY(publicDir->isExpanded()); // Deep paths are visible on first load.
+    QVERIFY(music->isExpanded());
+    QCOMPARE(alias->text(0), QStringLiteral("Public (1)"));
+    QVERIFY(!music->text(1).isEmpty()); // Size in right-hand column.
+    QCOMPARE(locate(tree, QStringLiteral("/share/Public/Music/Country"))
+                 ->text(0), QStringLiteral("Country (2)"));
+
+    // With no other filters, exact directory sees only one save_path.
+    choose(pane, QStringLiteral("/share/Public/Music"));
+    QCOMPARE(visible(pane), (QStringList{"a"}));
+
+    // This right-click is on the actual directory widget, and invokes
+    // a visible native context menu rather than setting an internal flag.
+    QString menuError;
+    QTimer::singleShot(0, tree, [&]() {
+        auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+        if (!menu || menu->objectName() != QLatin1String("directoryFilterOptions"))
+        {
+            menuError = QStringLiteral("Directories context menu did not open");
+            if (menu) menu->close();
+            return;
+        }
+        QAction *toggle = nullptr;
+        for (auto *action : menu->actions())
+            if (action->objectName() == QLatin1String("directoryIncludeSubfolders"))
+                toggle = action;
+        if (!toggle || !toggle->isCheckable() || toggle->isChecked())
+            menuError = QStringLiteral("Include subfolders should default off");
+        else
+            toggle->trigger();
+        menu->close();
+    });
+    // Offscreen QtTest cannot reproduce the window manager's context-menu
+    // event reliably. Invoke the native view's documented right-click
+    // signal: the actual menu and QAction callback are then exercised.
+    const QPoint point = tree->visualItemRect(music).center();
+    QVERIFY(QMetaObject::invokeMethod(tree, "customContextMenuRequested",
+                                     Qt::DirectConnection, Q_ARG(QPoint, point)));
+    QVERIFY2(menuError.isEmpty(), qPrintable(menuError));
+    QCOMPARE(music->text(0), QStringLiteral("Music (3)"));
+    QCOMPARE(publicDir->text(0), QStringLiteral("Public (5)"));
+    QCOMPARE(alias->text(0), QStringLiteral("Public (1)"));
+    QCOMPARE(visible(pane), (QStringList{"a","b","c"}));
+
+    // AND across all sections. Counts are global per server and must not
+    // disappear or shrink when other filters are selected.
+    click(categories, "category:Music");
+    click(tags, "tag:FLAC");
+    click(status, "seeding");
+    QCOMPARE(visible(pane), (QStringList{"b"}));
+    QCOMPARE(music->text(0), QStringLiteral("Music (3)"));
+    pane.setSearchTerm(QStringLiteral("Alpha"));
+    QCOMPARE(visible(pane), QStringList());
+    pane.setSearchTerm(QStringLiteral("Beta"));
+    QCOMPARE(visible(pane), (QStringList{"b"}));
+    pane.setSearchTerm(QString());
+    click(status, "all");
+
+    // Path prefixes must be component-aware; never conflate the symlink
+    // /share/Public with /share/CACHEDEV1_DATA/Public.
+    choose(pane, QStringLiteral("/share/CACHEDEV1_DATA/Public"));
+    QCOMPARE(visible(pane), (QStringList{"f"}));
+    choose(pane, QString()); // "All" directory clears only this condition.
+    QCOMPARE(visible(pane), (QStringList{"a","b","f"}));
+
+    // Selection, filtering mode, and tree expansion persist per server.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    QSettings settings(temp.filePath(QStringLiteral("profile.ini")), QSettings::IniFormat);
+    choose(pane, QStringLiteral("/share/Public/Music"));
+    music->setExpanded(true);
+    pane.saveLayout(settings, QStringLiteral("QNAP-A"));
+    settings.sync();
+    ServerPane restored;
+    restored.resize(1350, 1000);
+    restored.restoreLayout(settings, QStringLiteral("QNAP-A"));
+    restored.applySync(data);
+    restored.show();
+    auto *restoredTree = restored.sidebar()->findChild<QTreeWidget *>(
+        QStringLiteral("directoryFilterTree"));
+    QVERIFY(restoredTree);
+    auto *restoredMusic = locate(restoredTree, QStringLiteral("/share/Public/Music"));
+    QVERIFY(restoredMusic);
+    QCOMPARE(restoredMusic->text(0), QStringLiteral("Music (3)"));
+    QCOMPARE(restoredTree->currentItem(), restoredMusic);
+    QVERIFY(restoredMusic->isExpanded());
+
+    ServerPane second;
+    second.resize(900, 800);
+    second.applySync(payload(R"({"full_update":true,"torrents":{
+       "z":{"name":"Other server","save_path":"/mnt/Public/Music","size":512}
+    }})"));
+    auto *secondTree = second.sidebar()->findChild<QTreeWidget *>(
+        QStringLiteral("directoryFilterTree"));
+    QVERIFY(secondTree);
+    QVERIFY(locate(secondTree, QStringLiteral("/mnt/Public/Music")));
+    QVERIFY(!locate(secondTree, QStringLiteral("/share/Public/Music")));
+    QCOMPARE(visible(second), (QStringList{"z"}));
+    QCOMPARE(restoredMusic->text(0), QStringLiteral("Music (3)"));
+}
+
 QTEST_MAIN(SidebarWorkflowTest)
 #include "test_sidebar_filter_workflow.moc"
