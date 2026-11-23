@@ -526,7 +526,7 @@ void RemotePreferencesDialog::loadServerBehaviorControls()
 }
 
 void RemotePreferencesDialog::populateAdvancedPlaceholders()
-
+{
     // Upstream qBittorrent's Designer leaves Advanced empty and populates
     // this table in advancedsettings.cpp. Retain every named setting from
     // that original list, with non-editable grey values until supported by
