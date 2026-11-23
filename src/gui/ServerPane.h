@@ -37,6 +37,7 @@ public:
     FilterSidebar *sidebar() const noexcept { return m_sidebar; }
     QTableView *table() const noexcept { return m_table; }
     TorrentModel *model() const noexcept { return m_model; }
+    QStringList categories() const { return m_categories.values(); }
     QSortFilterProxyModel *proxy() const noexcept { return m_proxy; }
 
     void applySync(const QJsonObject &payload);

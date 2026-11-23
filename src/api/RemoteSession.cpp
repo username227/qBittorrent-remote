@@ -502,15 +502,26 @@ void RemoteSession::pumpOperations()
 
     const QueuedOperation operation = m_operations.dequeue();
     QNetworkRequest request = requestFor(operation.endpoint);
-    if (!operation.detailsRequest)
+    if (!operation.detailsRequest && !operation.exportRequest)
         request.setHeader(QNetworkRequest::ContentTypeHeader,
                           QString::fromLatin1(operation.contentType));
-    QNetworkReply *reply = operation.detailsRequest
+    QNetworkReply *reply = (operation.detailsRequest || operation.exportRequest)
         ? m_network.get(request) : m_network.post(request, operation.body);
     armReply(reply);
     connect(reply, &QNetworkReply::finished, this, [this, reply, operation]() {
         checkReply(reply, [this, operation](const QByteArray &response) {
-            if (operation.detailsRequest)
+            if (operation.exportRequest)
+            {
+                if (response.isEmpty() || response.size() > 32 * 1024 * 1024)
+                {
+                    const QString reason = tr("The server returned an invalid or oversized torrent file.");
+                    emit operationFailed(operation.description, reason);
+                    emit torrentExportFailed(operation.exportHash, reason);
+                }
+                else
+                    emit torrentExportReceived(operation.exportHash, response);
+            }
+            else if (operation.detailsRequest)
             {
                 QJsonParseError error;
                 const QJsonDocument json = QJsonDocument::fromJson(response, &error);
@@ -546,6 +557,8 @@ void RemoteSession::pumpOperations()
             else
             {
                 emit operationFailed(operation.description, reason);
+                if (operation.exportRequest)
+                    emit torrentExportFailed(operation.exportHash, reason);
                 if (operation.onRejected)
                     operation.onRejected(reason);
             }
@@ -810,6 +823,28 @@ void RemoteSession::setTorrentAutoManagement(const QStringList &hashes, bool ena
                    form.toString(QUrl::FullyEncoded).toUtf8(),
                    QByteArrayLiteral("application/x-www-form-urlencoded"),
                    tr("Automatic Torrent Management"));
+}
+
+void RemoteSession::requestTorrentExport(const QString &hash)
+{
+    static const QRegularExpression validHash(
+        QStringLiteral("^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$"));
+    if (!m_connected || !m_address || !validHash.match(hash).hasMatch())
+    {
+        const QString reason = tr("Server is disconnected or torrent hash is invalid.");
+        emit operationFailed(tr("Export .torrent"), reason);
+        emit torrentExportFailed(hash, reason);
+        return;
+    }
+    QueuedOperation request {
+        QStringLiteral("api/v2/torrents/export?hash=")
+            + QString::fromLatin1(QUrl::toPercentEncoding(hash)),
+        {}, {}, tr("Export .torrent"), false
+    };
+    request.exportRequest = true;
+    request.exportHash = hash;
+    m_operations.enqueue(std::move(request));
+    pumpOperations();
 }
 
 void RemoteSession::renameTorrentContent(const QString &hash, const QString &oldPath,

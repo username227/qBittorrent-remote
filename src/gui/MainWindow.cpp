@@ -36,6 +36,8 @@
 #include <QFileDialog>
 #include <QFile>
 #include <QFileInfo>
+#include <QSaveFile>
+#include <QHash>
 #include <QInputDialog>
 #include <QItemSelectionModel>
 #include <QSortFilterProxyModel>
@@ -1337,6 +1339,71 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
             break;
         }
         case ServerPane::TorrentContextAction::ExportTorrent:
+        {
+            const QStringList selected = selectedTorrentHashes();
+            if (selected.isEmpty())
+                break;
+            const QString folder = QFileDialog::getExistingDirectory(
+                this, tr("Choose folder to save exported .torrent files"));
+            if (folder.isEmpty() || !containsConnection(connection)
+                || !connection->connected || activeConnection() != connection
+                || selectedTorrentHashes() != selected)
+                break;
+
+            QHash<QString, QString> filenames;
+            for (const QString &hash : selected)
+            {
+                QString name = connection->pane->model()->torrents().value(hash)
+                    .value(QStringLiteral("name")).toString();
+                name.replace(QRegularExpression(QStringLiteral(R"([<>:"/\\|?*\x00-\x1F])")),
+                             QStringLiteral("_"));
+                name = name.trimmed();
+                if (name.isEmpty() || name == QLatin1String(".")
+                    || name == QLatin1String(".."))
+                    name = hash;
+                filenames.insert(hash, name);
+            }
+            const auto remaining = std::make_shared<QSet<QString>>(
+                selected.cbegin(), selected.cend());
+            auto done = std::make_shared<QMetaObject::Connection>();
+            auto failed = std::make_shared<QMetaObject::Connection>();
+            const auto finish = [remaining, done, failed](const QString &hash) {
+                remaining->remove(hash);
+                if (remaining->isEmpty())
+                {
+                    QObject::disconnect(*done);
+                    QObject::disconnect(*failed);
+                }
+            };
+            *done = connect(connection->session, &Remote::RemoteSession::torrentExportReceived,
+                this, [this, folder, filenames, remaining, finish](
+                    const QString &hash, const QByteArray &data) {
+                    if (!remaining->contains(hash))
+                        return;
+                    const QDir dir(folder);
+                    const QString base = filenames.value(hash, hash);
+                    QString name = base + QStringLiteral(".torrent");
+                    int number = 0;
+                    while (QFileInfo::exists(dir.filePath(name)))
+                        name = QStringLiteral("%1 (%2).torrent").arg(base).arg(++number);
+                    QSaveFile file(dir.filePath(name));
+                    if (!file.open(QIODevice::WriteOnly)
+                        || file.write(data) != data.size() || !file.commit())
+                        QMessageBox::warning(this, tr("Export .torrent"),
+                            tr("Could not save exported torrent: %1").arg(name));
+                    finish(hash);
+                });
+            *failed = connect(connection->session, &Remote::RemoteSession::torrentExportFailed,
+                this, [this, remaining, finish](const QString &hash, const QString &reason) {
+                    if (!remaining->contains(hash))
+                        return;
+                    QMessageBox::warning(this, tr("Export .torrent"), reason);
+                    finish(hash);
+                });
+            for (const QString &hash : selected)
+                connection->session->requestTorrentExport(hash);
+            break;
+        }
         case ServerPane::TorrentContextAction::SuperSeeding:
         case ServerPane::TorrentContextAction::SequentialDownload:
         case ServerPane::TorrentContextAction::FirstLastPieces:

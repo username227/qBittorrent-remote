@@ -97,6 +97,7 @@ public:
     void setTorrentDownloadPath(const QStringList &hashes, const QString &path);
     void setTorrentRateLimit(const QStringList &hashes, bool upload, qint64 bytesPerSec);
     void setTorrentShareLimits(const QString &hash, const QJsonObject &shareLimits);
+    void requestTorrentExport(const QString &hash);
     void renameTorrentContent(const QString &hash, const QString &oldPath,
                               const QString &newPath);
     void addTorrentUrls(const QString &urls);
@@ -132,6 +133,8 @@ signals:
                                     bool success, const QString &reason);
     void torrentContentRenameFinished(const QString &hash, const QString &oldPath,
                                       bool success, const QString &reason);
+    void torrentExportReceived(const QString &hash, const QByteArray &metadata);
+    void torrentExportFailed(const QString &hash, const QString &reason);
     void torrentDetailsFailed(const QString &hash, int tab, const QString &reason);
 
 private:
@@ -162,6 +165,8 @@ private:
         QString description;
         bool checkAccepted = false;
         bool detailsRequest = false;
+        bool exportRequest = false;
+        QString exportHash;
         QString detailHash;
         int detailTab = -1;
         // Used only for dependent create-then-assign operations. A failed

@@ -135,7 +135,9 @@ void RemoteTorrentContentLayoutDialog::received(
     }
     m_ui->pathListView->resizeColumnToContents(0);
     if (m_model->rowCount() > 0)
-        m_ui->pathListView->selectRow(0);
+        m_ui->pathListView->selectionModel()->setCurrentIndex(
+            m_model->index(0, 1),
+            QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
     updateCommonPath();
     updateApply();
 }
