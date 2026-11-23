@@ -1334,10 +1334,39 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
                 session->changeTorrentTags(hashes, {}, false);
         });
     connect(connection->pane, &ServerPane::torrentAutoManagementRequested, this,
-        [session, selectedForContext](bool enabled) {
+        [this, session, selectedForContext, connection](bool enabled) {
             const QStringList hashes = selectedForContext();
-            if (!hashes.isEmpty())
-                session->setTorrentAutoManagement(hashes, enabled);
+            if (hashes.isEmpty())
+                return;
+            if (enabled)
+            {
+                // Enabling Auto TMM can cause the *remote server* to move
+                // existing data under its own Saving Management rules.
+                // Require an explicit opt-in before sending anything.
+                QMessageBox warning(this);
+                warning.setObjectName(QStringLiteral(
+                    "enableAutomaticTorrentManagementWarning"));
+                warning.setIcon(QMessageBox::Warning);
+                warning.setWindowTitle(tr("Enable Automatic Torrent Management?"));
+                warning.setText(tr("qBittorrent may move downloaded files for "
+                    "%1 selected torrent(s) on server %2.")
+                    .arg(hashes.size()).arg(connection->profile.name));
+                warning.setInformativeText(tr(
+                    "The remote server controls where files are stored, "
+                    "including category-based paths and its Saving Management "
+                    "settings. Enabling this option may relocate existing data."));
+                QPushButton *enable = warning.addButton(
+                    tr("Enable"), QMessageBox::AcceptRole);
+                QPushButton *cancel = warning.addButton(QMessageBox::Cancel);
+                warning.setDefaultButton(cancel);
+                warning.exec();
+                // A connection or selection may have changed during a modal
+                // dialog; never apply a stale command to another server.
+                if (warning.clickedButton() != enable
+                    || selectedForContext() != hashes)
+                    return;
+            }
+            session->setTorrentAutoManagement(hashes, enabled);
         });
     connect(session, &Remote::RemoteSession::torrentDetailsReceived,
             connection->pane, &ServerPane::displayTorrentDetails);
