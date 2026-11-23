@@ -502,15 +502,26 @@ void RemoteSession::pumpOperations()
 
     const QueuedOperation operation = m_operations.dequeue();
     QNetworkRequest request = requestFor(operation.endpoint);
-    if (!operation.detailsRequest)
+    if (!operation.detailsRequest && !operation.exportRequest)
         request.setHeader(QNetworkRequest::ContentTypeHeader,
                           QString::fromLatin1(operation.contentType));
-    QNetworkReply *reply = operation.detailsRequest
+    QNetworkReply *reply = (operation.detailsRequest || operation.exportRequest)
         ? m_network.get(request) : m_network.post(request, operation.body);
     armReply(reply);
     connect(reply, &QNetworkReply::finished, this, [this, reply, operation]() {
         checkReply(reply, [this, operation](const QByteArray &response) {
-            if (operation.detailsRequest)
+            if (operation.exportRequest)
+            {
+                if (response.isEmpty() || response.size() > 32 * 1024 * 1024)
+                {
+                    const QString reason = tr("The server returned an invalid or oversized torrent file.");
+                    emit operationFailed(operation.description, reason);
+                    emit torrentExportFailed(operation.exportHash, reason);
+                }
+                else
+                    emit torrentExportReceived(operation.exportHash, response);
+            }
+            else if (operation.detailsRequest)
             {
                 QJsonParseError error;
                 const QJsonDocument json = QJsonDocument::fromJson(response, &error);
@@ -546,6 +557,8 @@ void RemoteSession::pumpOperations()
             else
             {
                 emit operationFailed(operation.description, reason);
+                if (operation.exportRequest)
+                    emit torrentExportFailed(operation.exportHash, reason);
                 if (operation.onRejected)
                     operation.onRejected(reason);
             }
@@ -580,7 +593,11 @@ void RemoteSession::requestTorrentDetails(const QString &hash, int tab)
     const QString url = QStringLiteral("api/v2/%1?hash=%2%3")
         .arg(endpoints.at(tab), QString::fromLatin1(QUrl::toPercentEncoding(hash)),
              tab == 2 ? QStringLiteral("&rid=0") : QString());
-    m_operations.enqueue({url, {}, {}, {}, false, true, hash, tab});
+    QueuedOperation request {url, {}, {}, {}, false};
+    request.detailsRequest = true;
+    request.detailHash = hash;
+    request.detailTab = tab;
+    m_operations.enqueue(std::move(request));
     pumpOperations();
 }
 
@@ -810,6 +827,209 @@ void RemoteSession::setTorrentAutoManagement(const QStringList &hashes, bool ena
                    form.toString(QUrl::FullyEncoded).toUtf8(),
                    QByteArrayLiteral("application/x-www-form-urlencoded"),
                    tr("Automatic Torrent Management"));
+}
+
+void RemoteSession::requestTorrentExport(const QString &hash)
+{
+    static const QRegularExpression validHash(
+        QStringLiteral("^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$"));
+    if (!m_connected || !m_address || !validHash.match(hash).hasMatch())
+    {
+        const QString reason = tr("Server is disconnected or torrent hash is invalid.");
+        emit operationFailed(tr("Export .torrent"), reason);
+        emit torrentExportFailed(hash, reason);
+        return;
+    }
+    QueuedOperation request {
+        QStringLiteral("api/v2/torrents/export?hash=")
+            + QString::fromLatin1(QUrl::toPercentEncoding(hash)),
+        {}, {}, tr("Export .torrent"), false
+    };
+    request.exportRequest = true;
+    request.exportHash = hash;
+    m_operations.enqueue(std::move(request));
+    pumpOperations();
+}
+
+void RemoteSession::renameTorrentContent(const QString &hash, const QString &oldPath,
+                                         const QString &newPath)
+{
+    static const QRegularExpression validHash(
+        QStringLiteral("^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$"));
+    const auto validRelative = [](const QString &path) {
+        if (path.isEmpty() || path.startsWith(QLatin1Char('/'))
+            || path.contains(QLatin1Char('\\'))
+            || path.contains(QLatin1Char('\r'))
+            || path.contains(QLatin1Char('\n')))
+            return false;
+        const QStringList parts = path.split(QLatin1Char('/'));
+        return std::all_of(parts.cbegin(), parts.cend(), [](const QString &part) {
+            return !part.isEmpty() && part != QLatin1String(".")
+                && part != QLatin1String("..");
+        });
+    };
+    if (!validHash.match(hash).hasMatch() || !validRelative(oldPath)
+        || !validRelative(newPath))
+    {
+        emit operationFailed(tr("Rename torrent file"), tr("Invalid torrent or file path."));
+        emit torrentContentRenameFinished(hash, oldPath, false, tr("Invalid file path."));
+        return;
+    }
+    QUrlQuery form;
+    form.addQueryItem(QStringLiteral("hash"), hash);
+    form.addQueryItem(QStringLiteral("oldPath"), oldPath);
+    form.addQueryItem(QStringLiteral("newPath"), newPath);
+    queueOperation(QStringLiteral("api/v2/torrents/renameFile"),
+        form.toString(QUrl::FullyEncoded).toUtf8(),
+        QByteArrayLiteral("application/x-www-form-urlencoded"),
+        tr("Rename torrent file"), true,
+        [this, hash, oldPath]() {
+            emit torrentContentRenameFinished(hash, oldPath, true, {});
+        },
+        [this, hash, oldPath](const QString &reason) {
+            emit torrentContentRenameFinished(hash, oldPath, false, reason);
+        });
+}
+
+void RemoteSession::setTorrentSavePath(const QStringList &hashes, const QString &path)
+{
+    if (!validSelectedTorrentHashes(hashes) || path.isEmpty()
+        || path == QLatin1String("/") || !path.startsWith(QLatin1Char('/'))
+        || path.contains(QLatin1Char('\\')) || path.contains(QLatin1Char('\r'))
+        || path.contains(QLatin1Char('\n')))
+    {
+        emit operationFailed(tr("Set torrent save path"), tr("Invalid torrent or server path."));
+        return;
+    }
+    QUrlQuery form;
+    form.addQueryItem(QStringLiteral("id"), hashes.join(QLatin1Char('|')));
+    form.addQueryItem(QStringLiteral("path"), path);
+    queueOperation(QStringLiteral("api/v2/torrents/setSavePath"),
+        form.toString(QUrl::FullyEncoded).toUtf8(),
+        QByteArrayLiteral("application/x-www-form-urlencoded"),
+        tr("Set torrent save path"), true);
+}
+
+void RemoteSession::setTorrentDownloadPath(const QStringList &hashes, const QString &path)
+{
+    if (!validSelectedTorrentHashes(hashes)
+        || (!path.isEmpty() && (path == QLatin1String("/")
+            || !path.startsWith(QLatin1Char('/'))
+            || path.contains(QLatin1Char('\\'))
+            || path.contains(QLatin1Char('\r'))
+            || path.contains(QLatin1Char('\n')))))
+    {
+        emit operationFailed(tr("Set incomplete torrent path"), tr("Invalid torrent or server path."));
+        return;
+    }
+    QUrlQuery form;
+    form.addQueryItem(QStringLiteral("id"), hashes.join(QLatin1Char('|')));
+    form.addQueryItem(QStringLiteral("path"), path);
+    queueOperation(QStringLiteral("api/v2/torrents/setDownloadPath"),
+        form.toString(QUrl::FullyEncoded).toUtf8(),
+        QByteArrayLiteral("application/x-www-form-urlencoded"),
+        tr("Set incomplete torrent path"), true);
+}
+
+void RemoteSession::setTorrentRateLimit(const QStringList &hashes, bool upload, qint64 bytesPerSec)
+{
+    if (!validSelectedTorrentHashes(hashes) || bytesPerSec < 0
+        || bytesPerSec > 2000000LL * 1024)
+    {
+        emit operationFailed(tr("Set torrent speed limit"), tr("Invalid selection or speed."));
+        return;
+    }
+    QUrlQuery form;
+    form.addQueryItem(QStringLiteral("hashes"), hashes.join(QLatin1Char('|')));
+    form.addQueryItem(QStringLiteral("limit"), QString::number(bytesPerSec));
+    queueOperation(QStringLiteral("api/v2/torrents/")
+        + (upload ? QStringLiteral("setUploadLimit") : QStringLiteral("setDownloadLimit")),
+        form.toString(QUrl::FullyEncoded).toUtf8(),
+        QByteArrayLiteral("application/x-www-form-urlencoded"),
+        tr("Set torrent speed limit"), true);
+}
+
+void RemoteSession::setTorrentShareLimits(const QString &hash, const QJsonObject &share)
+{
+    static const QRegularExpression hashPattern(
+        QStringLiteral("^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$"));
+    const QStringList fields {
+        QStringLiteral("ratio_limit"), QStringLiteral("seeding_time_limit"),
+        QStringLiteral("inactive_seeding_time_limit"),
+        QStringLiteral("share_limits_mode"), QStringLiteral("share_limit_action")
+    };
+    if (!hashPattern.match(hash).hasMatch()
+        || std::any_of(fields.cbegin(), fields.cend(), [&share](const QString &key) {
+            return !share.contains(key);
+        }))
+    {
+        emit operationFailed(tr("Set torrent share limits"),
+                             tr("The server has not supplied all share limit settings."));
+        return;
+    }
+    for (int i = 0; i != 3; ++i)
+        if (!share.value(fields.at(i)).isDouble())
+        {
+            emit operationFailed(tr("Set torrent share limits"), tr("Invalid share limit."));
+            return;
+        }
+    const QString mode = share.value(QStringLiteral("share_limits_mode")).toString();
+    const QString action = share.value(QStringLiteral("share_limit_action")).toString();
+    if (!QStringList{QStringLiteral("Default"), QStringLiteral("MatchAny"),
+                     QStringLiteral("MatchAll")}.contains(mode)
+        || !QStringList{QStringLiteral("Default"), QStringLiteral("Stop"),
+                        QStringLiteral("Remove"), QStringLiteral("RemoveWithContent"),
+                        QStringLiteral("EnableSuperSeeding")}.contains(action))
+    {
+        emit operationFailed(tr("Set torrent share limits"), tr("Invalid share limit mode."));
+        return;
+    }
+    QUrlQuery form;
+    form.addQueryItem(QStringLiteral("hashes"), hash);
+    form.addQueryItem(QStringLiteral("ratioLimit"),
+        QString::number(share.value(QStringLiteral("ratio_limit")).toDouble(), 'g', 14));
+    form.addQueryItem(QStringLiteral("seedingTimeLimit"),
+        QString::number(share.value(QStringLiteral("seeding_time_limit")).toInt()));
+    form.addQueryItem(QStringLiteral("inactiveSeedingTimeLimit"),
+        QString::number(share.value(QStringLiteral("inactive_seeding_time_limit")).toInt()));
+    form.addQueryItem(QStringLiteral("shareLimitsMode"), mode);
+    form.addQueryItem(QStringLiteral("shareLimitAction"), action);
+    queueOperation(QStringLiteral("api/v2/torrents/setShareLimits"),
+        form.toString(QUrl::FullyEncoded).toUtf8(),
+        QByteArrayLiteral("application/x-www-form-urlencoded"),
+        tr("Set torrent share limits"), true);
+}
+
+void RemoteSession::setSuperSeeding(const QStringList &hashes, bool enabled)
+{
+    if (!validSelectedTorrentHashes(hashes))
+    {
+        emit operationFailed(tr("Super seeding mode"), tr("Invalid torrent selection."));
+        return;
+    }
+    QUrlQuery form;
+    form.addQueryItem(QStringLiteral("hashes"), hashes.join(QLatin1Char('|')));
+    form.addQueryItem(QStringLiteral("value"), enabled ? QStringLiteral("true") : QStringLiteral("false"));
+    queueOperation(QStringLiteral("api/v2/torrents/setSuperSeeding"),
+        form.toString(QUrl::FullyEncoded).toUtf8(),
+        QByteArrayLiteral("application/x-www-form-urlencoded"), tr("Super seeding mode"), true);
+}
+
+void RemoteSession::toggleTorrentMode(const QStringList &hashes, bool sequential)
+{
+    if (!validSelectedTorrentHashes(hashes))
+    {
+        emit operationFailed(tr("Torrent download mode"), tr("Invalid torrent selection."));
+        return;
+    }
+    QUrlQuery form;
+    form.addQueryItem(QStringLiteral("hashes"), hashes.join(QLatin1Char('|')));
+    queueOperation(QStringLiteral("api/v2/torrents/")
+            + (sequential ? QStringLiteral("toggleSequentialDownload")
+                          : QStringLiteral("toggleFirstLastPiecePrio")),
+        form.toString(QUrl::FullyEncoded).toUtf8(),
+        QByteArrayLiteral("application/x-www-form-urlencoded"),
+        sequential ? tr("Download in sequential order") : tr("Download first and last pieces first"), true);
 }
 
 void RemoteSession::renameTorrent(const QString &hash, const QString &name)

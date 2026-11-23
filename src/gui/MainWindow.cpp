@@ -7,6 +7,8 @@
 #include "gui/RemotePreferencesDialog.h"
 #include "gui/RemoteAddTorrentDialog.h"
 #include "gui/RemoteTrackerEntriesDialog.h"
+#include "gui/RemoteTorrentContentLayoutDialog.h"
+#include "gui/RemoteTorrentOptionsDialog.h"
 #include "gui/RemoteFileSystemPathComboEdit.h"
 #include "api/RemoteSession.h"
 #include "api/TorrentMetadataReader.h"
@@ -34,6 +36,8 @@
 #include <QFileDialog>
 #include <QFile>
 #include <QFileInfo>
+#include <QSaveFile>
+#include <QHash>
 #include <QInputDialog>
 #include <QItemSelectionModel>
 #include <QSortFilterProxyModel>
@@ -1172,6 +1176,36 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
             session, &Remote::RemoteSession::requestTorrentDetails);
     connect(connection->pane, &ServerPane::filePriorityRequested,
             session, &Remote::RemoteSession::setFilePriority);
+    connect(connection->pane, &ServerPane::torrentModeRequested,
+            this, [this, connection](ServerPane::TorrentContextAction action, bool enabled) {
+        if (!containsConnection(connection) || !connection->connected
+            || activeConnection() != connection)
+            return;
+        const QStringList selected = selectedTorrentHashes();
+        if (selected.isEmpty())
+            return;
+        if (action == ServerPane::TorrentContextAction::SuperSeeding)
+        {
+            connection->session->setSuperSeeding(selected, enabled);
+            return;
+        }
+        const QString property = (action == ServerPane::TorrentContextAction::SequentialDownload)
+            ? QStringLiteral("seq_dl") : QStringLiteral("f_l_piece_prio");
+        if (action != ServerPane::TorrentContextAction::SequentialDownload
+            && action != ServerPane::TorrentContextAction::FirstLastPieces)
+            return;
+        QStringList changed;
+        const auto &torrents = connection->pane->model()->torrents();
+        for (const QString &hash : selected)
+        {
+            const QJsonValue value = torrents.value(hash).value(property);
+            if (value.isBool() && value.toBool() != enabled)
+                changed.append(hash);
+        }
+        if (!changed.isEmpty())
+            connection->session->toggleTorrentMode(
+                changed, action == ServerPane::TorrentContextAction::SequentialDownload);
+    });
     connect(connection->pane, &ServerPane::torrentContextActionRequested,
             this, [this, connection](ServerPane::TorrentContextAction action) {
         // Context-menu operations must never cross remote server tabs.
@@ -1256,6 +1290,125 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
             connection->session->renameTorrent(hash, name);
             break;
         }
+        case ServerPane::TorrentContextAction::ManageContent:
+        {
+            const QStringList hashes = selectedTorrentHashes();
+            if (hashes.size() != 1)
+                break;
+            const QString hash = hashes.first();
+            const auto selectionValid = [this, connection, hash]() {
+                return containsConnection(connection) && connection->connected
+                    && activeConnection() == connection
+                    && selectedTorrentHashes() == QStringList{hash}
+                    && connection->pane->model()->torrents().contains(hash);
+            };
+            if (!selectionValid())
+                break;
+            RemoteTorrentContentLayoutDialog dialog(
+                connection->session, hash, selectionValid, this);
+            trackDialogGeometry(dialog, QStringLiteral("ManageTorrentContent"));
+            dialog.exec();
+            break;
+        }
+        case ServerPane::TorrentContextAction::TorrentOptions:
+        {
+            const QStringList selected = selectedTorrentHashes();
+            if (selected.isEmpty())
+                break;
+            const auto valid = [this, connection, selected]() {
+                if (!containsConnection(connection) || !connection->connected
+                    || activeConnection() != connection
+                    || selectedTorrentHashes() != selected)
+                    return false;
+                const auto &all = connection->pane->model()->torrents();
+                return std::all_of(selected.cbegin(), selected.cend(),
+                    [&all](const QString &hash) { return all.contains(hash); });
+            };
+            if (!valid())
+                break;
+            QVector<QPair<QString, QJsonObject>> torrents;
+            const auto &all = connection->pane->model()->torrents();
+            for (const QString &hash : selected)
+                torrents.append({hash, all.value(hash)});
+            const Remote::PathMappingStore paths(*m_settings);
+            RemoteTorrentOptionsDialog dialog(connection->session, torrents,
+                connection->pane->categories(), paths.mappings(connection->profile.id),
+                valid, this);
+            trackDialogGeometry(dialog, QStringLiteral("TorrentOptions"));
+            dialog.exec();
+            break;
+        }
+        case ServerPane::TorrentContextAction::ExportTorrent:
+        {
+            const QStringList selected = selectedTorrentHashes();
+            if (selected.isEmpty())
+                break;
+            const QString folder = QFileDialog::getExistingDirectory(
+                this, tr("Choose folder to save exported .torrent files"));
+            if (folder.isEmpty() || !containsConnection(connection)
+                || !connection->connected || activeConnection() != connection
+                || selectedTorrentHashes() != selected)
+                break;
+
+            QHash<QString, QString> filenames;
+            for (const QString &hash : selected)
+            {
+                QString name = connection->pane->model()->torrents().value(hash)
+                    .value(QStringLiteral("name")).toString();
+                name.replace(QRegularExpression(QStringLiteral(R"([<>:"/\\|?*\x00-\x1F])")),
+                             QStringLiteral("_"));
+                name = name.trimmed();
+                if (name.isEmpty() || name == QLatin1String(".")
+                    || name == QLatin1String(".."))
+                    name = hash;
+                filenames.insert(hash, name);
+            }
+            const auto remaining = std::make_shared<QSet<QString>>(
+                selected.cbegin(), selected.cend());
+            auto done = std::make_shared<QMetaObject::Connection>();
+            auto failed = std::make_shared<QMetaObject::Connection>();
+            const auto finish = [remaining, done, failed](const QString &hash) {
+                remaining->remove(hash);
+                if (remaining->isEmpty())
+                {
+                    QObject::disconnect(*done);
+                    QObject::disconnect(*failed);
+                }
+            };
+            *done = connect(connection->session, &Remote::RemoteSession::torrentExportReceived,
+                this, [this, folder, filenames, remaining, finish](
+                    const QString &hash, const QByteArray &data) {
+                    if (!remaining->contains(hash))
+                        return;
+                    const QDir dir(folder);
+                    const QString base = filenames.value(hash, hash);
+                    QString name = base + QStringLiteral(".torrent");
+                    int number = 0;
+                    while (QFileInfo::exists(dir.filePath(name)))
+                        name = QStringLiteral("%1 (%2).torrent").arg(base).arg(++number);
+                    QSaveFile file(dir.filePath(name));
+                    if (!file.open(QIODevice::WriteOnly)
+                        || file.write(data) != data.size() || !file.commit())
+                        QMessageBox::warning(this, tr("Export .torrent"),
+                            tr("Could not save exported torrent: %1").arg(name));
+                    finish(hash);
+                });
+            *failed = connect(connection->session, &Remote::RemoteSession::torrentExportFailed,
+                this, [this, remaining, finish](const QString &hash, const QString &reason) {
+                    if (!remaining->contains(hash))
+                        return;
+                    QMessageBox::warning(this, tr("Export .torrent"), reason);
+                    finish(hash);
+                });
+            for (const QString &hash : selected)
+                connection->session->requestTorrentExport(hash);
+            break;
+        }
+        case ServerPane::TorrentContextAction::SuperSeeding:
+        case ServerPane::TorrentContextAction::SequentialDownload:
+        case ServerPane::TorrentContextAction::FirstLastPieces:
+            // Completed in subsequent commits on this branch.
+            break;
         case ServerPane::TorrentContextAction::EditTrackers:
         {
             const QStringList hashes = selectedTorrentHashes();

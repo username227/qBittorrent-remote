@@ -91,6 +91,15 @@ public:
     void changeTorrentTags(const QStringList &hashes, const QStringList &tags, bool add);
     void createAndAddTorrentTags(const QStringList &hashes, const QStringList &tags);
     void setTorrentAutoManagement(const QStringList &hashes, bool enabled);
+    void setSuperSeeding(const QStringList &hashes, bool enabled);
+    void toggleTorrentMode(const QStringList &hashes, bool sequential);
+    void setTorrentSavePath(const QStringList &hashes, const QString &path);
+    void setTorrentDownloadPath(const QStringList &hashes, const QString &path);
+    void setTorrentRateLimit(const QStringList &hashes, bool upload, qint64 bytesPerSec);
+    void setTorrentShareLimits(const QString &hash, const QJsonObject &shareLimits);
+    void requestTorrentExport(const QString &hash);
+    void renameTorrentContent(const QString &hash, const QString &oldPath,
+                              const QString &newPath);
     void addTorrentUrls(const QString &urls);
     void addTorrentUrls(const QString &urls, const AddTorrentOptions &options);
     void addTorrentFile(const QString &filename, const QByteArray &contents);
@@ -122,6 +131,10 @@ signals:
     // Identifies the exact edit for bulk progress and rejected requests.
     void torrentTrackerEditFinished(const QString &hash, const QString &oldUrl,
                                     bool success, const QString &reason);
+    void torrentContentRenameFinished(const QString &hash, const QString &oldPath,
+                                      bool success, const QString &reason);
+    void torrentExportReceived(const QString &hash, const QByteArray &metadata);
+    void torrentExportFailed(const QString &hash, const QString &reason);
     void torrentDetailsFailed(const QString &hash, int tab, const QString &reason);
 
 private:
@@ -152,6 +165,8 @@ private:
         QString description;
         bool checkAccepted = false;
         bool detailsRequest = false;
+        bool exportRequest = false;
+        QString exportHash;
         QString detailHash;
         int detailTab = -1;
         // Used only for dependent create-then-assign operations. A failed
