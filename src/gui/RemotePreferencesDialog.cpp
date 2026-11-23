@@ -343,7 +343,7 @@ void RemotePreferencesDialog::loadLocalBehaviorControls()
     m_ui->checkProgramExitConfirm->setChecked(m_settings.value(
         QStringLiteral("Preferences/Behavior/ConfirmExit"), false).toBool());
     m_ui->checkUseTorrentStatesColors->setChecked(m_settings.value(
-        QStringLiteral("Preferences/Behavior/StateColors"), false).toBool());
+        QStringLiteral("Preferences/Behavior/StateColors"), true).toBool());
     m_ui->checkProgressBarFollowsTextColor->setChecked(m_settings.value(
         QStringLiteral("Preferences/Behavior/ProgressFollowsState"), false).toBool());
     m_ui->checkProgressBarFollowsTextColor->setEnabled(
