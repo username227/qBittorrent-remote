@@ -71,6 +71,7 @@ private slots:
     void copySubmenuCopiesRealRemoteFieldsAndDisablesUnavailableMetadata();
     void categoryTagsAutoManagementMatchUpstreamOrderAndSelection();
     void editTrackersFollowsRenameAndRespectsSelection();
+    void remainingNativeContextActionsRespectSelectionAndModes();
 };
 
 void TorrentContextMenuWorkflowTest::contextMenuUsesNativeQbittorrentIcons()
@@ -926,11 +927,13 @@ void TorrentContextMenuWorkflowTest::editTrackersFollowsRenameAndRespectsSelecti
         QMenu *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
         if (!menu) { error = QStringLiteral("Missing context menu"); return; }
         QAction *rename = actionNamed(menu, QStringLiteral("torrentContextRename"));
+        QAction *manage = actionNamed(menu, QStringLiteral("torrentContextManageContent"));
         QAction *trackers = actionNamed(menu, QStringLiteral("torrentContextEditTrackers"));
         QAction *category = actionNamed(menu, QStringLiteral("torrentContextCategoryMenu"));
         const auto actions = menu->actions();
-        if (!rename || !trackers || !category || !trackers->isEnabled()
-            || actions.indexOf(trackers) != actions.indexOf(rename) + 1
+        if (!rename || !manage || !trackers || !category || !trackers->isEnabled()
+            || actions.indexOf(manage) != actions.indexOf(rename) + 1
+            || actions.indexOf(trackers) != actions.indexOf(manage) + 1
             || actions.indexOf(category) != actions.indexOf(trackers) + 1
             || trackers->icon().pixmap(16, 16).toImage()
                 != QIcon(QStringLiteral(":/icons/edit-rename.svg"))
@@ -965,6 +968,107 @@ void TorrentContextMenuWorkflowTest::editTrackersFollowsRenameAndRespectsSelecti
     QCOMPARE(emitted.size(), 2);
     QCOMPARE(emitted.last().first().value<ServerPane::TorrentContextAction>(),
              ServerPane::TorrentContextAction::EditTrackers);
+}
+
+
+void TorrentContextMenuWorkflowTest::remainingNativeContextActionsRespectSelectionAndModes()
+{
+    ServerPane pane;
+    pane.resize(1200, 740);
+    pane.applySync(payload(R"JSON({
+        "full_update":true,
+        "torrents":{
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa":{
+                "name":"Completed seed", "state":"uploading", "progress":1.0,
+                "super_seeding":false, "seq_dl":false, "f_l_piece_prio":false
+            },
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb":{
+                "name":"Incomplete download", "state":"downloading", "progress":0.6,
+                "super_seeding":false, "seq_dl":false, "f_l_piece_prio":false
+            }
+        }
+    })JSON"));
+    pane.show();
+    auto *table = pane.table();
+    QVERIFY(table);
+    const QModelIndex seed = indexForName(table, QStringLiteral("Completed seed"));
+    const QModelIndex download = indexForName(table, QStringLiteral("Incomplete download"));
+    QVERIFY(seed.isValid() && download.isValid());
+    QSignalSpy mode(&pane, &ServerPane::torrentModeRequested);
+    QSignalSpy action(&pane, &ServerPane::torrentContextActionRequested);
+    QString error;
+
+    table->selectionModel()->select(seed,
+        QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    QTimer::singleShot(0, &pane, [&]() {
+        QMenu *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+        if (!menu) { error = QStringLiteral("Context menu did not open"); return; }
+        QAction *options = actionNamed(menu, QStringLiteral("torrentContextTorrentOptions"));
+        QAction *manage = actionNamed(menu, QStringLiteral("torrentContextManageContent"));
+        QAction *super = actionNamed(menu, QStringLiteral("torrentContextSuperSeeding"));
+        QAction *sequential = actionNamed(menu, QStringLiteral("torrentContextSequentialDownload"));
+        QAction *exportFile = actionNamed(menu, QStringLiteral("torrentContextExportTorrent"));
+        if (!options || !manage || !super || !exportFile || sequential
+            || !super->isEnabled() || super->isChecked())
+            error = QStringLiteral("Completed torrent has incorrect context actions");
+        else
+            super->trigger();
+        menu->close();
+    });
+    QVERIFY(QMetaObject::invokeMethod(table, "customContextMenuRequested",
+        Qt::DirectConnection, Q_ARG(QPoint, table->visualRect(seed).center())));
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QCOMPARE(mode.size(), 1);
+    QCOMPARE(mode.first().at(0).value<ServerPane::TorrentContextAction>(),
+             ServerPane::TorrentContextAction::SuperSeeding);
+    QCOMPARE(mode.first().at(1).toBool(), true);
+
+    table->selectionModel()->select(download,
+        QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    QTimer::singleShot(0, &pane, [&]() {
+        QMenu *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+        if (!menu) { error = QStringLiteral("Download context menu did not open"); return; }
+        QAction *sequential = actionNamed(menu, QStringLiteral("torrentContextSequentialDownload"));
+        QAction *firstLast = actionNamed(menu, QStringLiteral("torrentContextFirstLastPieces"));
+        QAction *super = actionNamed(menu, QStringLiteral("torrentContextSuperSeeding"));
+        QAction *options = actionNamed(menu, QStringLiteral("torrentContextTorrentOptions"));
+        QAction *exportFile = actionNamed(menu, QStringLiteral("torrentContextExportTorrent"));
+        if (!sequential || !firstLast || super || !options || !exportFile)
+            error = QStringLiteral("Incomplete torrent has incorrect context actions");
+        else
+            sequential->trigger();
+        menu->close();
+    });
+    QVERIFY(QMetaObject::invokeMethod(table, "customContextMenuRequested",
+        Qt::DirectConnection, Q_ARG(QPoint, table->visualRect(download).center())));
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QCOMPARE(mode.size(), 2);
+    QCOMPARE(mode.last().at(0).value<ServerPane::TorrentContextAction>(),
+             ServerPane::TorrentContextAction::SequentialDownload);
+    QCOMPARE(mode.last().at(1).toBool(), true);
+
+    // Bulk selections must not offer individual file management, but still
+    // provide the working multi-torrent options and export actions.
+    table->selectionModel()->select(seed,
+        QItemSelectionModel::Select | QItemSelectionModel::Rows);
+    QTimer::singleShot(0, &pane, [&]() {
+        QMenu *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+        if (!menu) { error = QStringLiteral("Bulk context menu did not open"); return; }
+        QAction *manage = actionNamed(menu, QStringLiteral("torrentContextManageContent"));
+        QAction *options = actionNamed(menu, QStringLiteral("torrentContextTorrentOptions"));
+        QAction *exportFile = actionNamed(menu, QStringLiteral("torrentContextExportTorrent"));
+        if (manage || !options || !exportFile)
+            error = QStringLiteral("Bulk selection has incorrect context actions");
+        else
+            options->trigger();
+        menu->close();
+    });
+    QVERIFY(QMetaObject::invokeMethod(table, "customContextMenuRequested",
+        Qt::DirectConnection, Q_ARG(QPoint, table->visualRect(download).center())));
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QCOMPARE(action.size(), 1);
+    QCOMPARE(action.first().at(0).value<ServerPane::TorrentContextAction>(),
+             ServerPane::TorrentContextAction::TorrentOptions);
 }
 
 QTEST_MAIN(TorrentContextMenuWorkflowTest)
