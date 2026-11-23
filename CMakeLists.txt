@@ -232,10 +232,104 @@ if(BUILD_TESTING)
         Qt6::Test
         Qt6::Network
     )
-    add_test(NAME remote_connection_workflow COMMAND test_connection_workflow)
-    # Modal file-picker/duplicate-confirmation GUI workflows must never stall CI.
-    set_tests_properties(remote_connection_workflow PROPERTIES TIMEOUT 120)
-    set_tests_properties(remote_connection_workflow PROPERTIES TIMEOUT 100)
+    # Keep one compiled QtTest executable and the shared authenticated HTTP
+    # fixture, but run each logical workflow group in an independent process.
+    # A stalled modal dialog must not prevent other groups from being tested.
+    set(remote_workflow_methods "")
+    function(add_remote_workflow_group name timeout)
+        foreach(method IN LISTS ARGN)
+            if(method IN_LIST remote_workflow_methods)
+                message(FATAL_ERROR "Remote workflow registered twice: ${method}")
+            endif()
+            list(APPEND remote_workflow_methods "${method}")
+        endforeach()
+        set(remote_workflow_methods "${remote_workflow_methods}" PARENT_SCOPE)
+        add_test(NAME ${name} COMMAND test_connection_workflow ${ARGN})
+        set_tests_properties(${name} PROPERTIES
+            TIMEOUT ${timeout}
+            LABELS "remote;functional"
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        )
+    endfunction()
+
+    add_remote_workflow_group(remote_authentication_workflow 60
+        connectionDialogGeometryUsesSameQSettingsFile
+        userCanConnectAndDisconnect
+        userCanRememberAndReusePasswordWithoutSavingPlaintext
+        removingSavedServerForgetsItsProtectedCredential
+        userCanConnectWithBlankPasswordWhenServerPermitsIt
+        startupConnectsOnlyOptedInProfilesUsingProtectedCredentials
+        userSeesAuthenticationFailure
+    )
+
+    add_remote_workflow_group(remote_server_isolation_workflow 60
+        mainWindowAndEachServerRestoreNativeLayout
+        simultaneousServersHaveIndependentTabsAndKeepPolling
+    )
+
+    add_remote_workflow_group(remote_tray_and_status_workflow 60
+        nativeTrayMenuControlsRemoteSessionAndSpeedLimitsWhileHidden
+        nativeTrayMenuTracksTheSelectedServerWithoutCrossServerCommands
+        toolbarAndStatusbarRemainEnabledAfterHiddenWindowExit
+        corruptedOldToolbarSettingsRecoverOnce
+        statusBarFieldsStayFixedDuringAuthenticatedRateUpdates
+    )
+
+    add_remote_workflow_group(remote_transfer_presentation_workflow 60
+        globalFontSizeKeepsTorrentListAsFloorAndPersists
+        liveTorrentRowsFollowFullUpdatesPatchesAndRemovals
+        liveTorrentSwarmCountsHonorHideZeroAndIncrementalSync
+        nativeTransferPresentationShowsUpstreamProgressAndAvailability
+        upstreamTorrentStateColorsSurviveStalledAndQueuedStates
+    )
+
+    add_remote_workflow_group(remote_torrent_addition_workflow 75
+        torrentFileUploadPreservesBinaryMetadata
+        userDropsTorrentFilesAndMagnetIntoNativeTransferView
+        userCanSelectSevenTorrentFilesAndUploadOneAuthenticatedBatch
+        duplicateTorrentOffersTrackerMergeThroughNativeGui
+        privateTorrentsNeverOfferOrSendTrackerMerge
+        nativeAddTorrentOptionsUseAuthenticatedServerApi
+    )
+
+    add_remote_workflow_group(remote_content_workflow 75
+        nativeTorrentDetailsUseSelectedRemoteServerAndFilePriorityApis
+        contentDragPreferenceIsEnabledAndControlsNativeDragMode
+        userDragsOnlyExistingMappedContentAsCopyUris
+        userOpensMappedRemoteTorrentLocationInDesktopFileManager
+        userSetsRemoteLocationUsingActualTorrentContextMenu
+        nativeManageContentAndTorrentOptionsChangeServerState
+        remoteTorrentExportReturnsActualMetadata
+    )
+
+    add_remote_workflow_group(remote_torrent_actions_workflow 75
+        userQueueSubmenuSendsSelectedTorrentCommandsToAuthenticatedServer
+        userForceActionsReachSelectedAuthenticatedRemoteServer
+        rejectedTorrentActionDoesNotDisconnectServer
+        userRenamesSelectedTorrentThroughActualContextMenuAndDialog
+        realTorrentActionsUseAuthenticatedServerApis
+        automaticTorrentManagementRequiresUserConsent
+    )
+
+    add_remote_workflow_group(remote_tracker_workflow 60
+        nativeTrackerListEditorReplacesAllSelectedTorrents
+        privateTrackerAdditionPolicyThroughEditor
+    )
+
+    # Check the registration against the actual QtTest-discovered functions.
+    # Future additions (including remote Preferences) must be assigned to a
+    # group rather than silently falling out of the CTest suite.
+    add_test(NAME remote_workflow_registration
+        COMMAND ${CMAKE_COMMAND}
+            "-DTEST_EXECUTABLE=$<TARGET_FILE:test_connection_workflow>"
+            "-DREGISTERED_METHODS=${remote_workflow_methods}"
+            -P "${PROJECT_SOURCE_DIR}/tests/check_remote_workflow_registration.cmake"
+    )
+    set_tests_properties(remote_workflow_registration PROPERTIES
+        TIMEOUT 20
+        LABELS "remote;registration"
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
 
     # Tests start local TLS endpoints with ephemeral certificates and drive
     # real certificate-decision GUI workflows; no production server involved.
@@ -252,7 +346,7 @@ if(BUILD_TESTING)
     set_tests_properties(certificate_trust_workflow PROPERTIES TIMEOUT 90)
 
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        set_tests_properties(window_open_and_quit server_profile_management native_preferences_and_remote_paths native_add_torrent_and_path_mapping combined_sidebar_filter_workflow detail_tables_sorting_workflow torrent_context_menu_workflow remote_connection_workflow certificate_trust_workflow PROPERTIES
+        set_tests_properties(window_open_and_quit server_profile_management native_preferences_and_remote_paths native_add_torrent_and_path_mapping combined_sidebar_filter_workflow detail_tables_sorting_workflow torrent_context_menu_workflow certificate_trust_workflow PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         )
     endif()
