@@ -63,6 +63,9 @@ private slots:
         MainWindow window;
         window.show();
         QTRY_VERIFY(window.isVisible());
+        // This is what Wayland uses to associate a Qt toplevel (including
+        // secondary dialogs) with an installed desktop-entry icon.
+        QCOMPARE(QApplication::desktopFileName(), QStringLiteral("qbittorrent-remote"));
 
         // A parented Rename, Set Location, or Add Torrent dialog must retain
         // the same native application icon as the main window. Also verify

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=qBittorrent Remote
+Comment=Native desktop client for remote qBittorrent servers
+Exec=qbittorrent-remote
+Icon=qbittorrent-remote
+Terminal=false
+Categories=Network;FileTransfer;P2P;
+StartupNotify=true
+StartupWMClass=qbittorrent-remote

@@ -130,6 +130,18 @@ install(TARGETS qbittorrent-remote
     RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
 )
 
+# Linux Wayland compositors resolve app icons from the desktop entry matched
+# by QGuiApplication::desktopFileName(), not necessarily from setWindowIcon().
+# Install both pieces for a correct native app_id and task-list icon. The
+# same entry also gives X11 desktops a stable application identity.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    install(FILES packaging/linux/qbittorrent-remote.desktop
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/applications")
+    install(FILES src/gui/icons/qbittorrent-tray.svg
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps"
+        RENAME qbittorrent-remote.svg)
+endif()
+
 if(BUILD_TESTING)
     find_package(Qt6 6.6 REQUIRED COMPONENTS Test)
 

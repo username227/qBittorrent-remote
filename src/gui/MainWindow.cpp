@@ -215,6 +215,12 @@ MainWindow::MainWindow(QWidget *parent, QSettings *settings,
     // Required when SVG resources live in a linked static library.
     Q_INIT_RESOURCE(qbittorrent_icons);
 
+    // Under Wayland the compositor resolves task-list icons through the
+    // toplevel app_id and a matching freedesktop .desktop entry, not just
+    // QWidget::setWindowIcon(). Use our installed desktop entry name for the
+    // main window and all modal dialogs, before any platform window exists.
+    QGuiApplication::setDesktopFileName(QStringLiteral("qbittorrent-remote"));
+
     // Preserve the existing torrent-list font as the smallest permitted
     // point size. All widgets share the Qt application font, never a
     // per-table stylesheet or a smaller imitation of upstream's text.
