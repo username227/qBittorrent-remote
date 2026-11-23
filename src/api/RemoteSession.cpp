@@ -676,6 +676,27 @@ void RemoteSession::setTorrentLocation(const QStringList &hashes, const QString 
                    tr("Set torrent location"));
 }
 
+void RemoteSession::renameTorrent(const QString &hash, const QString &name)
+{
+    static const QRegularExpression validHash(
+        QStringLiteral("^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$"));
+    const QString normalizedName = QString(name).replace(
+        QRegularExpression(QStringLiteral("\\r?\\n|\\r")), QStringLiteral(" "));
+    if (!validHash.match(hash).hasMatch() || normalizedName.trimmed().isEmpty())
+    {
+        emit operationFailed(tr("Rename torrent"), tr("A valid torrent hash and nonempty name are required."));
+        return;
+    }
+
+    QUrlQuery form;
+    form.addQueryItem(QStringLiteral("hash"), hash);
+    form.addQueryItem(QStringLiteral("name"), normalizedName);
+    queueOperation(QStringLiteral("api/v2/torrents/rename"),
+                   form.toString(QUrl::FullyEncoded).toUtf8(),
+                   QByteArrayLiteral("application/x-www-form-urlencoded"),
+                   tr("Rename torrent"));
+}
+
 namespace
 {
 void appendAddOptions(QUrlQuery &form, const AddTorrentOptions &options)
