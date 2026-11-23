@@ -1174,6 +1174,40 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
         case ServerPane::TorrentContextAction::QueueBottom:
             m_ui->actionBottomQueuePos->trigger();
             break;
+        case ServerPane::TorrentContextAction::Rename:
+        {
+            const QStringList selected = selectedTorrentHashes();
+            if (selected.size() != 1)
+                break;
+            const QString hash = selected.first();
+            const QJsonObject record = connection->pane->model()->torrents().value(hash);
+            if (record.isEmpty())
+                break;
+            const QString current = record.value(QStringLiteral("name")).toString();
+
+            QInputDialog dialog(this);
+            dialog.setObjectName(QStringLiteral("renameTorrentDialog"));
+            dialog.setWindowTitle(tr("Rename"));
+            dialog.setLabelText(tr("New name:"));
+            dialog.setInputMode(QInputDialog::TextInput);
+            dialog.setTextValue(current);
+            if (dialog.exec() != QDialog::Accepted)
+                break;
+            const QString name = dialog.textValue().replace(
+                QRegularExpression(QStringLiteral("\\r?\\n|\\r")),
+                QStringLiteral(" "));
+            if (name.trimmed().isEmpty() || name == current)
+                break;
+            // A session or selection can change while the dialog is open.
+            // Never rename a torrent from another connected server.
+            if (!containsConnection(connection) || !connection->connected
+                || activeConnection() != connection
+                || !connection->pane->model()->torrents().contains(hash)
+                || selectedTorrentHashes() != QStringList{hash})
+                break;
+            connection->session->renameTorrent(hash, name);
+            break;
+        }
         case ServerPane::TorrentContextAction::OpenDestinationFolder:
             m_ui->actionOpenDestinationFolder->trigger();
             break;

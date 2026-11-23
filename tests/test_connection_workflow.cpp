@@ -2066,6 +2066,103 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(server.syncRequests() > requestsBefore, 6000);
     }
 
+    void userRenamesSelectedTorrentThroughActualContextMenuAndDialog()
+    {
+        DemoQbittorrentServer server(true);
+        server.enableTorrentSyncDemo();
+        server.keepDemoTorrents();
+        QVERIFY(server.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("profiles.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        QTRY_VERIFY(window.isVisible());
+        openConnectDialog(window, server.url());
+
+        auto *table = window.findChild<QTableView *>(QStringLiteral("torrentList"));
+        QVERIFY(table);
+        QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 1, 6000);
+        table->selectRow(0);
+        QVERIFY(table->selectionModel()->hasSelection());
+
+        // The server can synchronize the displayed name between polls.
+        // Read the name the person actually sees, rather than asserting a
+        // stale fixture value that is no longer on screen.
+        const QString original = table->model()->index(0, 0).data(Qt::DisplayRole).toString();
+        QVERIFY(!original.isEmpty());
+        const QString renamed = QStringLiteral("My & Dvořák + Test / 2026");
+        QString error;
+        // Observe the real modal rename dialog, not a synthetic signal
+        // or direct RemoteSession method invocation.
+        class RenameDialogDriver final : public QObject {
+        public:
+            QString initial;
+            QString wanted;
+            QString problem;
+            int dialogs = 0;
+            bool eventFilter(QObject *obj, QEvent *event) override {
+                if (event->type() != QEvent::Show)
+                    return QObject::eventFilter(obj, event);
+                auto *dialog = qobject_cast<QInputDialog *>(obj);
+                if (!dialog || dialog->objectName() != QLatin1String("renameTorrentDialog"))
+                    return QObject::eventFilter(obj, event);
+                ++dialogs;
+                QTimer::singleShot(0, dialog, [this, dialog]() {
+                    if (dialog->windowTitle() != QStringLiteral("Rename")
+                        || dialog->labelText() != QStringLiteral("New name:")
+                        || dialog->textValue() != initial)
+                        problem = QStringLiteral("Dialog does not reflect the selected torrent");
+                    dialog->setTextValue(wanted);
+                    dialog->accept();
+                });
+                return QObject::eventFilter(obj, event);
+            }
+        } driver;
+        driver.initial = original;
+        driver.wanted = renamed;
+        QApplication::instance()->installEventFilter(&driver);
+        QTimer::singleShot(0, &window, [&]() {
+            auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+            if (!menu || menu->objectName() != QLatin1String("torrentListContextMenu"))
+            {
+                error = QStringLiteral("Right click did not show torrent context menu");
+                if (menu) menu->close();
+                return;
+            }
+            QAction *rename = nullptr;
+            for (QAction *a : menu->actions())
+                if (a->objectName() == QLatin1String("torrentContextRename"))
+                    rename = a;
+            if (!rename || !rename->isEnabled())
+                error = QStringLiteral("Rename action is absent or disabled");
+            else
+                rename->trigger();
+            menu->close();
+        });
+        const QModelIndex row = table->selectionModel()->selectedRows(0).value(0);
+        QVERIFY(row.isValid());
+        QVERIFY(QMetaObject::invokeMethod(table, "customContextMenuRequested",
+            Qt::DirectConnection, Q_ARG(QPoint, table->visualRect(row).center())));
+        QApplication::instance()->removeEventFilter(&driver);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QVERIFY2(driver.problem.isEmpty(), qPrintable(driver.problem));
+        QCOMPARE(driver.dialogs, 1);
+
+        QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor("/api/v2/torrents/rename"), 1, 6000);
+        const QUrlQuery form(QString::fromUtf8(
+            server.lastCommandBody("/api/v2/torrents/rename")));
+        QCOMPARE(form.queryItemValue(QStringLiteral("hash")),
+                 QStringLiteral("0123456789abcdef0123456789abcdef01234567"));
+        QCOMPARE(form.queryItemValue(QStringLiteral("name")), renamed);
+        // Changing a display name must never rename the remote files,
+        // move the save path, or change the selected torrent's queue slot.
+        QCOMPARE(server.commandsFor("/api/v2/torrents/setLocation"), 0);
+        QCOMPARE(server.commandsFor("/api/v2/torrents/renameFile"), 0);
+        QCOMPARE(server.commandsFor("/api/v2/torrents/increasePrio"), 0);
+    }
+
     void realTorrentActionsUseAuthenticatedServerApis()
     {
         DemoQbittorrentServer server(true);

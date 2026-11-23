@@ -483,6 +483,18 @@ void ServerPane::showTorrentContextMenu(const QPoint &position)
         emit torrentContextActionRequested(TorrentContextAction::SetLocation);
     });
 
+    // Upstream offers Rename for exactly one selected torrent. This changes
+    // the torrent display name on the owning remote server, not disk paths.
+    if (torrents.size() == 1)
+    {
+        QAction *rename = menu.addAction(icon("edit-rename"), tr("Rename..."));
+        rename->setObjectName(QStringLiteral("torrentContextRename"));
+        rename->setIconVisibleInMenu(true);
+        connect(rename, &QAction::triggered, this, [this]() {
+            emit torrentContextActionRequested(TorrentContextAction::Rename);
+        });
+    }
+
     // Upstream places these after category/options controls, which can be
     // inserted above them by subsequent focused context-menu PRs.
     if (hasMetadata)

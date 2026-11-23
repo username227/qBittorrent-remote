@@ -66,6 +66,7 @@ private slots:
     void mixedSelectionOffersBothStartAndStop();
     void forceActionsRespectTorrentStatesAndSelections();
     void queueSubmenuReflectsRemoteQueueingAndIncompleteSelections();
+    void renameAppearsOnlyForExactlyOneSelectedTorrent();
     void copySubmenuCopiesRealRemoteFieldsAndDisablesUnavailableMetadata();
 };
 
@@ -79,7 +80,7 @@ void TorrentContextMenuWorkflowTest::contextMenuUsesNativeQbittorrentIcons()
         QStringLiteral("torrent-start-forced"), QStringLiteral("force-recheck"),
         QStringLiteral("reannounce"), QStringLiteral("name"), QStringLiteral("hash"),
         QStringLiteral("torrent-magnet"), QStringLiteral("help-about"),
-        QStringLiteral("directory")
+        QStringLiteral("directory"), QStringLiteral("edit-rename")
     };
     for (const QString &name : nativeIcons)
     {
@@ -96,6 +97,7 @@ void TorrentContextMenuWorkflowTest::contextMenuUsesNativeQbittorrentIcons()
         {QStringLiteral("torrentContextForceRecheck"), QStringLiteral("force-recheck")},
         {QStringLiteral("torrentContextForceReannounce"), QStringLiteral("reannounce")},
         {QStringLiteral("torrentContextRemove"), QStringLiteral("list-remove")},
+        {QStringLiteral("torrentContextRename"), QStringLiteral("edit-rename")},
         {QStringLiteral("torrentContextCopyMenu"), QStringLiteral("edit-copy")},
         {QStringLiteral("torrentCopyName"), QStringLiteral("name")},
         {QStringLiteral("torrentCopyHashV1"), QStringLiteral("hash")},
@@ -138,6 +140,7 @@ void TorrentContextMenuWorkflowTest::contextMenuUsesNativeQbittorrentIcons()
             QList<QAction *> actions;
             actions.append(actionNamed(menu, row.second));
             actions.append(actionNamed(menu, QStringLiteral("torrentContextRemove")));
+            actions.append(actionNamed(menu, QStringLiteral("torrentContextRename")));
             actions.append(actionNamed(menu, QStringLiteral("torrentContextForceStart")));
             actions.append(actionNamed(menu, QStringLiteral("torrentContextForceRecheck")));
             actions.append(actionNamed(menu, QStringLiteral("torrentContextForceReannounce")));
@@ -605,6 +608,72 @@ void TorrentContextMenuWorkflowTest::queueSubmenuReflectsRemoteQueueingAndIncomp
     const QString enabledAgainError = checkMenu(completed, true, "torrentQueueUp");
     QVERIFY2(enabledAgainError.isEmpty(), qPrintable(enabledAgainError));
     QCOMPARE(triggered.last(), ServerPane::TorrentContextAction::QueueUp);
+}
+
+void TorrentContextMenuWorkflowTest::renameAppearsOnlyForExactlyOneSelectedTorrent()
+{
+    ServerPane pane;
+    pane.resize(1200, 740);
+    pane.applySync(payload(R"JSON({
+      "full_update":true,
+      "torrents":{
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa":{"name":"Album 1","state":"downloading"},
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb":{"name":"Album 2","state":"uploading"}
+      }
+    })JSON"));
+    pane.show();
+    auto *table = pane.table();
+    const QModelIndex first = indexForName(table, QStringLiteral("Album 1"));
+    const QModelIndex second = indexForName(table, QStringLiteral("Album 2"));
+    QVERIFY(first.isValid() && second.isValid());
+
+    int emitted = 0;
+    connect(&pane, &ServerPane::torrentContextActionRequested, &pane,
+        [&](ServerPane::TorrentContextAction action) {
+            if (action == ServerPane::TorrentContextAction::Rename)
+                ++emitted;
+        });
+
+    // Single selection: native icon and action must be present and usable.
+    table->selectionModel()->select(first,
+        QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    QString error;
+    QTimer::singleShot(0, &pane, [&]() {
+        auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+        if (!menu) { error = QStringLiteral("No native context menu"); return; }
+        QAction *rename = actionNamed(menu, QStringLiteral("torrentContextRename"));
+        const QPixmap expected = QIcon(
+            QStringLiteral(":/icons/edit-rename.svg")).pixmap(16, 16);
+        if (!rename || !rename->isEnabled() || !rename->isIconVisibleInMenu()
+            || expected.isNull() || rename->icon().pixmap(16, 16).toImage()
+                != expected.toImage())
+            error = QStringLiteral("Rename is missing, disabled or has the wrong native icon");
+        else
+            rename->trigger();
+        menu->close();
+    });
+    QVERIFY(QMetaObject::invokeMethod(table, "customContextMenuRequested",
+        Qt::DirectConnection, Q_ARG(QPoint, table->visualRect(first).center())));
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QCOMPARE(emitted, 1);
+
+    // Multi-selection: upstream hides Rename rather than picking a random
+    // row and possibly changing the wrong torrent.
+    table->selectionModel()->select(second,
+        QItemSelectionModel::Select | QItemSelectionModel::Rows);
+    QCOMPARE(table->selectionModel()->selectedRows().size(), 2);
+    error.clear();
+    QTimer::singleShot(0, &pane, [&]() {
+        auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+        if (!menu) { error = QStringLiteral("No native multi-selection menu"); return; }
+        if (actionNamed(menu, QStringLiteral("torrentContextRename")))
+            error = QStringLiteral("Rename must not appear for multiple selected torrents");
+        menu->close();
+    });
+    QVERIFY(QMetaObject::invokeMethod(table, "customContextMenuRequested",
+        Qt::DirectConnection, Q_ARG(QPoint, table->visualRect(first).center())));
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QCOMPARE(emitted, 1);
 }
 
 void TorrentContextMenuWorkflowTest::copySubmenuCopiesRealRemoteFieldsAndDisablesUnavailableMetadata()
