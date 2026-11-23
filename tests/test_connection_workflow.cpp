@@ -1105,6 +1105,20 @@ private slots:
             QVERIFY(torrentHeader);
             torrentHeader->resizeSection(1, 173);
             QCOMPARE(torrentHeader->sectionSize(1), 173);
+            QVERIFY(torrentHeader->sectionsMovable());
+            QCOMPARE(torrentHeader->visualIndex(1), 1);
+            // Real mouse gesture on the native header: the Size column is
+            // dragged ahead of Name, not merely reordered through an API.
+            auto *headerViewport = torrentHeader->viewport();
+            const QPoint from(torrentHeader->sectionViewportPosition(1) + 38,
+                              torrentHeader->height() / 2);
+            const QPoint to(torrentHeader->sectionViewportPosition(0) + 20,
+                            torrentHeader->height() / 2);
+            QTest::mousePress(headerViewport, Qt::LeftButton, Qt::NoModifier, from);
+            QTest::mouseMove(headerViewport, from - QPoint(22, 0));
+            QTest::mouseMove(headerViewport, to);
+            QTest::mouseRelease(headerViewport, Qt::LeftButton, Qt::NoModifier, to);
+            QTRY_COMPARE(torrentHeader->visualIndex(1), 0);
             auto *tabs = pane->findChild<PropTabBar *>();
             QVERIFY(tabs);
             tabs->setCurrentIndex(4); // Content page
@@ -1118,6 +1132,9 @@ private slots:
             auto *firstPane = qobject_cast<ServerPane *>(servers->currentWidget());
             QVERIFY(firstPane);
             firstPane->table()->horizontalHeader()->resizeSection(1, 124);
+            // Reorder only the second connection: a different server must
+            // retain its own independent logical/visual column mapping.
+            QCOMPARE(firstPane->table()->horizontalHeader()->visualIndex(1), 1);
             servers->setCurrentIndex(1);
             window.resize(1230, 790);
             QCoreApplication::processEvents();
@@ -1147,6 +1164,8 @@ private slots:
             auto *pane = qobject_cast<ServerPane *>(servers->currentWidget());
             QVERIFY(pane);
             QTRY_COMPARE(pane->table()->horizontalHeader()->sectionSize(1), 173);
+            QVERIFY(pane->table()->horizontalHeader()->sectionsMovable());
+            QCOMPARE(pane->table()->horizontalHeader()->visualIndex(1), 0);
             auto *tabs = pane->findChild<PropTabBar *>();
             QVERIFY(tabs);
             QTRY_COMPARE(tabs->currentIndex(), -1);
@@ -1159,6 +1178,8 @@ private slots:
             auto *firstPane = qobject_cast<ServerPane *>(servers->currentWidget());
             QVERIFY(firstPane);
             QCOMPARE(firstPane->table()->horizontalHeader()->sectionSize(1), 124);
+            QVERIFY(firstPane->table()->horizontalHeader()->sectionsMovable());
+            QCOMPARE(firstPane->table()->horizontalHeader()->visualIndex(1), 1);
             QVERIFY(window.close());
         }
     }
@@ -1749,6 +1770,7 @@ private slots:
         QVERIFY(peers);
         QTRY_COMPARE_WITH_TIMEOUT(peers->rowCount(), 1, 6000);
         QVERIFY(!peers->horizontalHeader()->highlightSections());
+        QVERIFY(peers->horizontalHeader()->sectionsMovable());
         QCOMPARE(peers->item(0, 2)->text(), QStringLiteral("qBittorrent"));
 
         tabBar->setCurrentIndex(3);
@@ -1764,6 +1786,7 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(contents->topLevelItem(0)->childCount() == 2, 6000);
         QCOMPARE(contents->columnCount(), 6);
         QVERIFY(!contents->header()->highlightSections());
+        QVERIFY(contents->header()->sectionsMovable());
         QCOMPARE(contents->headerItem()->text(3), QStringLiteral("Download Priority"));
         auto *rootFolder = contents->topLevelItem(0);
         auto *fileOne = rootFolder->child(0);

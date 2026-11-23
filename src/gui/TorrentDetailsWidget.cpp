@@ -511,6 +511,7 @@ TorrentDetailsWidget::TorrentDetailsWidget(QWidget *parent)
     m_peers->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_peers->setAlternatingRowColors(true);
     m_peers->horizontalHeader()->setStretchLastSection(true);
+    m_peers->horizontalHeader()->setSectionsMovable(true);
     m_peers->horizontalHeader()->setHighlightSections(false);
     m_peers->setSortingEnabled(true);
     m_peers->sortItems(0, Qt::AscendingOrder);
@@ -526,6 +527,7 @@ TorrentDetailsWidget::TorrentDetailsWidget(QWidget *parent)
         tr("Download Priority"), tr("Remaining"), tr("Availability")
     });
     tree->header()->setStretchLastSection(false);
+    tree->header()->setSectionsMovable(true);
     tree->header()->setHighlightSections(false);
     tree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
     tree->setColumnWidth(1, 105);

@@ -139,6 +139,7 @@ ServerPane::ServerPane(QWidget *parent) : QWidget(parent)
     m_table->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_table->setSortingEnabled(true);
     m_table->horizontalHeader()->setStretchLastSection(false);
+    m_table->horizontalHeader()->setSectionsMovable(true);
     // Native Qt may still bold labels of selected header sections even when
     // highlighting is disabled. An explicitly resolved Normal weight prevents
     // QCommonStyle::CE_HeaderLabel from synthesizing bold, without styling
@@ -1007,6 +1008,7 @@ void ServerPane::restoreLayout(QSettings &settings, const QString &profileId)
     // torrent headings whenever rows are selected. Override that persisted
     // visual flag *after* restoring section geometry and sort state.
     header->setHighlightSections(false);
+    header->setSectionsMovable(true); // Also correct headers saved by earlier builds.
     header->setSectionResizeMode(0, QHeaderView::Interactive);
     if (!settings.value(root + QStringLiteral("/nameColumnResizableV1"), false).toBool())
         header->resizeSection(0, qMax(header->sectionSize(0),
@@ -1020,6 +1022,7 @@ void ServerPane::restoreLayout(QSettings &settings, const QString &profileId)
                 root + QLatin1Char('/') + QString::fromLatin1(key)).toByteArray();
             if (!data.isEmpty())
                 view->header()->restoreState(data);
+            view->header()->setSectionsMovable(true);
         }
     };
     restoreHeader("torrentTrackers", "trackerHeader");
@@ -1030,6 +1033,7 @@ void ServerPane::restoreLayout(QSettings &settings, const QString &profileId)
             settings.value(root + QStringLiteral("/peerHeader")).toByteArray();
         if (!data.isEmpty())
             peers->horizontalHeader()->restoreState(data);
+        peers->horizontalHeader()->setSectionsMovable(true);
     }
 
     const int tab = settings.value(root + QStringLiteral("/detailsTab"), 0).toInt();
