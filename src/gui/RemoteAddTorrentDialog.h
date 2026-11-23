@@ -26,7 +26,7 @@ class RemoteAddTorrentDialog final : public QDialog
 {
     Q_OBJECT
 public:
-    enum class Source { Links, TorrentFile };
+    enum class Source { Links, TorrentFile, TorrentFiles };
 
     RemoteAddTorrentDialog(QSettings &settings,
                            const Remote::ServerProfile &server,
@@ -36,7 +36,8 @@ public:
                            QByteArray fileContents = {},
                            QWidget *parent = nullptr,
                            QList<Remote::ServerProfile> availableServers = {},
-                           std::function<bool(const QString &)> serverIsConnected = {});
+                           std::function<bool(const QString &)> serverIsConnected = {},
+                           QList<Remote::TorrentUpload> batchFiles = {});
     ~RemoteAddTorrentDialog() override;
 
     Remote::AddTorrentOptions options() const;
@@ -44,6 +45,7 @@ public:
     QString links() const;
     QString fileName() const { return m_fileName; }
     QByteArray fileContents() const { return m_fileContents; }
+    const QList<Remote::TorrentUpload> &batchFiles() const { return m_batchFiles; }
 
     // Testable noninteractive path translation used by native Browse buttons.
     bool setLocalSaveDirectory(const QString &path);
@@ -74,6 +76,7 @@ private:
     Source m_source;
     QString m_fileName;
     QByteArray m_fileContents;
+    QList<Remote::TorrentUpload> m_batchFiles;
     Remote::TorrentMetadata m_metadata;
     class QPlainTextEdit *m_linkInput = nullptr;
     QList<Remote::ServerProfile> m_availableServers;

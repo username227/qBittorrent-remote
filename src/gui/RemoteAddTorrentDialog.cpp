@@ -63,7 +63,8 @@ RemoteAddTorrentDialog::RemoteAddTorrentDialog(QSettings &settings,
                                                QString fileName, QByteArray fileContents,
                                                QWidget *parent,
                                                QList<Remote::ServerProfile> availableServers,
-                                               std::function<bool(const QString &)> serverIsConnected)
+                                               std::function<bool(const QString &)> serverIsConnected,
+                                               QList<Remote::TorrentUpload> batchFiles)
     : QDialog(parent)
     , m_settings(settings)
     , m_server(server)
@@ -72,6 +73,7 @@ RemoteAddTorrentDialog::RemoteAddTorrentDialog(QSettings &settings,
     , m_source(source)
     , m_fileName(std::move(fileName))
     , m_fileContents(std::move(fileContents))
+    , m_batchFiles(std::move(batchFiles))
     , m_availableServers(std::move(availableServers))
     , m_serverIsConnected(std::move(serverIsConnected))
 {
@@ -193,6 +195,9 @@ void RemoteAddTorrentDialog::switchServer(const QString &id)
     clearTargetFields();
     if (m_source == Source::Links)
         setWindowTitle(tr("Add Torrent — %1").arg(m_server.name));
+    else if (m_source == Source::TorrentFiles)
+        setWindowTitle(tr("Add %1 torrents — %2")
+            .arg(m_batchFiles.size()).arg(m_server.name));
 }
 
 void RemoteAddTorrentDialog::adaptOptionsGridToFont()
@@ -336,6 +341,39 @@ void RemoteAddTorrentDialog::setupSource(QString initialLinks)
             "Magnet metadata is retrieved by the remote server after adding."));
         m_ui->lblMetaLoading->setText(tr(
             "File selection is available after adding, in the Content tab."));
+        m_ui->contentTreeView->setEnabled(false);
+        m_ui->buttonSave->setEnabled(false);
+    }
+    else if (m_source == Source::TorrentFiles)
+    {
+        // The content tree and metadata labels describe one torrent only.
+        // Don't show a misleading preview of just the first file.
+        auto *group = new QGroupBox(
+            tr("Selected torrent files (%1)").arg(m_batchFiles.size()),
+            m_ui->torrentoptionsFrame);
+        group->setObjectName(QStringLiteral("torrentBatchGroup"));
+        auto *layout = new QVBoxLayout(group);
+        auto *names = new QPlainTextEdit(group);
+        names->setObjectName(QStringLiteral("torrentBatchFileList"));
+        names->setReadOnly(true);
+        names->setMaximumHeight(125);
+        QStringList labels;
+        for (const auto &file : m_batchFiles)
+            labels.append(file.filename);
+        names->setPlainText(labels.join(QLatin1Char('\n')));
+        layout->addWidget(names);
+        m_ui->mainlayout_addui->insertWidget(m_serverSelector ? 1 : 0, group);
+        setWindowTitle(tr("Add %1 torrents — %2")
+            .arg(m_batchFiles.size()).arg(m_server.name));
+        for (auto *label : {
+                m_ui->labelSizeData, m_ui->labelDateData,
+                m_ui->labelInfohash1Data, m_ui->labelInfohash2Data
+             })
+            label->setText(tr("Multiple torrents"));
+        m_ui->labelCommentData->setText(
+            tr("Shared options apply to all selected torrent files."));
+        m_ui->lblMetaLoading->setText(tr(
+            "Individual torrent files can be managed in the Content tab after adding."));
         m_ui->contentTreeView->setEnabled(false);
         m_ui->buttonSave->setEnabled(false);
     }
@@ -535,7 +573,14 @@ void RemoteAddTorrentDialog::accept()
             return;
         }
     }
-    else if (m_fileContents.isEmpty() || m_fileContents.size() > 32 * 1024 * 1024)
+    else if (m_source == Source::TorrentFiles && m_batchFiles.size() < 2)
+    {
+        QMessageBox::warning(this, tr("Invalid torrent files"),
+                             tr("Select at least two .torrent files for a batch."));
+        return;
+    }
+    else if (m_source == Source::TorrentFile
+             && (m_fileContents.isEmpty() || m_fileContents.size() > 32 * 1024 * 1024))
     {
         QMessageBox::warning(this, tr("Invalid torrent file"),
                              tr("The selected torrent metadata is empty or exceeds 32 MiB."));

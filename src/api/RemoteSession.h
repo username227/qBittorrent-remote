@@ -54,6 +54,14 @@ struct AddTorrentOptions
     bool seedMode = false;
 };
 
+// Only .torrent metadata, never downloaded content or a local filesystem
+// destination. Multiple uploads use the same server-side AddTorrentOptions.
+struct TorrentUpload
+{
+    QString filename;
+    QByteArray contents;
+};
+
 class RemoteSession final : public QObject
 {
     Q_OBJECT
@@ -81,6 +89,8 @@ public:
     void addTorrentFile(const QString &filename, const QByteArray &contents);
     void addTorrentFile(const QString &filename, const QByteArray &contents,
                         const AddTorrentOptions &options);
+    void addTorrentFiles(const QList<TorrentUpload> &files,
+                         const AddTorrentOptions &options);
     // Merge only explicitly supplied announce URLs into the existing remote
     // torrent; no local tracker traffic and no re-add of torrent metadata.
     void addTorrentTrackers(const QString &hash, const QStringList &urls);

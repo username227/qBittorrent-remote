@@ -19,6 +19,8 @@
 #include <QFileDialog>
 #include <QFontInfo>
 #include <QHash>
+#include <QGroupBox>
+#include <QComboBox>
 #include <QHeaderView>
 #include <QHostAddress>
 #include <QLineEdit>
@@ -429,6 +431,107 @@ protected:
     }
 private:
     QString m_fileName;
+};
+
+// Drive the visible multi-select file picker and Add Torrent dialog.
+// The assertions observe UI controls and the remote HTTP request, not an
+// internal addTorrentFiles() call.
+class AddBatchTorrentUi final : public QObject
+{
+public:
+    AddBatchTorrentUi(QString directory, QStringList filenames)
+        : m_directory(std::move(directory)), m_filenames(std::move(filenames)) {}
+
+    int filePickers = 0;
+    int addDialogs = 0;
+    QString error;
+
+protected:
+    bool eventFilter(QObject *obj, QEvent *event) override
+    {
+        if (event->type() != QEvent::Show)
+            return QObject::eventFilter(obj, event);
+        if (auto *picker = qobject_cast<QFileDialog *>(obj);
+            picker && picker->objectName() == QLatin1String("addTorrentFileDialog"))
+        {
+            ++filePickers;
+            QTimer::singleShot(0, picker, [this, picker]() {
+                if (picker->fileMode() != QFileDialog::ExistingFiles)
+                {
+                    error = QStringLiteral("File picker does not allow multiple torrent selection");
+                    picker->reject();
+                    return;
+                }
+                picker->setDirectory(m_directory);
+                auto *line = picker->findChild<QLineEdit *>(
+                    QStringLiteral("fileNameEdit"));
+                if (!line)
+                {
+                    error = QStringLiteral("Native Qt filename input missing");
+                    picker->reject();
+                    return;
+                }
+                // Qt's ExistingFiles picker accepts quoted filenames from
+                // its own filename input, exactly as in the visible UI.
+                QStringList quoted;
+                for (const QString &name : m_filenames)
+                    quoted.append(QLatin1Char('"') + name + QLatin1Char('"'));
+                line->setText(quoted.join(QLatin1Char(' ')));
+                if (picker->selectedFiles().size() != m_filenames.size())
+                {
+                    error = QStringLiteral("Multi-select picker did not select all seven files");
+                    picker->reject();
+                    return;
+                }
+                static_cast<QDialog *>(picker)->accept();
+            });
+        }
+        else if (auto *dialog = qobject_cast<RemoteAddTorrentDialog *>(obj))
+        {
+            ++addDialogs;
+            QTimer::singleShot(0, dialog, [this, dialog]() {
+                auto *group = dialog->findChild<QGroupBox *>(
+                    QStringLiteral("torrentBatchGroup"));
+                auto *names = dialog->findChild<QPlainTextEdit *>(
+                    QStringLiteral("torrentBatchFileList"));
+                auto *category = dialog->findChild<QComboBox *>(
+                    QStringLiteral("categoryComboBox"));
+                auto *save = dialog->findChild<QComboBox *>(
+                    QStringLiteral("remoteSavePath"));
+                auto *start = dialog->findChild<QCheckBox *>(
+                    QStringLiteral("startTorrentCheckBox"));
+                auto *buttons = dialog->findChild<QDialogButtonBox *>(
+                    QStringLiteral("buttonBox"));
+                if (!group || !names || !names->isReadOnly()
+                    || names->toPlainText().split(QLatin1Char('\n')).size() != m_filenames.size()
+                    || !category || !save || !start || !buttons
+                    || !buttons->button(QDialogButtonBox::Ok))
+                {
+                    error = QStringLiteral("User did not see seven files and shared add options");
+                    dialog->reject();
+                    return;
+                }
+                for (const QString &name : m_filenames)
+                    if (!names->toPlainText().contains(name))
+                        error = QStringLiteral("Missing selected file: ") + name;
+                if (!error.isEmpty()) { dialog->reject(); return; }
+                category->setEditText(QStringLiteral("Queue Test"));
+                save->setEditText(QStringLiteral("/share/QueueTest"));
+                start->setChecked(true);
+                buttons->button(QDialogButtonBox::Ok)->click();
+            });
+        }
+        else if (auto *warning = qobject_cast<QMessageBox *>(obj))
+        {
+            error = QStringLiteral("Unexpected user-visible warning: ")
+                + warning->windowTitle() + QLatin1String(": ") + warning->text();
+            QTimer::singleShot(0, warning, &QMessageBox::reject);
+        }
+        return QObject::eventFilter(obj, event);
+    }
+private:
+    QString m_directory;
+    QStringList m_filenames;
 };
 
 class ConnectionWorkflowTest final : public QObject
@@ -1277,6 +1380,84 @@ private slots:
         QVERIFY(request.contains("Content-Type: application/x-bittorrent"));
         QVERIFY(request.contains(metadata));
         QVERIFY(request.startsWith("--qbtRemote-"));
+    }
+
+    void userCanSelectSevenTorrentFilesAndUploadOneAuthenticatedBatch()
+    {
+        DemoQbittorrentServer server(true);
+        QVERIFY(server.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+
+        QStringList fileNames;
+        QList<QByteArray> metadata;
+        for (int i = 1; i <= 7; ++i)
+        {
+            const QByteArray torrentName = QByteArrayLiteral("batch-")
+                + QByteArray::number(i);
+            const QByteArray encoded = QByteArrayLiteral("d4:infod6:lengthi")
+                + QByteArray::number(100 + i) + QByteArrayLiteral("e4:name")
+                + QByteArray::number(torrentName.size()) + ':'
+                + torrentName + QByteArrayLiteral("ee");
+            Remote::TorrentMetadata parsed;
+            QString parseError;
+            QVERIFY2(Remote::TorrentMetadataReader::read(encoded, parsed, &parseError),
+                     qPrintable(parseError));
+            const QString name = QStringLiteral("queue_%1.torrent").arg(i);
+            QFile output(temp.filePath(name));
+            QVERIFY(output.open(QIODevice::WriteOnly));
+            QCOMPARE(output.write(encoded), qint64(encoded.size()));
+            output.close();
+            fileNames.append(name);
+            metadata.append(encoded);
+        }
+
+        QSettings settings(temp.filePath(QStringLiteral("settings.ini")),
+                           QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        QTRY_VERIFY(window.isVisible());
+        openConnectDialog(window, server.url());
+        QAction *add = window.findChild<QAction *>(QStringLiteral("actionOpen"));
+        QVERIFY(add);
+        QTRY_VERIFY_WITH_TIMEOUT(add->isEnabled(), 6000);
+
+        const bool native = QApplication::testAttribute(Qt::AA_DontUseNativeDialogs);
+        QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, true);
+        AddBatchTorrentUi interaction(temp.path(), fileNames);
+        QApplication::instance()->installEventFilter(&interaction);
+        QTimer watchdog;
+        watchdog.setSingleShot(true);
+        QObject::connect(&watchdog, &QTimer::timeout, &window, []() {
+            for (QWidget *widget : QApplication::topLevelWidgets())
+                if (auto *dialog = qobject_cast<QDialog *>(widget);
+                    dialog && dialog->isVisible())
+                    dialog->reject();
+        });
+        watchdog.start(10000);
+        add->trigger(); // Real UI path: picker -> Add Torrent -> Web API.
+        watchdog.stop();
+        QApplication::instance()->removeEventFilter(&interaction);
+        QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, native);
+        QVERIFY2(interaction.error.isEmpty(), qPrintable(interaction.error));
+        QCOMPARE(interaction.filePickers, 1);
+        QCOMPARE(interaction.addDialogs, 1);
+
+        QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor("/api/v2/torrents/add"), 1, 6000);
+        const QByteArray body = server.lastCommandBody("/api/v2/torrents/add");
+        QCOMPARE(body.count(QByteArrayLiteral("name=\"torrents\"; filename=\"")), 7);
+        for (int i = 0; i < fileNames.size(); ++i)
+        {
+            QVERIFY2(body.contains(QByteArrayLiteral("name=\"torrents\"; filename=\"")
+                    + fileNames.at(i).toUtf8() + '"'),
+                     qPrintable(fileNames.at(i)));
+            QVERIFY(body.contains(metadata.at(i)));
+        }
+        QVERIFY(body.contains("name=\"savepath\"\r\n\r\n/share/QueueTest\r\n"));
+        QVERIFY(body.contains("name=\"category\"\r\n\r\nQueue Test\r\n"));
+        QVERIFY(body.contains("name=\"stopped\"\r\n\r\nfalse\r\n"));
+        QCOMPARE(server.commandsFor("/api/v2/torrents/addTrackers"), 0);
     }
 
     void duplicateTorrentOffersTrackerMergeThroughNativeGui()

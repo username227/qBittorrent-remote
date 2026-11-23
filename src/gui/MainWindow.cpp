@@ -589,37 +589,69 @@ void MainWindow::setupActions()
             return;
         QFileDialog filePicker(this, tr("Select local .torrent metadata"));
         filePicker.setObjectName(QStringLiteral("addTorrentFileDialog"));
-        filePicker.setFileMode(QFileDialog::ExistingFile);
+        filePicker.setFileMode(QFileDialog::ExistingFiles);
         filePicker.setNameFilters({tr("Torrent files (*.torrent)"), tr("All files (*)")});
         trackDialogGeometry(filePicker, QStringLiteral("SelectTorrentFile"));
         if (filePicker.exec() != QDialog::Accepted)
             return;
-        const QString filename = filePicker.selectedFiles().value(0);
-        if (filename.isEmpty() || !containsConnection(server) || !server->connected)
+        const QStringList filenames = filePicker.selectedFiles();
+        if (filenames.isEmpty() || !containsConnection(server) || !server->connected)
             return;
-        QFile file(filename);
-        if (!file.open(QIODevice::ReadOnly))
+
+        QList<Remote::TorrentUpload> uploads;
+        uploads.reserve(filenames.size());
+        constexpr qint64 maxSingleBytes = 32LL * 1024 * 1024;
+        constexpr qint64 maxBatchBytes = 128LL * 1024 * 1024;
+        qint64 totalBytes = 0;
+        for (const QString &filename : filenames)
         {
-            QMessageBox::warning(this, tr("Cannot open torrent file"),
-                                 tr("Cannot read the selected local .torrent file."));
+            QFile file(filename);
+            if (!file.open(QIODevice::ReadOnly))
+            {
+                QMessageBox::warning(this, tr("Cannot open torrent file"),
+                    tr("Cannot read %1: %2").arg(filename, file.errorString()));
+                return;
+            }
+            const qint64 size = file.size();
+            if (size <= 0 || size > maxSingleBytes
+                || totalBytes > maxBatchBytes - size)
+            {
+                QMessageBox::warning(this, tr("Invalid torrent metadata"),
+                    tr("%1 is empty, exceeds 32 MiB, or exceeds the 128 MiB batch limit.")
+                        .arg(filename));
+                return; // Reject the whole batch, no partial submissions.
+            }
+            const QByteArray contents = file.readAll();
+            if (contents.size() != size)
+            {
+                QMessageBox::warning(this, tr("Cannot read torrent file"),
+                    tr("Could not read all the metadata in %1.").arg(filename));
+                return;
+            }
+            totalBytes += size;
+            uploads.append({QFileInfo(filename).fileName(), contents});
+        }
+        if (uploads.size() > 256)
+        {
+            QMessageBox::warning(this, tr("Too many torrent files"),
+                tr("Select no more than 256 .torrent files at once."));
             return;
         }
-        if (file.size() > 32 * 1024 * 1024)
-        {
-            QMessageBox::warning(this, tr("Torrent file too large"),
-                                 tr("The selected .torrent metadata exceeds 32 MiB."));
-            return;
-        }
-        const QByteArray contents = file.readAll();
+
         const auto available = connectedServerProfiles();
         if (available.isEmpty())
             return;
         const auto initial = connectedById(server->profile.id);
+        const bool batch = uploads.size() > 1;
         RemoteAddTorrentDialog dialog(*m_settings,
             initial ? initial->profile : available.first(),
-            RemoteAddTorrentDialog::Source::TorrentFile, {},
-            QFileInfo(filename).fileName(), contents, this, available,
-            [this](const QString &id) { return static_cast<bool>(connectedById(id)); });
+            batch ? RemoteAddTorrentDialog::Source::TorrentFiles
+                  : RemoteAddTorrentDialog::Source::TorrentFile,
+            {}, batch ? QString() : uploads.first().filename,
+            batch ? QByteArray() : uploads.first().contents,
+            this, available,
+            [this](const QString &id) { return static_cast<bool>(connectedById(id)); },
+            batch ? uploads : QList<Remote::TorrentUpload>{});
         trackDialogGeometry(dialog, QStringLiteral("AddTorrent"));
         if (dialog.exec() != QDialog::Accepted)
             return;
@@ -627,23 +659,82 @@ void MainWindow::setupActions()
         if (!target)
         {
             QMessageBox::warning(this, tr("Server disconnected"),
-                                 tr("The selected server disconnected before the torrent "
-                                    "could be submitted. Nothing was added."));
+                tr("The selected server disconnected before the torrents could be submitted. "
+                   "Nothing was added."));
             return;
         }
-        Remote::TorrentMetadata metadata;
-        if (Remote::TorrentMetadataReader::read(dialog.fileContents(), metadata))
+
+        const Remote::AddTorrentOptions options = dialog.options();
+        if (!batch)
         {
+            // Preserve the single-file duplicate tracker-merge workflow.
+            Remote::TorrentMetadata metadata;
+            if (Remote::TorrentMetadataReader::read(dialog.fileContents(), metadata))
+            {
+                TorrentIdentity identity;
+                if (!metadata.infoHashV1.isEmpty()) identity.hashes.append(metadata.infoHashV1);
+                if (!metadata.infoHashV2.isEmpty()) identity.hashes.append(metadata.infoHashV2);
+                identity.trackers = metadata.trackers;
+                identity.isPrivate = metadata.isPrivate;
+                if (offerTrackerMerge(target, identity))
+                    return;
+            }
+            target->session->addTorrentFile(dialog.fileName(), dialog.fileContents(), options);
+            return;
+        }
+
+        // Batch submission is one request with shared options. Validate all
+        // metadata first so one malformed file cannot reject the entire POST.
+        // The server can change in the dialog, so detect duplicates only
+        // against the *chosen* remote session after the user accepts.
+        QList<Remote::TorrentUpload> toUpload;
+        QSet<QString> hashesSeen;
+        QStringList skipped;
+        for (const Remote::TorrentUpload &upload : dialog.batchFiles())
+        {
+            Remote::TorrentMetadata metadata;
+            QString error;
+            if (!Remote::TorrentMetadataReader::read(upload.contents, metadata, &error)
+                || (metadata.infoHashV1.isEmpty() && metadata.infoHashV2.isEmpty()))
+            {
+                QMessageBox::warning(this, tr("Invalid torrent file"),
+                    tr("%1 could not be decoded: %2. No files were uploaded.")
+                        .arg(upload.filename, error));
+                return;
+            }
             TorrentIdentity identity;
             if (!metadata.infoHashV1.isEmpty()) identity.hashes.append(metadata.infoHashV1);
             if (!metadata.infoHashV2.isEmpty()) identity.hashes.append(metadata.infoHashV2);
-            identity.trackers = metadata.trackers;
-            identity.isPrivate = metadata.isPrivate;
-            if (offerTrackerMerge(target, identity))
-                return;
+            bool duplicate = !existingHash(*target->pane->model(), identity.hashes).isEmpty();
+            for (const QString &hash : identity.hashes)
+                duplicate = duplicate || hashesSeen.contains(hash);
+            if (duplicate)
+            {
+                skipped.append(upload.filename);
+                continue;
+            }
+            for (const QString &hash : identity.hashes)
+                hashesSeen.insert(hash);
+            toUpload.append(upload);
         }
-        target->session->addTorrentFile(dialog.fileName(), dialog.fileContents(),
-                                        dialog.options());
+        if (!skipped.isEmpty())
+        {
+            const QString explanation = tr(
+                "%1 torrent(s) already exist on %2 or are duplicates in this batch. "
+                "They will not be uploaded or have trackers modified.")
+                .arg(skipped.size()).arg(target->profile.name);
+            if (toUpload.isEmpty())
+            {
+                QMessageBox::information(this, tr("No new torrents"), explanation);
+                return;
+            }
+            QMessageBox::information(this, tr("Skipping duplicate torrents"),
+                explanation + tr("\n\nUploading the remaining %1 torrent(s).")
+                    .arg(toUpload.size()));
+        }
+        if (!containsConnection(target) || !target->connected)
+            return;
+        target->session->addTorrentFiles(toUpload, options);
     });
 }
 
