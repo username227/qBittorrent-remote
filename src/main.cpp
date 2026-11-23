@@ -10,7 +10,7 @@ int main(int argc, char *argv[])
     app.setOrganizationName(QStringLiteral("qBittorrent Remote"));
 
     MainWindow window;
-    window.show();
+    window.showForStartup();
 
     return app.exec();
 }

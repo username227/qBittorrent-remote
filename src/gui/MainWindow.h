@@ -12,6 +12,9 @@
 class QAction;
 class QCloseEvent;
 class QDialog;
+class QEvent;
+class QSystemTrayIcon;
+class QMenu;
 class QLabel;
 class QLineEdit;
 class QComboBox;
@@ -28,6 +31,7 @@ public:
                         Remote::CredentialVault *vault = nullptr);
     ~MainWindow() override;
     int fontPointSize() const noexcept { return m_fontPointSize; }
+    void showForStartup();
 
 private:
     struct SessionContext;
@@ -40,6 +44,11 @@ private:
     void trackDialogGeometry(QDialog &dialog, const QString &name);
     void showEmptyPane();
     void closeEvent(QCloseEvent *event) override;
+    void changeEvent(QEvent *event) override;
+    void setupTray();
+    void updateTraySettings();
+    void toggleWindowFromTray();
+    void quitCompletely();
     void connectToProfile(const Remote::ServerProfile &profile, const QString &password);
     void disconnectCurrentServer();
     void removeConnection(const std::shared_ptr<SessionContext> &connection);
@@ -69,6 +78,11 @@ private:
     QLabel *m_torrentCountLabel = nullptr;
     QLabel *m_ratesLabel = nullptr;
     QLabel *m_serverFreeSpaceLabel = nullptr;
+    QSystemTrayIcon *m_trayIcon = nullptr;
+    QMenu *m_trayMenu = nullptr;
+    QAction *m_trayToggleAction = nullptr;
+    bool m_forceExit = false;
+    bool m_wasMaximizedBeforeTray = false;
     QLineEdit *m_searchEdit = nullptr;
     QComboBox *m_searchBy = nullptr;
     QAction *m_connectAction = nullptr;

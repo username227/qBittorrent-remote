@@ -26,6 +26,9 @@
 #include <QGuiApplication>
 #include <QScreen>
 #include <QApplication>
+#include <QSystemTrayIcon>
+#include <QPainter>
+#include <QWindowStateChangeEvent>
 #include <QFont>
 #include <QFontInfo>
 #include <QGuiApplication>
@@ -237,6 +240,7 @@ MainWindow::MainWindow(QWidget *parent, QSettings *settings,
 
     setupMainArea();
     setupActions();
+    setupTray();
     updateFontActionStates();
 
     // Retain server identity/version as the default left-hand status text.
@@ -457,6 +461,7 @@ void MainWindow::setupActions()
     m_ui->menuOptions->addAction(m_ui->actionCreateTorrent);
     m_ui->menuOptions->addAction(m_ui->actionOptions);
     m_ui->actionOptions->setEnabled(true);
+    m_ui->actionOptions->setText(tr("Preferences..."));
 
     // Native vertical Preferences pages are always reachable, even without
     // a currently connected server: local path mappings belong to saved
@@ -494,7 +499,7 @@ void MainWindow::setupActions()
     });
     connect(m_disconnectAction, &QAction::triggered, this,
         &MainWindow::disconnectCurrentServer);
-    connect(m_ui->actionExit, &QAction::triggered, this, &QWidget::close);
+    connect(m_ui->actionExit, &QAction::triggered, this, &MainWindow::quitCompletely);
     connect(m_ui->actionAbout, &QAction::triggered, this, [this]()
     {
         QMessageBox dialog(QMessageBox::Information, tr("About qBittorrent Remote"),
@@ -1070,6 +1075,7 @@ void MainWindow::updateTorrentCount()
 
 void MainWindow::applyLocalBehaviorPreferences()
 {
+    updateTraySettings();
     const bool alternating = m_settings->value(
         QStringLiteral("Preferences/Behavior/AlternatingRows"), true).toBool();
     const bool hideZero = m_settings->value(
@@ -1090,6 +1096,121 @@ void MainWindow::applyLocalBehaviorPreferences()
     for (const auto &connection : m_connections)
         apply(connection->pane);
     updateServerFreeSpace();
+}
+
+void MainWindow::setupTray()
+{
+    m_trayIcon = new QSystemTrayIcon(this);
+    m_trayIcon->setObjectName(QStringLiteral("remoteTrayIcon"));
+    m_trayMenu = new QMenu(this);
+    m_trayMenu->setObjectName(QStringLiteral("remoteTrayMenu"));
+    m_trayToggleAction = m_trayMenu->addAction(tr("Show qBittorrent Remote"));
+    connect(m_trayToggleAction, &QAction::triggered,
+            this, &MainWindow::toggleWindowFromTray);
+    m_trayMenu->addSeparator();
+    m_trayMenu->addAction(m_ui->actionOptions);
+    m_trayMenu->addSeparator();
+    m_trayMenu->addAction(tr("Quit qBittorrent Remote completely"),
+                          this, &MainWindow::quitCompletely);
+    m_trayIcon->setContextMenu(m_trayMenu);
+    m_trayIcon->setToolTip(tr("qBittorrent Remote"));
+    connect(m_trayIcon, &QSystemTrayIcon::activated, this,
+            [this](QSystemTrayIcon::ActivationReason reason) {
+                if (reason == QSystemTrayIcon::Trigger
+                    || reason == QSystemTrayIcon::DoubleClick)
+                    toggleWindowFromTray();
+            });
+}
+
+void MainWindow::updateTraySettings()
+{
+    if (!m_trayIcon)
+        return;
+    const bool enabled = m_settings->value(
+        QStringLiteral("Preferences/Behavior/EnableTray"), false).toBool()
+        && QSystemTrayIcon::isSystemTrayAvailable();
+    if (!enabled)
+    {
+        // Never strand a hidden application after its tray icon is disabled.
+        if (!isVisible() && m_trayIcon->isVisible())
+            showNormal();
+        m_trayIcon->hide();
+        return;
+    }
+    QIcon icon = windowIcon();
+    const bool monochrome = m_settings->value(
+        QStringLiteral("Preferences/Behavior/TrayIconStyle"), 0).toInt() == 1;
+    if (monochrome)
+    {
+        QPixmap pixmap = icon.pixmap(QSize(32, 32));
+        if (!pixmap.isNull())
+        {
+            QPainter painter(&pixmap);
+            painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
+            painter.fillRect(pixmap.rect(), palette().color(QPalette::WindowText));
+            painter.end();
+            icon = QIcon(pixmap);
+        }
+    }
+    m_trayIcon->setIcon(icon);
+    m_trayIcon->show();
+}
+
+void MainWindow::toggleWindowFromTray()
+{
+    if (isVisible() && !isMinimized())
+    {
+        m_wasMaximizedBeforeTray = isMaximized();
+        hide();
+        return;
+    }
+    if (m_wasMaximizedBeforeTray)
+        showMaximized();
+    else
+        showNormal();
+    raise();
+    activateWindow();
+}
+
+void MainWindow::quitCompletely()
+{
+    m_forceExit = true;
+    close();
+    QApplication::quit();
+}
+
+void MainWindow::showForStartup()
+{
+    const QString state = m_settings->value(
+        QStringLiteral("Preferences/Behavior/StartupWindowState"),
+        QStringLiteral("normal")).toString();
+    const bool trayAvailable = m_trayIcon && m_trayIcon->isVisible();
+    if (state == QLatin1String("hidden") && trayAvailable)
+    {
+        hide();
+        return;
+    }
+    if (state == QLatin1String("minimized"))
+        showMinimized();
+    else
+        show();
+}
+
+void MainWindow::changeEvent(QEvent *event)
+{
+    if (event->type() == QEvent::WindowStateChange
+        && isMinimized() && m_trayIcon && m_trayIcon->isVisible()
+        && m_settings->value(
+            QStringLiteral("Preferences/Behavior/MinimizeToTray"), false).toBool())
+    {
+        const auto *state = static_cast<QWindowStateChangeEvent *>(event);
+        m_wasMaximizedBeforeTray = state->oldState().testFlag(Qt::WindowMaximized);
+        QTimer::singleShot(0, this, [this]() {
+            if (isMinimized() && m_trayIcon && m_trayIcon->isVisible())
+                hide();
+        });
+    }
+    QMainWindow::changeEvent(event);
 }
 
 void MainWindow::updateServerFreeSpace()
@@ -1980,12 +2101,21 @@ void MainWindow::restoreWindowLayout()
     m_ui->actionShowFiltersSidebar->setChecked(
         m_settings->value(QStringLiteral("Layout/SidebarVisible"), true).toBool());
 
-    if (m_settings->value(QStringLiteral("Layout/MainWindow/Minimized"), false).toBool())
-        QTimer::singleShot(0, this, [this]() { showMinimized(); });
+    // Explicit Behavior startup state takes precedence over the prior
+    // window's last minimized state; showForStartup() applies it once.
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
+    if (!m_forceExit && m_trayIcon && m_trayIcon->isVisible()
+        && m_settings->value(
+            QStringLiteral("Preferences/Behavior/CloseToTray"), false).toBool())
+    {
+        m_wasMaximizedBeforeTray = isMaximized();
+        event->ignore();
+        hide();
+        return;
+    }
     for (const auto &connection : m_connections)
         if (connection->pane)
             connection->pane->saveLayout(*m_settings, connection->profile.id);

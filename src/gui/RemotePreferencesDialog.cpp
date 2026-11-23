@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/RemotePreferencesDialog.h"
+#include "gui/DesktopAutostart.h"
 #include "api/ServerProfile.h"
 #include "ui_optionsdialog.h"
 
@@ -21,6 +22,7 @@
 #include <QListWidget>
 #include <QMessageBox>
 #include <QScreen>
+#include <QSystemTrayIcon>
 #include <QGuiApplication>
 #include <QPushButton>
 #include <limits>
@@ -261,6 +263,47 @@ void RemotePreferencesDialog::loadLocalBehaviorControls()
     unlock(m_ui->actionTorrentFnOnDblClBox);
     unlock(m_ui->checkBoxFreeDiskSpaceStatusBar);
     unlock(m_ui->checkBoxHideZeroStatusFilters);
+    unlock(m_ui->windowStateComboBox);
+    if (DesktopAutostart::available())
+        unlock(m_ui->checkStartup);
+    if (QSystemTrayIcon::isSystemTrayAvailable())
+        unlock(m_ui->checkShowSystray);
+    unlock(m_ui->checkMinimizeToSysTray);
+    unlock(m_ui->checkCloseToSystray);
+    unlock(m_ui->comboTrayIcon);
+
+    m_ui->checkStartup->setText(tr("Start qBittorrent Remote when system starts"));
+    m_ui->checkStartup->setToolTip(tr(
+        "Start when you sign in to your desktop session (Linux), "
+        "or when you sign in to Windows. This does not start a system daemon."));
+    m_ui->checkStartup->setChecked(DesktopAutostart::isEnabled());
+    m_ui->windowStateComboBox->clear();
+    m_ui->windowStateComboBox->addItem(tr("Normal"), QStringLiteral("normal"));
+    m_ui->windowStateComboBox->addItem(tr("Minimized"), QStringLiteral("minimized"));
+    m_ui->windowStateComboBox->addItem(tr("Hidden"), QStringLiteral("hidden"));
+    const QString startupWindowState = m_settings.value(
+        QStringLiteral("Preferences/Behavior/StartupWindowState"),
+        QStringLiteral("normal")).toString();
+    const int startupIndex = m_ui->windowStateComboBox->findData(startupWindowState);
+    m_ui->windowStateComboBox->setCurrentIndex(startupIndex >= 0 ? startupIndex : 0);
+    m_ui->checkShowSystray->setChecked(m_settings.value(
+        QStringLiteral("Preferences/Behavior/EnableTray"), false).toBool()
+        && QSystemTrayIcon::isSystemTrayAvailable());
+    m_ui->checkMinimizeToSysTray->setChecked(m_settings.value(
+        QStringLiteral("Preferences/Behavior/MinimizeToTray"), false).toBool());
+    m_ui->checkCloseToSystray->setChecked(m_settings.value(
+        QStringLiteral("Preferences/Behavior/CloseToTray"), false).toBool());
+    m_ui->comboTrayIcon->setCurrentIndex(qBound(0, m_settings.value(
+        QStringLiteral("Preferences/Behavior/TrayIconStyle"), 0).toInt(),
+        m_ui->comboTrayIcon->count() - 1));
+    const auto updateTrayInputs = [this]() {
+        const bool active = m_ui->checkShowSystray->isEnabled()
+            && m_ui->checkShowSystray->isChecked();
+        m_ui->checkMinimizeToSysTray->setEnabled(active);
+        m_ui->checkCloseToSystray->setEnabled(active);
+        m_ui->comboTrayIcon->setEnabled(active);
+    };
+    updateTrayInputs();
 
     m_ui->checkAltRowColors->setChecked(m_settings.value(
         QStringLiteral("Preferences/Behavior/AlternatingRows"), true).toBool());
@@ -309,6 +352,15 @@ void RemotePreferencesDialog::loadLocalBehaviorControls()
         m_behaviorDirty = true;
         updateButtons();
     };
+    connect(m_ui->checkStartup, &QCheckBox::toggled, this, dirty);
+    connect(m_ui->windowStateComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [dirty](int) { dirty(); });
+    connect(m_ui->checkShowSystray, &QGroupBox::toggled, this,
+            [updateTrayInputs, dirty](bool) { updateTrayInputs(); dirty(); });
+    connect(m_ui->checkMinimizeToSysTray, &QCheckBox::toggled, this, dirty);
+    connect(m_ui->checkCloseToSystray, &QCheckBox::toggled, this, dirty);
+    connect(m_ui->comboTrayIcon, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [dirty](int) { dirty(); });
     connect(m_ui->checkAltRowColors, &QCheckBox::toggled, this, dirty);
     connect(m_ui->checkHideZero, &QCheckBox::toggled, this, [this, dirty](bool value) {
         m_ui->comboHideZero->setEnabled(value);
@@ -705,6 +757,36 @@ bool RemotePreferencesDialog::applyChanges()
     m_changedProfiles.clear();
     if (m_behaviorDirty)
     {
+        const bool tray = m_ui->checkShowSystray->isChecked()
+            && QSystemTrayIcon::isSystemTrayAvailable();
+        if (m_ui->windowStateComboBox->currentData().toString()
+                == QLatin1String("hidden") && !tray)
+        {
+            QMessageBox::warning(this, tr("Tray required"),
+                tr("A hidden startup window requires an enabled, available system tray. "
+                   "Choose Normal or Minimized instead."));
+            return false;
+        }
+        const bool startAtLogin = m_ui->checkStartup->isChecked();
+        if (DesktopAutostart::available()
+            && startAtLogin != DesktopAutostart::isEnabled())
+        {
+            QString error;
+            if (!DesktopAutostart::setEnabled(startAtLogin, &error))
+            {
+                QMessageBox::warning(this, tr("Could not change autostart"), error);
+                return false;
+            }
+        }
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/StartupWindowState"),
+            m_ui->windowStateComboBox->currentData().toString());
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/EnableTray"), tray);
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/MinimizeToTray"),
+            m_ui->checkMinimizeToSysTray->isChecked());
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/CloseToTray"),
+            m_ui->checkCloseToSystray->isChecked());
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/TrayIconStyle"),
+            m_ui->comboTrayIcon->currentIndex());
         m_settings.setValue(QStringLiteral("Preferences/Behavior/AlternatingRows"),
             m_ui->checkAltRowColors->isChecked());
         m_settings.setValue(QStringLiteral("Preferences/Behavior/HideZero"),

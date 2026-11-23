@@ -520,7 +520,7 @@
                <item>
                 <widget class="QCheckBox" name="checkStartup">
                  <property name="text">
-                  <string>Start qBittorrent on Windows start up</string>
+                  <string>Start qBittorrent Remote when system starts</string>
                  </property>
                 </widget>
                </item>
@@ -546,7 +546,7 @@
                  <item>
                   <widget class="QComboBox" name="windowStateComboBox">
                    <property name="toolTip">
-                    <string>qBittorrent window state on start up</string>
+                    <string>qBittorrent Remote window state on startup</string>
                    </property>
                   </widget>
                  </item>
