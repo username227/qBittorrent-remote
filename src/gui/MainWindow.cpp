@@ -32,7 +32,6 @@
 #include <QScreen>
 #include <QApplication>
 #include <QSystemTrayIcon>
-#include <QPainter>
 #include <QWindowStateChangeEvent>
 #include <QFont>
 #include <QFontInfo>
@@ -294,7 +293,9 @@ MainWindow::MainWindow(QWidget *parent, QSettings *settings,
     // original toolbar and status bar, not a visual imitation.
     m_ui->setupUi(this);
     setWindowTitle(tr("qBittorrent Remote"));
-    setWindowIcon(upstreamIcon("qbittorrent-tray"));
+    const QIcon applicationIcon = upstreamIcon("qbittorrent-tray");
+    QApplication::setWindowIcon(applicationIcon);
+    setWindowIcon(applicationIcon);
     resize(1280, 800);
 
     setupMainArea();
@@ -1358,6 +1359,13 @@ void MainWindow::updateTraySettings()
 {
     if (!m_trayIcon)
         return;
+    // Use upstream's transparent symbolic artwork, not an opaque disc.
+    const bool monochrome = m_settings->value(
+        QStringLiteral("Preferences/Behavior/TrayIconStyle"), 0).toInt() == 1;
+    const bool dark = palette().color(QPalette::Window).lightness() < 128;
+    m_trayIcon->setIcon(monochrome
+        ? upstreamIcon(dark ? "dark/qbittorrent-tray-mono" : "qbittorrent-tray-mono")
+        : windowIcon());
     const bool enabled = m_settings->value(
         QStringLiteral("Preferences/Behavior/EnableTray"), false).toBool()
         && QSystemTrayIcon::isSystemTrayAvailable();
@@ -1369,22 +1377,6 @@ void MainWindow::updateTraySettings()
         m_trayIcon->hide();
         return;
     }
-    QIcon icon = windowIcon();
-    const bool monochrome = m_settings->value(
-        QStringLiteral("Preferences/Behavior/TrayIconStyle"), 0).toInt() == 1;
-    if (monochrome)
-    {
-        QPixmap pixmap = icon.pixmap(QSize(32, 32));
-        if (!pixmap.isNull())
-        {
-            QPainter painter(&pixmap);
-            painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
-            painter.fillRect(pixmap.rect(), palette().color(QPalette::WindowText));
-            painter.end();
-            icon = QIcon(pixmap);
-        }
-    }
-    m_trayIcon->setIcon(icon);
     m_trayIcon->show();
 }
 
@@ -1447,6 +1439,9 @@ void MainWindow::changeEvent(QEvent *event)
         });
     }
     QMainWindow::changeEvent(event);
+    if (event->type() == QEvent::PaletteChange
+        || event->type() == QEvent::ApplicationPaletteChange)
+        updateTraySettings();
 }
 
 void MainWindow::updateServerFreeSpace()
