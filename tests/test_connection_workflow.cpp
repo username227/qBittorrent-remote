@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/MainWindow.h"
 #include "gui/ServerPane.h"
+#include "gui/RemotePreferencesDialog.h"
 #include "gui/MappedContentTreeWidget.h"
 #include "gui/TorrentModel.h"
 #include "gui/ConnectionDialog.h"
@@ -24,6 +25,7 @@
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QMimeData>
+#include <QMouseEvent>
 #include <QDateTime>
 #include <QJsonDocument>
 #include <QAbstractButton>
@@ -1115,8 +1117,15 @@ private slots:
             const QPoint to(torrentHeader->sectionViewportPosition(0) + 20,
                             torrentHeader->height() / 2);
             QTest::mousePress(headerViewport, Qt::LeftButton, Qt::NoModifier, from);
-            QTest::mouseMove(headerViewport, from - QPoint(22, 0));
-            QTest::mouseMove(headerViewport, to);
+            // QTest::mouseMove() reports NoButton; QHeaderView requires a
+            // MouseMove *with* LeftButton held to begin a genuine section drag.
+            const auto moveWithLeftHeld = [headerViewport](const QPoint &point) {
+                QMouseEvent move(QEvent::MouseMove, QPointF(point),
+                                 Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+                QApplication::sendEvent(headerViewport, &move);
+            };
+            moveWithLeftHeld(from - QPoint(22, 0));
+            moveWithLeftHeld(to);
             QTest::mouseRelease(headerViewport, Qt::LeftButton, Qt::NoModifier, to);
             QTRY_COMPARE(torrentHeader->visualIndex(1), 0);
             auto *tabs = pane->findChild<PropTabBar *>();
