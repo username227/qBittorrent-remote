@@ -2427,6 +2427,88 @@ private slots:
                 .startsWith(QStringLiteral("magnet:?xt=")));
     }
 
+
+    void automaticTorrentManagementRequiresUserConsent()
+    {
+        DemoQbittorrentServer server(true);
+        server.enableTorrentSyncDemo();
+        server.keepDemoTorrents();
+        QVERIFY(server.start());
+
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("atm-warning.ini")),
+                           QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        QTRY_VERIFY(window.isVisible());
+        openConnectDialog(window, server.url());
+
+        auto *pane = window.findChild<ServerPane *>();
+        QVERIFY(pane);
+        QTRY_COMPARE_WITH_TIMEOUT(pane->table()->model()->rowCount(), 1, 6000);
+        pane->table()->selectRow(0);
+
+        // Cancel is the safe default. No server command may be sent.
+        bool sawWarning = false;
+        QTimer::singleShot(0, &window, [&]() {
+            auto *warning = qobject_cast<QMessageBox *>(
+                QApplication::activeModalWidget());
+            if (!warning)
+                return;
+            sawWarning = warning->objectName()
+                == QStringLiteral("enableAutomaticTorrentManagementWarning")
+                && warning->text().contains(QStringLiteral("1 selected torrent"))
+                && warning->text().contains(QStringLiteral("Demo seedbox"));
+            QCOMPARE(warning->defaultButton()->text(), QStringLiteral("Cancel"));
+            warning->reject();
+        });
+        QVERIFY(QMetaObject::invokeMethod(
+            pane, "torrentAutoManagementRequested", Qt::DirectConnection,
+            Q_ARG(bool, true)));
+        QVERIFY(sawWarning);
+        QCOMPARE(server.commandsFor("/api/v2/torrents/setAutoManagement"), 0);
+
+        // Explicit Enable sends the command to this server, not the local
+        // filesystem. Disabling later has no modal warning.
+        bool acceptedWarning = false;
+        QTimer::singleShot(0, &window, [&]() {
+            auto *warning = qobject_cast<QMessageBox *>(
+                QApplication::activeModalWidget());
+            if (!warning)
+                return;
+            const auto buttons = warning->buttons();
+            for (QAbstractButton *button : buttons)
+                if (button->text() == QStringLiteral("Enable"))
+                {
+                    acceptedWarning = true;
+                    button->click();
+                    break;
+                }
+        });
+        QVERIFY(QMetaObject::invokeMethod(
+            pane, "torrentAutoManagementRequested", Qt::DirectConnection,
+            Q_ARG(bool, true)));
+        QVERIFY(acceptedWarning);
+        QTRY_COMPARE_WITH_TIMEOUT(
+            server.commandsFor("/api/v2/torrents/setAutoManagement"), 1, 5000);
+        const QUrlQuery enabled(QString::fromUtf8(server.lastCommandBody(
+            "/api/v2/torrents/setAutoManagement")));
+        QCOMPARE(enabled.queryItemValue(QStringLiteral("enable")),
+                 QStringLiteral("true"));
+
+        QVERIFY(QMetaObject::invokeMethod(
+            pane, "torrentAutoManagementRequested", Qt::DirectConnection,
+            Q_ARG(bool, false)));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            server.commandsFor("/api/v2/torrents/setAutoManagement"), 2, 5000);
+        const QUrlQuery disabled(QString::fromUtf8(server.lastCommandBody(
+            "/api/v2/torrents/setAutoManagement")));
+        QCOMPARE(disabled.queryItemValue(QStringLiteral("enable")),
+                 QStringLiteral("false"));
+    }
+
     void userSeesAuthenticationFailure()
     {
         DemoQbittorrentServer server(false);
