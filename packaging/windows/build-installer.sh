@@ -22,7 +22,9 @@ cd "$source_root"
 cmake --preset windows-ucrt
 cmake --build --preset windows-ucrt
 # QtTest GUI workflows run offscreen and never access real Windows secrets.
-QT_QPA_PLATFORM=offscreen ctest --preset windows-ucrt --output-on-failure
+# Always emit the Qt GUI workflow output on Windows; Qt failures in an
+# offscreen test can otherwise appear as only "***Failed" in Actions logs.
+QT_QPA_PLATFORM=offscreen ctest --preset windows-ucrt --output-on-failure --verbose
 
 test -f "$exe" || { echo "Windows executable not generated: $exe" >&2; exit 1; }
 

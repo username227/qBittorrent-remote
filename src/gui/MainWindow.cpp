@@ -6,6 +6,7 @@
 #include "gui/ConnectionDialog.h"
 #include "gui/RemotePreferencesDialog.h"
 #include "gui/RemoteAddTorrentDialog.h"
+#include "gui/RemoteTrackerEntriesDialog.h"
 #include "gui/RemoteFileSystemPathComboEdit.h"
 #include "api/RemoteSession.h"
 #include "api/TorrentMetadataReader.h"
@@ -1253,6 +1254,54 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
                 || selectedTorrentHashes() != QStringList{hash})
                 break;
             connection->session->renameTorrent(hash, name);
+            break;
+        }
+        case ServerPane::TorrentContextAction::EditTrackers:
+        {
+            const QStringList hashes = selectedTorrentHashes();
+            if (hashes.isEmpty() || !containsConnection(connection)
+                || !connection->connected || activeConnection() != connection)
+                break;
+            // Match qBittorrent's native Edit trackers dialog for one or
+            // multiple torrents. Only the backing tracker data comes from
+            // the authenticated remote server instead of local libtorrent.
+            const auto selectionValid = [this, connection, hashes]() {
+                if (!containsConnection(connection) || !connection->connected
+                    || activeConnection() != connection
+                    || selectedTorrentHashes() != hashes)
+                    return false;
+                const auto &all = connection->pane->model()->torrents();
+                return std::all_of(hashes.cbegin(), hashes.cend(),
+                    [&all](const QString &hash) { return all.contains(hash); });
+            };
+            if (!selectionValid())
+                break;
+            // The private flag comes from the authenticated server's sync
+            // state, never from tracker URL heuristics. If the server has
+            // not yet established a torrent's privacy, protect it too.
+            QSet<QString> protectedHashes;
+            for (const QString &hash : hashes)
+            {
+                const QJsonObject torrent = connection->pane->model()->torrents().value(hash);
+                const QJsonValue privacy = torrent.value(QStringLiteral("private"));
+                const QJsonValue legacy = torrent.value(QStringLiteral("is_private"));
+                if (privacy.isBool())
+                {
+                    if (privacy.toBool())
+                        protectedHashes.insert(hash);
+                }
+                else if (legacy.isBool())
+                {
+                    if (legacy.toBool())
+                        protectedHashes.insert(hash);
+                }
+                else
+                    protectedHashes.insert(hash); // unknown: fail closed
+            }
+            RemoteTrackerEntriesDialog dialog(connection->session, hashes,
+                                              selectionValid, this, protectedHashes);
+            trackDialogGeometry(dialog, QStringLiteral("EditTorrentTrackers"));
+            dialog.exec();
             break;
         }
         case ServerPane::TorrentContextAction::OpenDestinationFolder:

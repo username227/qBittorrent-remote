@@ -101,6 +101,13 @@ public:
     // Merge only explicitly supplied announce URLs into the existing remote
     // torrent; no local tracker traffic and no re-add of torrent metadata.
     void addTorrentTrackers(const QString &hash, const QStringList &urls);
+    void editTorrentTracker(const QString &hash, const QString &oldUrl,
+                            const QString &newUrl);
+    void removeTorrentTrackers(const QString &hash, const QStringList &urls);
+    // Native Edit trackers: replace the complete list, preserving blank-line tiers.
+    // The Web API implements this as a checked remove followed by add.
+    void replaceTorrentTrackers(const QString &hash, const QString &previousEntries,
+                                const QString &replacementEntries, bool privateOrUnknown);
     void requestTorrentDetails(const QString &hash, int tab);
     void setFilePriority(const QString &hash, const QList<int> &fileIds, int priority);
 
@@ -111,6 +118,10 @@ signals:
     void operationSucceeded(const QString &description);
     void operationFailed(const QString &description, const QString &reason);
     void torrentDetailsReceived(const QString &hash, int tab, const QJsonValue &data);
+    void torrentTrackersChanged(const QString &hash);
+    // Identifies the exact edit for bulk progress and rejected requests.
+    void torrentTrackerEditFinished(const QString &hash, const QString &oldUrl,
+                                    bool success, const QString &reason);
     void torrentDetailsFailed(const QString &hash, int tab, const QString &reason);
 
 private:
@@ -126,7 +137,8 @@ private:
     void queueOperation(const QString &endpoint, const QByteArray &body,
                         const QByteArray &contentType,
                         const QString &description, bool checkAccepted = false,
-                        std::function<void()> onAccepted = {});
+                        std::function<void()> onAccepted = {},
+                        std::function<void(const QString &)> onRejected = {});
     void checkReply(QNetworkReply *reply,
                     const std::function<void(const QByteArray &)> &onSuccess,
                     const std::function<void(const QString &)> &onFailure = {});
@@ -145,6 +157,7 @@ private:
         // Used only for dependent create-then-assign operations. A failed
         // category/tag creation must never enqueue an invalid assignment.
         std::function<void()> onAccepted;
+        std::function<void(const QString &)> onRejected;
     };
 
     QNetworkAccessManager m_network;

@@ -3,6 +3,7 @@
 #include "gui/ServerPane.h"
 #include "gui/ConnectionDialog.h"
 #include "gui/RemoteAddTorrentDialog.h"
+#include "gui/RemoteTrackerEntriesDialog.h"
 #include "gui/upstream/transferlistdelegate.h"
 #include "gui/upstream/proptabbar.h"
 #include "api/CredentialVault.h"
@@ -16,6 +17,8 @@
 #include <QDir>
 #include <QEvent>
 #include <QDateTime>
+#include <QJsonDocument>
+#include <QAbstractButton>
 #include <QCheckBox>
 #include <QButtonGroup>
 #include <QFile>
@@ -181,7 +184,16 @@ public:
                                      || path.startsWith("/api/v2/torrents/files?")))
                         {
                             m_detailRequests.append(path);
-                            if (path.startsWith("/api/v2/torrents/properties?"))
+                            if (path.startsWith("/api/v2/torrents/trackers?")
+                                && m_statefulTrackerDemo)
+                            {
+                                const QString hash = QUrlQuery(QString::fromLatin1(
+                                    path.mid(path.indexOf('?') + 1)))
+                                    .queryItemValue(QStringLiteral("hash"));
+                                response = QJsonDocument(m_trackerEntries.value(hash))
+                                    .toJson(QJsonDocument::Compact);
+                            }
+                            else if (path.startsWith("/api/v2/torrents/properties?"))
                                 response = R"DEMO({"save_path":"/share/NAS/torrents","comment":"Get it at https://example.test/files?id=7&part=2 and <b>plain markup</b>; javascript:alert(1)","total_downloaded":1048576,"total_uploaded":2048,"total_size":1048576,"time_elapsed":3600,"eta":0,"share_ratio":1.25,"pieces_num":4,"seeds":2,"peers":1})DEMO";
                             else if (path.startsWith("/api/v2/torrents/trackers?"))
                             {
@@ -195,6 +207,19 @@ public:
                                 const qint64 now = QDateTime::currentSecsSinceEpoch();
                                 response.replace("NEXT_EPOCH", QByteArray::number(now + 780));
                                 response.replace("MIN_EPOCH", QByteArray::number(now + 540));
+                                if (m_distinctTrackerPasskeys)
+                                {
+                                    const QString hash = QUrlQuery(QString::fromUtf8(
+                                        path.mid(path.indexOf('?') + 1)))
+                                        .queryItemValue(QStringLiteral("hash"));
+                                    const QByteArray oldKey = hash.startsWith(QLatin1Char('a'))
+                                        ? QByteArrayLiteral("OLD_PASSKEY_ALPHA")
+                                        : QByteArrayLiteral("OLD_PASSKEY_BETA");
+                                    response.replace(
+                                        QByteArrayLiteral("https://tracker.example/announce"),
+                                        QByteArrayLiteral("https://tracker.example/announce/")
+                                            + oldKey);
+                                }
                             }
                             else if (path.startsWith("/api/v2/sync/torrentPeers?"))
                                 response = R"({"rid":1,"full_update":true,"peers":{"192.0.2.1:61413":{"client":"qBittorrent","country_code":"US","progress":0.75,"dl_speed":1024,"up_speed":2048,"flags":"D","connection":"TCP"}}})";
@@ -209,6 +234,96 @@ public:
                             code = m_rejectCommands ? 400 : 200;
                             response = m_rejectCommands ? QByteArrayLiteral("Rejected")
                                                         : QByteArrayLiteral("Ok.");
+
+                            // For the functional tracker workflow, model the
+                            // actual server-side result of Web API mutations.
+                            // Decode HTTP form data once, as qBittorrent does,
+                            // then observe the final list/tier state via GET.
+                            if (m_statefulTrackerDemo && !m_rejectCommands
+                                && (path == "/api/v2/torrents/removeTrackers"
+                                    || path == "/api/v2/torrents/addTrackers"
+                                    || path == "/api/v2/torrents/editTracker"))
+                            {
+                                const QUrlQuery form(QString::fromUtf8(body));
+                                const QString hash =
+                                    form.queryItemValue(QStringLiteral("hash"));
+                                const QString urls =
+                                    form.queryItemValue(QStringLiteral("urls"),
+                                                        QUrl::FullyDecoded);
+                                QJsonArray current = m_trackerEntries.value(hash);
+                                if (path == "/api/v2/torrents/editTracker")
+                                {
+                                    const QString before = form.queryItemValue(
+                                        QStringLiteral("url"), QUrl::FullyDecoded);
+                                    const QString after = form.queryItemValue(
+                                        QStringLiteral("newUrl"), QUrl::FullyDecoded);
+                                    QJsonArray edited;
+                                    bool found = false;
+                                    for (QJsonValue item : current)
+                                    {
+                                        QJsonObject row = item.toObject();
+                                        if (row.value(QStringLiteral("url")).toString() == before)
+                                        {
+                                            row.insert(QStringLiteral("url"), after);
+                                            item = row;
+                                            found = true;
+                                        }
+                                        edited.append(item);
+                                    }
+                                    if (found)
+                                    {
+                                        m_trackerEntries.insert(hash, edited);
+                                        // Upstream private-torrent replaceTrackers()
+                                        // clears old peers on the remote server.
+                                        m_peerConnections.insert(hash, 0);
+                                    }
+                                    else
+                                    {
+                                        code = 409;
+                                        response = QByteArrayLiteral("Tracker not found");
+                                    }
+                                }
+                                else if (path == "/api/v2/torrents/removeTrackers")
+                                {
+                                    QSet<QString> removed;
+                                    for (const QString &part : urls.split(QLatin1Char('|'),
+                                                                           Qt::SkipEmptyParts))
+                                        removed.insert(QUrl::fromPercentEncoding(
+                                            part.toUtf8()));
+                                    QJsonArray kept;
+                                    for (const QJsonValue &item : current)
+                                        if (!removed.contains(item.toObject()
+                                                .value(QStringLiteral("url")).toString()))
+                                            kept.append(item);
+                                    m_trackerEntries.insert(hash, kept);
+                                }
+                                else
+                                {
+                                    int tier = 0;
+                                    bool afterGroup = false;
+                                    for (const QString &raw : urls.split(QLatin1Char('\n')))
+                                    {
+                                        const QString line = raw.trimmed();
+                                        if (line.isEmpty())
+                                        {
+                                            if (!current.isEmpty())
+                                                afterGroup = true;
+                                            continue;
+                                        }
+                                        if (afterGroup)
+                                        {
+                                            ++tier;
+                                            afterGroup = false;
+                                        }
+                                        // Readable tracker URLs must survive the HTTP
+                                        // form decoding as complete individual entries.
+                                        current.append(QJsonObject{
+                                            {QStringLiteral("url"), line},
+                                            {QStringLiteral("tier"), tier}});
+                                    }
+                                    m_trackerEntries.insert(hash, current);
+                                }
+                            }
                         }
                         else if (path == "/api/v2/auth/logout" && hasCookie)
                         {
@@ -253,6 +368,37 @@ public:
     void setExistingTorrentPrivate(bool value) { m_existingTorrentPrivate = value; }
     void enableNativePresentationDemo() { m_demoNativePresentation = true; }
     void enableDetailsDemo() { m_demoDetails = true; }
+    void enableDistinctTrackerPasskeyDemo() { m_distinctTrackerPasskeys = true; }
+    void enableStatefulTrackerEditingDemo()
+    {
+        m_statefulTrackerDemo = true;
+        const QString first(40, QLatin1Char('a'));
+        const QString second(40, QLatin1Char('b'));
+        m_trackerEntries.insert(first, QJsonArray{QJsonObject{
+            {QStringLiteral("url"), QStringLiteral(
+                "https://tracker.example/announce/OLD_PASSKEY_ALPHA")},
+            {QStringLiteral("tier"), 0}}});
+        m_trackerEntries.insert(second, QJsonArray{QJsonObject{
+            {QStringLiteral("url"), QStringLiteral(
+                "https://tracker.example/announce/OLD_PASSKEY_BETA")},
+            {QStringLiteral("tier"), 0}}});
+    }
+    QJsonArray trackerEntries(const QString &hash) const
+    {
+        return m_trackerEntries.value(hash);
+    }
+    void setTrackerEntries(const QString &hash, const QJsonArray &entries)
+    {
+        m_trackerEntries.insert(hash, entries);
+    }
+    void setPeerConnections(const QString &hash, int count)
+    {
+        m_peerConnections.insert(hash, count);
+    }
+    int peerConnections(const QString &hash) const
+    {
+        return m_peerConnections.value(hash);
+    }
     int detailsFor(const QByteArray &pathPrefix) const
     {
         int count = 0;
@@ -298,6 +444,10 @@ private:
     bool m_existingTorrentPrivate = false;
     bool m_demoNativePresentation = false;
     bool m_demoDetails = false;
+    bool m_distinctTrackerPasskeys = false;
+    bool m_statefulTrackerDemo = false;
+    QHash<QString, QJsonArray> m_trackerEntries;
+    QHash<QString, int> m_peerConnections;
     QList<QByteArray> m_detailRequests;
     bool m_keepDemoTorrents = false;
     bool m_rejectCommands = false;
@@ -2509,6 +2659,10 @@ private slots:
                  QStringLiteral("false"));
     }
 
+
+    void nativeTrackerListEditorReplacesAllSelectedTorrents();
+    void privateTrackerAdditionPolicyThroughEditor();
+
     void userSeesAuthenticationFailure()
     {
         DemoQbittorrentServer server(false);
@@ -2531,6 +2685,253 @@ private slots:
         QCOMPARE(vault.erases, 0);
     }
 };
+
+void ConnectionWorkflowTest::nativeTrackerListEditorReplacesAllSelectedTorrents()
+{
+    // Exercise the actual native editor against a disposable server that
+    // maintains tracker lists across requests. Verify the torrent's visible
+    // resulting state, not HTTP serialization or numbers of API calls.
+    DemoQbittorrentServer server(true);
+    server.enableDetailsDemo();
+    server.enableStatefulTrackerEditingDemo();
+    QVERIFY(server.start());
+
+    Remote::RemoteSession session;
+    Remote::ServerProfile profile {
+        {}, QStringLiteral("Music NAS"), server.url(),
+        QStringLiteral("demo"), false, false
+    };
+    QSignalSpy connected(&session, &Remote::RemoteSession::connected);
+    session.connectToServer(profile, QStringLiteral("demo-password"));
+    QTRY_COMPARE_WITH_TIMEOUT(connected.size(), 1, 6000);
+
+    const QString first(40, QLatin1Char('a'));
+    const QString second(40, QLatin1Char('b'));
+    const QJsonArray firstOriginal = server.trackerEntries(first);
+    const QJsonArray secondOriginal = server.trackerEntries(second);
+    QVERIFY(!firstOriginal.isEmpty());
+    QVERIFY(!secondOriginal.isEmpty());
+
+    // Editing one torrent displays its full original tracker and passkey.
+    RemoteTrackerEntriesDialog single(&session, {first}, [] { return true; });
+    single.show();
+    auto *singleText = single.findChild<QPlainTextEdit *>(
+        QStringLiteral("plainTextEdit"));
+    auto *singleButtons = single.findChild<QDialogButtonBox *>(
+        QStringLiteral("buttonBox"));
+    QVERIFY(singleText && singleButtons);
+    QTRY_VERIFY_WITH_TIMEOUT(singleButtons->button(QDialogButtonBox::Ok)->isEnabled(),
+                             7000);
+    QCOMPARE(singleText->toPlainText().trimmed(),
+             firstOriginal.at(0).toObject().value(QStringLiteral("url")).toString());
+    singleButtons->button(QDialogButtonBox::Cancel)->click();
+
+    RemoteTrackerEntriesDialog bulk(&session, {first, second}, [] { return true; });
+    bulk.show();
+    auto *text = bulk.findChild<QPlainTextEdit *>(QStringLiteral("plainTextEdit"));
+    auto *buttons = bulk.findChild<QDialogButtonBox *>(QStringLiteral("buttonBox"));
+    QVERIFY(text && buttons);
+    QTRY_VERIFY_WITH_TIMEOUT(buttons->button(QDialogButtonBox::Ok)->isEnabled(),
+                             7000);
+    // When the two selected torrents share no complete URL at the same
+    // tier, the upstream multi-torrent editor must start blank.
+    QCOMPARE(text->toPlainText(), QString());
+    buttons->button(QDialogButtonBox::Cancel)->click();
+    // The user's Cancel must leave each torrent completely unchanged.
+    QCOMPARE(server.trackerEntries(first), firstOriginal);
+    QCOMPARE(server.trackerEntries(second), secondOriginal);
+
+    RemoteTrackerEntriesDialog replace(&session, {first, second}, [] { return true; });
+    replace.show();
+    auto *editor = replace.findChild<QPlainTextEdit *>(QStringLiteral("plainTextEdit"));
+    auto *actions = replace.findChild<QDialogButtonBox *>(
+        QStringLiteral("buttonBox"));
+    QVERIFY(editor && actions);
+    QTRY_VERIFY_WITH_TIMEOUT(actions->button(QDialogButtonBox::Ok)->isEnabled(),
+                             7000);
+    const QString primary = QStringLiteral(
+        "https://new.example/announce?passkey=NEW_KEY");
+    const QString backup = QStringLiteral("udp://backup.example:6969/announce");
+    editor->setPlainText(primary + QStringLiteral("\n\n") + backup);
+    actions->button(QDialogButtonBox::Ok)->click();
+
+    // Observe the effect on BOTH selected torrents. The old passkeys are
+    // gone and both replacement trackers have the right tier assignments.
+    const QJsonArray expected {
+        QJsonObject{{QStringLiteral("url"), primary}, {QStringLiteral("tier"), 0}},
+        QJsonObject{{QStringLiteral("url"), backup}, {QStringLiteral("tier"), 1}}
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(server.trackerEntries(first) == expected
+                             && server.trackerEntries(second) == expected, 7000);
+    QCOMPARE(server.trackerEntries(first), expected);
+    QCOMPARE(server.trackerEntries(second), expected);
+
+    // Reopening after the change must show the actual new remote list.
+    RemoteTrackerEntriesDialog after(&session, {first, second}, [] { return true; });
+    after.show();
+    auto *afterText = after.findChild<QPlainTextEdit *>(QStringLiteral("plainTextEdit"));
+    auto *afterActions = after.findChild<QDialogButtonBox *>(QStringLiteral("buttonBox"));
+    QVERIFY(afterText && afterActions);
+    QTRY_VERIFY_WITH_TIMEOUT(afterActions->button(QDialogButtonBox::Ok)->isEnabled(),
+                             7000);
+    const QStringList displayed = afterText->toPlainText().split(QLatin1Char('\n'));
+    QVERIFY(displayed.contains(primary));
+    QVERIFY(displayed.contains(backup));
+    QVERIFY(displayed.contains(QString()));
+    afterActions->button(QDialogButtonBox::Cancel)->click();
+}
+
+
+void ConnectionWorkflowTest::privateTrackerAdditionPolicyThroughEditor()
+{
+    // Test the real Edit trackers dialog against a stateful remote server:
+    // private torrents cannot gain URLs, but replacement, removal, and
+    // recovery from a trackerless state still work.
+    DemoQbittorrentServer server(true);
+    server.enableDetailsDemo();
+    server.enableStatefulTrackerEditingDemo();
+    QVERIFY(server.start());
+
+    Remote::RemoteSession session;
+    Remote::ServerProfile profile {
+        {}, QStringLiteral("Music NAS"), server.url(),
+        QStringLiteral("demo"), false, false
+    };
+    QSignalSpy connected(&session, &Remote::RemoteSession::connected);
+    session.connectToServer(profile, QStringLiteral("demo-password"));
+    QTRY_COMPARE_WITH_TIMEOUT(connected.size(), 1, 6000);
+
+    const QString privateHash(40, QLatin1Char('a'));
+    const QString publicHash(40, QLatin1Char('b'));
+    const QString oldUrl = QStringLiteral("https://tracker.example/announce/OLD_PASSKEY_ALPHA");
+    const QString replacementUrl = QStringLiteral("https://tracker.example/announce/NEW_PASSKEY");
+    const QString backup = QStringLiteral("https://backup.example/announce");
+    const QString third = QStringLiteral("udp://another.example:6969/announce");
+    const auto entry = [](const QString &url, int tier = 0) {
+        return QJsonObject {{QStringLiteral("url"), url},
+                            {QStringLiteral("tier"), tier}};
+    };
+    const QJsonArray original {entry(oldUrl)};
+    const QJsonArray two {entry(oldUrl), entry(backup, 1)};
+    const QJsonArray replacement {entry(replacementUrl)};
+    const QJsonArray twoReplaced {entry(replacementUrl), entry(backup, 1)};
+
+    // Each invocation opens the visible editor, enters text and clicks OK.
+    // A blocked edit shows a real warning and leaves the editor open;
+    // permitted edits complete and update the server's observable state.
+    const auto edit = [&](const QStringList &hashes,
+                          const QSet<QString> &privateHashes,
+                          const QString &text, bool expectBlocked) {
+        QSignalSpy completed(&session, &Remote::RemoteSession::torrentTrackersChanged);
+        RemoteTrackerEntriesDialog dialog(&session, hashes,
+                                          [] { return true; }, nullptr, privateHashes);
+        dialog.show();
+        auto *editor = dialog.findChild<QPlainTextEdit *>(
+            QStringLiteral("plainTextEdit"));
+        auto *buttons = dialog.findChild<QDialogButtonBox *>(
+            QStringLiteral("buttonBox"));
+        QVERIFY(editor && buttons);
+        QTRY_VERIFY_WITH_TIMEOUT(buttons->button(QDialogButtonBox::Ok)->isEnabled(),
+                                 7000);
+        editor->setPlainText(text);
+        // Observe the actual warning being shown rather than relying on
+        // which modal window a particular platform calls "active" at the
+        // moment a zero-delay timer fires.
+        class BlockedWarningObserver final : public QObject
+        {
+        public:
+            bool appeared = false;
+            bool hasSafetyExplanation = false;
+        protected:
+            bool eventFilter(QObject *object, QEvent *event) override
+            {
+                if (event->type() != QEvent::Show)
+                    return QObject::eventFilter(object, event);
+                auto *message = qobject_cast<QMessageBox *>(object);
+                if (!message || message->objectName()
+                        != QLatin1String("privateTorrentTrackerAdditionBlocked"))
+                    return QObject::eventFilter(object, event);
+                appeared = true;
+                hasSafetyExplanation = message->text().contains(
+                    QStringLiteral("does not allow adding additional trackers"))
+                    && message->text().contains(QStringLiteral("Web UI"));
+                QTimer::singleShot(0, message, [message]() { message->accept(); });
+                return QObject::eventFilter(object, event);
+            }
+        } warningObserver;
+        qApp->installEventFilter(&warningObserver);
+        buttons->button(QDialogButtonBox::Ok)->click();
+        qApp->removeEventFilter(&warningObserver);
+        QCOMPARE(warningObserver.appeared, expectBlocked);
+        if (expectBlocked)
+            QVERIFY(warningObserver.hasSafetyExplanation);
+        QCOMPARE(dialog.result() == QDialog::Accepted, !expectBlocked);
+        if (expectBlocked)
+        {
+            buttons->button(QDialogButtonBox::Cancel)->click();
+            QCOMPARE(completed.size(), 0);
+        }
+        else
+        {
+            // A URL edit may make the desired tracker list visible BEFORE
+            // the client's entire remove/add sequence completes. Only the
+            // final server confirmation tells us it is safe to continue to
+            // the next user action without overlapping pending mutations.
+            QTRY_VERIFY_WITH_TIMEOUT(completed.size() >= hashes.size(), 7000);
+        }
+    };
+
+    // 1 -> 2: blocked; none of the original tracker URLs is lost.
+    edit({privateHash}, {privateHash}, oldUrl + QLatin1Char('\n') + backup, true);
+    QCOMPARE(server.trackerEntries(privateHash), original);
+
+    // 1 -> 1 passkey/URL replacement is allowed without a warning and
+    // triggers qBittorrent's native peer cleanup on the remote server.
+    server.setPeerConnections(privateHash, 3);
+    edit({privateHash}, {privateHash}, replacementUrl, false);
+    QTRY_COMPARE_WITH_TIMEOUT(server.trackerEntries(privateHash), replacement, 7000);
+    QCOMPARE(server.peerConnections(privateHash), 0);
+
+    // 2 -> 3 is blocked, even if a backup tracker is currently inactive.
+    server.setTrackerEntries(privateHash, two);
+    edit({privateHash}, {privateHash},
+         oldUrl + QStringLiteral("\n\n") + backup + QLatin1Char('\n') + third, true);
+    QCOMPARE(server.trackerEntries(privateHash), two);
+
+    // 2 -> 2: legitimate replacement with the backup tier preserved.
+    server.setPeerConnections(privateHash, 4);
+    edit({privateHash}, {privateHash},
+         replacementUrl + QStringLiteral("\n\n") + backup, false);
+    QTRY_COMPARE_WITH_TIMEOUT(server.trackerEntries(privateHash), twoReplaced, 7000);
+    QCOMPARE(server.peerConnections(privateHash), 0);
+
+    // 2 -> 1: removals remain permitted.
+    server.setTrackerEntries(privateHash, two);
+    edit({privateHash}, {privateHash}, oldUrl, false);
+    QTRY_COMPARE_WITH_TIMEOUT(server.trackerEntries(privateHash), original, 7000);
+
+    // 0 -> 2 is not recovery: block any attempt to introduce more than one.
+    server.setTrackerEntries(privateHash, {});
+    edit({privateHash}, {privateHash}, oldUrl + QLatin1Char('\n') + backup, true);
+    QCOMPARE(server.trackerEntries(privateHash), QJsonArray{});
+
+    // 0 -> 1: the user can repair an accidentally trackerless private torrent.
+    edit({privateHash}, {privateHash}, oldUrl, false);
+    QTRY_COMPARE_WITH_TIMEOUT(server.trackerEntries(privateHash), original, 7000);
+
+    // Mixed bulk edits must not partially modify the public torrent if a
+    // private torrent would gain an additional tracker.
+    const QJsonArray publicOriginal = server.trackerEntries(publicHash);
+    edit({privateHash, publicHash}, {privateHash},
+         oldUrl + QLatin1Char('\n') + backup, true);
+    QCOMPARE(server.trackerEntries(privateHash), original);
+    QCOMPARE(server.trackerEntries(publicHash), publicOriginal);
+
+    // Public torrents remain free to add additional trackers.
+    edit({publicHash}, {}, oldUrl + QStringLiteral("\n\n") + backup, false);
+    const QJsonArray publicExpected {entry(oldUrl), entry(backup, 1)};
+    QTRY_COMPARE_WITH_TIMEOUT(server.trackerEntries(publicHash), publicExpected, 7000);
+}
 
 QTEST_MAIN(ConnectionWorkflowTest)
 #include "test_connection_workflow.moc"

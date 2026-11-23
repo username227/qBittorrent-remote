@@ -27,7 +27,7 @@ public:
     enum class TorrentContextAction {
         Start, Stop, ForceStart, Remove, ForceRecheck, ForceReannounce,
         QueueTop, QueueUp, QueueDown, QueueBottom, OpenDestinationFolder,
-        SetLocation, Rename
+        SetLocation, Rename, EditTrackers
     };
     Q_ENUM(TorrentContextAction)
 
