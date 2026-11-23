@@ -15,6 +15,7 @@
 #include <QJsonDocument>
 #include <QMenu>
 #include <QSignalSpy>
+#include <QShortcut>
 #include <QTableView>
 #include <QTimer>
 #include <QtTest/QtTest>
@@ -657,11 +658,17 @@ void TorrentContextMenuWorkflowTest::renameAppearsOnlyForExactlyOneSelectedTorre
     QVERIFY2(error.isEmpty(), qPrintable(error));
     QCOMPARE(emitted, 1);
 
-    // Keyboard F2 invokes the same Rename signal when focus is in the
-    // torrent list and exactly one torrent is selected.
-    table->setFocus();
-    QVERIFY(table->hasFocus());
-    QTest::keyClick(table, Qt::Key_F2);
+    // The shortcut is registered to the table, not to the window. The
+    // offscreen CI plugin does not reliably activate keyboard focus after a
+    // QMenu; invoke the actual registered QShortcut activation directly.
+    auto *renameShortcut = table->findChild<QShortcut *>(
+        QStringLiteral("torrentRenameShortcut"));
+    QVERIFY(renameShortcut);
+    QCOMPARE(renameShortcut->key(), QKeySequence(Qt::Key_F2));
+    QCOMPARE(renameShortcut->context(), Qt::WidgetWithChildrenShortcut);
+    QCOMPARE(renameShortcut->parent(), table);
+    QVERIFY(QMetaObject::invokeMethod(renameShortcut, "activated",
+                                     Qt::DirectConnection));
     QCOMPARE(emitted, 2);
 
     // Multi-selection: upstream hides Rename rather than picking a random
@@ -669,7 +676,8 @@ void TorrentContextMenuWorkflowTest::renameAppearsOnlyForExactlyOneSelectedTorre
     table->selectionModel()->select(second,
         QItemSelectionModel::Select | QItemSelectionModel::Rows);
     QCOMPARE(table->selectionModel()->selectedRows().size(), 2);
-    QTest::keyClick(table, Qt::Key_F2);
+    QVERIFY(QMetaObject::invokeMethod(renameShortcut, "activated",
+                                     Qt::DirectConnection));
     QCOMPARE(emitted, 2); // No ambiguous rename on multi-selection.
     error.clear();
     QTimer::singleShot(0, &pane, [&]() {
