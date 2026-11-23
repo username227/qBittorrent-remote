@@ -182,28 +182,30 @@ QVariant TorrentModel::data(const QModelIndex &index, int role) const
         const QString state = record.value(QStringLiteral("state")).toString();
         const bool dark = QGuiApplication::palette().color(QPalette::Base).lightness() < 128;
 
-        // Approximate upstream qBittorrent's native light/dark torrent-state
-        // colors. Explicit state groups prevent stalled, queued, or stopped
-        // torrents from inheriting active download/upload colors.
+        // Match qBittorrent 5.3.0's Default UI Theme (uiThemeCommon.h,
+        // Color::Primer in color.h), not the desktop's ordinary Text color.
+        // In particular, stalled seeding must stay BLUE, not become black
+        // on light themes; stalled downloads remain GREEN.
         if (state == QLatin1String("error") || state == QLatin1String("missingFiles"))
-            return QColor(QStringLiteral("#ff0000"));
+            return QColor(dark ? QStringLiteral("#f85149") : QStringLiteral("#cf222e"));
         if (state == QLatin1String("downloading") || state == QLatin1String("forcedDL")
-            || state == QLatin1String("metaDL"))
-            return QColor(dark ? QStringLiteral("#32cd32") : QStringLiteral("#228b22"));
-        if (state == QLatin1String("uploading") || state == QLatin1String("forcedUP"))
-            return QColor(dark ? QStringLiteral("#63b8ff") : QStringLiteral("#4169e1"));
-        if (state == QLatin1String("pausedDL") || state == QLatin1String("stoppedDL"))
-            return QColor(QStringLiteral("#fa8072"));
-        if (state == QLatin1String("pausedUP") || state == QLatin1String("stoppedUP"))
-            return QColor(dark ? QStringLiteral("#4f94cd") : QStringLiteral("#00008b"));
-        if (state == QLatin1String("queuedDL") || state == QLatin1String("queuedUP")
+            || state == QLatin1String("metaDL") || state == QLatin1String("forcedMetaDL")
             || state == QLatin1String("checkingDL") || state == QLatin1String("checkingUP")
             || state == QLatin1String("checkingResumeData") || state == QLatin1String("moving"))
-            return QColor(dark ? QStringLiteral("#00cdcd") : QStringLiteral("#008080"));
-        if (state == QLatin1String("stalledDL") || state == QLatin1String("stalledUP")
-            || state == QLatin1String("allocating"))
-            return dark ? QColor(QStringLiteral("#cccccc"))
-                        : QGuiApplication::palette().color(QPalette::Text);
+            return QColor(dark ? QStringLiteral("#3fb950") : QStringLiteral("#1a7f37"));
+        if (state == QLatin1String("stalledDL"))
+            return QColor(dark ? QStringLiteral("#238636") : QStringLiteral("#2da44e"));
+        if (state == QLatin1String("uploading") || state == QLatin1String("forcedUP"))
+            return QColor(dark ? QStringLiteral("#58a6ff") : QStringLiteral("#0969da"));
+        if (state == QLatin1String("stalledUP"))
+            return QColor(dark ? QStringLiteral("#1f6feb") : QStringLiteral("#0969da"));
+        if (state == QLatin1String("queuedDL") || state == QLatin1String("queuedUP"))
+            return QColor(dark ? QStringLiteral("#845306") : QStringLiteral("#7d4e00"));
+        if (state == QLatin1String("stoppedDL") || state == QLatin1String("pausedDL"))
+            return QColor(dark ? QStringLiteral("#8b949e") : QStringLiteral("#57606a"));
+        if (state == QLatin1String("stoppedUP") || state == QLatin1String("pausedUP"))
+            return QColor(dark ? QStringLiteral("#a371f7") : QStringLiteral("#8250df"));
+        // Unknown states should use the native desktop palette.
     }
 
     if (role != Qt::DisplayRole && role != Qt::ToolTipRole)
@@ -315,7 +317,8 @@ void TorrentModel::applySync(const QJsonObject &payload)
         else
         {
             emit dataChanged(index(row, 0), index(row, columnCount() - 1),
-                             {Qt::DisplayRole, Qt::UserRole, Qt::DecorationRole});
+                             {Qt::DisplayRole, Qt::UserRole, Qt::DecorationRole,
+                               Qt::ForegroundRole});
         }
     }
 }
