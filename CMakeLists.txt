@@ -126,7 +126,7 @@ target_include_directories(qbittorrent_remote_gui PUBLIC
     "${PROJECT_SOURCE_DIR}/src"
 )
 set_target_properties(qbittorrent_remote_gui PROPERTIES
-    AUTOUIC_SEARCH_PATHS "${PROJECT_SOURCE_DIR}/src/gui/upstream"
+    AUTOUIC_SEARCH_PATHS "${PROJECT_SOURCE_DIR}/src/gui/upstream;${PROJECT_SOURCE_DIR}/src/gui/upstream/layouts"
 )
 target_link_libraries(qbittorrent_remote_gui PUBLIC qbittorrent_remote_core Qt6::Widgets Qt6::Svg)
 
