@@ -2,6 +2,7 @@
 #include "gui/MainWindow.h"
 #include "gui/ServerPane.h"
 #include "gui/MappedContentTreeWidget.h"
+#include "gui/TorrentModel.h"
 #include "gui/ConnectionDialog.h"
 #include "gui/RemoteAddTorrentDialog.h"
 #include "gui/RemoteTrackerEntriesDialog.h"
@@ -14,6 +15,7 @@
 #include "api/TorrentMetadataReader.h"
 #include "api/PathMappingStore.h"
 
+#include <iterator>
 #include <QAction>
 #include <QApplication>
 #include <QDesktopServices>
@@ -26,6 +28,9 @@
 #include <QJsonDocument>
 #include <QAbstractButton>
 #include <QCheckBox>
+#include <QColor>
+#include <QPalette>
+#include <QSignalSpy>
 #include <QButtonGroup>
 #include <QFile>
 #include <QFileDialog>
@@ -1976,6 +1981,93 @@ private slots:
         QVERIFY(request.contains("Content-Type: application/x-bittorrent"));
         QVERIFY(request.contains(metadata));
         QVERIFY(request.startsWith("--qbtRemote-"));
+    }
+
+    void upstreamTorrentStateColorsSurviveStalledAndQueuedStates()
+    {
+        // Regression: stalledUP/stalledDL previously fell back to the plain
+        // desktop Text color, rendering nearly all idle seedboxes black.
+        // Exercise the real model with actual qBittorrent Web API state names.
+        struct Case
+        {
+            const char *state;
+            const char *lightColor;
+            const char *darkColor;
+        };
+        const Case cases[] = {
+            {"downloading", "#1a7f37", "#3fb950"},
+            {"forcedDL", "#1a7f37", "#3fb950"},
+            {"metaDL", "#1a7f37", "#3fb950"},
+            {"forcedMetaDL", "#1a7f37", "#3fb950"},
+            {"stalledDL", "#2da44e", "#238636"},
+            {"uploading", "#0969da", "#58a6ff"},
+            {"forcedUP", "#0969da", "#58a6ff"},
+            {"stalledUP", "#0969da", "#1f6feb"},
+            {"queuedDL", "#7d4e00", "#845306"},
+            {"queuedUP", "#7d4e00", "#845306"},
+            {"checkingDL", "#1a7f37", "#3fb950"},
+            {"checkingUP", "#1a7f37", "#3fb950"},
+            {"checkingResumeData", "#1a7f37", "#3fb950"},
+            {"moving", "#1a7f37", "#3fb950"},
+            {"stoppedDL", "#57606a", "#8b949e"},
+            {"pausedDL", "#57606a", "#8b949e"},
+            {"stoppedUP", "#8250df", "#a371f7"},
+            {"pausedUP", "#8250df", "#a371f7"},
+            {"error", "#cf222e", "#f85149"},
+            {"missingFiles", "#cf222e", "#f85149"}
+        };
+        const bool dark = QApplication::palette()
+            .color(QPalette::Base).lightness() < 128;
+        QJsonObject torrents;
+        for (int i = 0; i < int(std::size(cases)); ++i)
+        {
+            const QString hash = QString::number(i + 1).rightJustified(40, QLatin1Char('0'));
+            torrents.insert(hash, QJsonObject{
+                {QStringLiteral("name"), QString::fromLatin1(cases[i].state)},
+                {QStringLiteral("state"), QString::fromLatin1(cases[i].state)},
+                {QStringLiteral("progress"), 0.5}
+            });
+        }
+        TorrentModel model;
+        model.applySync(QJsonObject{
+            {QStringLiteral("rid"), 1},
+            {QStringLiteral("full_update"), true},
+            {QStringLiteral("torrents"), torrents}
+        });
+        QCOMPARE(model.rowCount(), int(std::size(cases)));
+        model.setUseStateColors(true);
+        for (int i = 0; i < int(std::size(cases)); ++i)
+        {
+            const QModelIndex row = model.index(i, 0);
+            const QColor expected(QString::fromLatin1(
+                dark ? cases[i].darkColor : cases[i].lightColor));
+            const QColor actual = row.data(Qt::ForegroundRole).value<QColor>();
+            QVERIFY2(actual.isValid(), cases[i].state);
+            QCOMPARE(actual, expected);
+            QCOMPARE(model.index(i, 2).data(Qt::ForegroundRole).value<QColor>(), expected);
+        }
+
+        // When the setting is disabled, the native text palette wins.
+        model.setUseStateColors(false);
+        QVERIFY(!model.index(7, 0).data(Qt::ForegroundRole).isValid());
+
+        // A state transition must invalidate the ForegroundRole as well as
+        // text/decoration, so the visible row and progress repaint together.
+        QSignalSpy changed(&model, &QAbstractItemModel::dataChanged);
+        const QString hash = QString::number(8).rightJustified(40, QLatin1Char('0'));
+        model.setUseStateColors(true);
+        changed.clear();
+        model.applySync(QJsonObject{
+            {QStringLiteral("rid"), 2},
+            {QStringLiteral("torrents"), QJsonObject{
+                {hash, QJsonObject{{QStringLiteral("state"), QStringLiteral("stoppedUP")}}}
+            }}
+        });
+        QVERIFY(!changed.isEmpty());
+        const QList<int> roles = changed.constLast().at(2).value<QList<int>>();
+        QVERIFY(roles.contains(Qt::ForegroundRole));
+        QCOMPARE(model.index(7, 0).data(Qt::ForegroundRole).value<QColor>(),
+                 QColor(dark ? QStringLiteral("#a371f7") : QStringLiteral("#8250df")));
     }
 
     void userDropsTorrentFilesAndMagnetIntoNativeTransferView()
