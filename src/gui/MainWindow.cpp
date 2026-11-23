@@ -2094,10 +2094,18 @@ void MainWindow::restoreWindowLayout()
     if (m_settings->value(QStringLiteral("Layout/MainWindow/Maximized"), false).toBool()
         && !isMaximized())
         setWindowState(windowState() | Qt::WindowMaximized);
-    m_ui->actionTopToolBar->setChecked(
-        m_settings->value(QStringLiteral("Layout/ToolbarVisible"), true).toBool());
-    m_ui->actionShowStatusbar->setChecked(
-        m_settings->value(QStringLiteral("Layout/StatusbarVisible"), true).toBool());
+    // QMainWindow::restoreState() also restores toolbar visibility. Always
+    // explicitly apply our saved View menu choices after it: setChecked()
+    // alone emits nothing when an action is already checked, even if the
+    // restored widget is unexpectedly hidden.
+    const bool toolbarVisible = m_settings->value(
+        QStringLiteral("Layout/ToolbarVisible"), true).toBool();
+    const bool statusbarVisible = m_settings->value(
+        QStringLiteral("Layout/StatusbarVisible"), true).toBool();
+    m_ui->actionTopToolBar->setChecked(toolbarVisible);
+    m_ui->toolBar->setVisible(toolbarVisible);
+    m_ui->actionShowStatusbar->setChecked(statusbarVisible);
+    m_ui->statusBar->setVisible(statusbarVisible);
     m_ui->actionShowFiltersSidebar->setChecked(
         m_settings->value(QStringLiteral("Layout/SidebarVisible"), true).toBool());
 
@@ -2126,8 +2134,13 @@ void MainWindow::closeEvent(QCloseEvent *event)
     m_settings->setValue(QStringLiteral("Layout/MainWindow/State"), saveState(1));
     m_settings->setValue(QStringLiteral("Layout/MainWindow/Minimized"), isMinimized());
     m_settings->setValue(QStringLiteral("Layout/MainWindow/Maximized"), isMaximized());
-    m_settings->setValue(QStringLiteral("Layout/ToolbarVisible"), m_ui->toolBar->isVisible());
-    m_settings->setValue(QStringLiteral("Layout/StatusbarVisible"), m_ui->statusBar->isVisible());
+    // isVisible() returns false for a visible toolbar/statusbar whenever
+    // their parent window is hidden to the system tray. Save the user's
+    // explicit View menu choices instead, not ancestor visibility.
+    m_settings->setValue(QStringLiteral("Layout/ToolbarVisible"),
+                         m_ui->actionTopToolBar->isChecked());
+    m_settings->setValue(QStringLiteral("Layout/StatusbarVisible"),
+                         m_ui->actionShowStatusbar->isChecked());
     m_settings->setValue(QStringLiteral("Layout/SidebarVisible"),
                          m_ui->actionShowFiltersSidebar->isChecked());
     if (!m_preferredServerId.isEmpty())

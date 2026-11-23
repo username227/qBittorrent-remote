@@ -41,6 +41,7 @@
 #include <QTabWidget>
 #include <QTabBar>
 #include <QTableView>
+#include <QToolBar>
 #include <QAbstractItemModel>
 #include <QListWidget>
 #include <QLabel>
@@ -923,6 +924,54 @@ private:
     }
 
 private slots:
+    void toolbarAndStatusbarRemainEnabledAfterHiddenWindowExit()
+    {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("tray-layout.ini")),
+                           QSettings::IniFormat);
+        DemoCredentialVault vault;
+
+        {
+            MainWindow window(nullptr, &settings, &vault);
+            window.show();
+            QTRY_VERIFY(window.isVisible());
+            auto *toolbar = window.findChild<QToolBar *>(QStringLiteral("toolBar"));
+            auto *statusbar = window.findChild<QStatusBar *>(QStringLiteral("statusBar"));
+            auto *toolbarAction = window.findChild<QAction *>(
+                QStringLiteral("actionTopToolBar"));
+            auto *statusAction = window.findChild<QAction *>(
+                QStringLiteral("actionShowStatusbar"));
+            QVERIFY(toolbar && statusbar && toolbarAction && statusAction);
+            QVERIFY(toolbar->isVisible());
+            QVERIFY(statusbar->isVisible());
+            QVERIFY(toolbarAction->isChecked());
+            QVERIFY(statusAction->isChecked());
+
+            // A tray-hidden top-level widget makes isVisible() false for
+            // children, without changing the View menu toggles.
+            window.hide();
+            QVERIFY(!toolbar->isVisible());
+            QVERIFY(!statusbar->isVisible());
+            QVERIFY(window.close());
+            settings.sync();
+        }
+        QCOMPARE(settings.value(QStringLiteral("Layout/ToolbarVisible")).toBool(), true);
+        QCOMPARE(settings.value(QStringLiteral("Layout/StatusbarVisible")).toBool(), true);
+
+        {
+            MainWindow window(nullptr, &settings, &vault);
+            window.show();
+            QTRY_VERIFY(window.isVisible());
+            auto *toolbar = window.findChild<QToolBar *>(QStringLiteral("toolBar"));
+            auto *statusbar = window.findChild<QStatusBar *>(QStringLiteral("statusBar"));
+            QVERIFY(toolbar && statusbar);
+            QTRY_VERIFY(toolbar->isVisible());
+            QVERIFY(statusbar->isVisible());
+            QVERIFY(window.close());
+        }
+    }
+
     void mainWindowAndEachServerRestoreNativeLayout()
     {
         DemoQbittorrentServer alpha(true, nullptr, true);
