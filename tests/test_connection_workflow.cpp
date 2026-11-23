@@ -3214,23 +3214,97 @@ void ConnectionWorkflowTest::nativeManageContentAndTorrentOptionsChangeServerSta
 
 void ConnectionWorkflowTest::remoteTorrentExportReturnsActualMetadata()
 {
+    // Exercise the native right-click Export .torrent command all the way
+    // through the authenticated server and a real local save-folder picker.
     DemoQbittorrentServer server(true);
     server.enableRemoteContentAndOptionsDemo();
+    const QString hash(40, QLatin1Char('a'));
+    server.setExistingTorrentHash(hash);
     QVERIFY(server.start());
 
-    Remote::RemoteSession session;
-    Remote::ServerProfile profile {{}, QStringLiteral("NAS"), server.url(),
-                                    QStringLiteral("demo"), false, false};
-    QSignalSpy connected(&session, &Remote::RemoteSession::connected);
-    session.connectToServer(profile, QStringLiteral("demo-password"));
-    QTRY_COMPARE_WITH_TIMEOUT(connected.size(), 1, 6000);
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    QSettings settings(temp.filePath(QStringLiteral("settings.ini")), QSettings::IniFormat);
+    MainWindow window(nullptr, &settings);
+    window.show();
+    openConnectDialog(window, server.url());
+    auto *table = window.findChild<QTableView *>(QStringLiteral("torrentList"));
+    QVERIFY(table);
+    QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 1, 7000);
 
-    QSignalSpy received(&session, &Remote::RemoteSession::torrentExportReceived);
-    const QString first(40, QLatin1Char('a'));
-    session.requestTorrentExport(first);
-    QTRY_COMPARE_WITH_TIMEOUT(received.size(), 1, 7000);
-    QCOMPARE(received.first().at(0).toString(), first);
-    QCOMPARE(received.first().at(1).toByteArray(), server.exportedTorrent());
+    // Use a non-native QFileDialog in CI. Select a real temporary directory,
+    // and assert the resulting .torrent bytes saved on the local filesystem.
+    class ChooseExportFolder final : public QObject
+    {
+    public:
+        QString folder;
+        int opened = 0;
+    protected:
+        bool eventFilter(QObject *object, QEvent *event) override
+        {
+            if (event->type() != QEvent::Show)
+                return QObject::eventFilter(object, event);
+            if (auto *picker = qobject_cast<QFileDialog *>(object))
+            {
+                ++opened;
+                const QString dir = folder;
+                QTimer::singleShot(0, picker, [picker, dir]() {
+                    picker->setDirectory(dir);
+                    static_cast<QDialog *>(picker)->accept();
+                });
+            }
+            return QObject::eventFilter(object, event);
+        }
+    } choose;
+    choose.folder = temp.path();
+    const bool originallyNative = QApplication::testAttribute(Qt::AA_DontUseNativeDialogs);
+    QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, true);
+    QApplication::instance()->installEventFilter(&choose);
+
+    QString error;
+    QTimer watchdog;
+    watchdog.setSingleShot(true);
+    QObject::connect(&watchdog, &QTimer::timeout, &window, [&]() {
+        for (QWidget *widget : QApplication::topLevelWidgets())
+            if (auto *dialog = qobject_cast<QDialog *>(widget);
+                dialog && dialog->isVisible())
+                dialog->reject();
+        error = QStringLiteral("Export folder dialog did not complete.");
+    });
+    watchdog.start(10000);
+    const QModelIndex first = table->model()->index(0, 0);
+    table->selectionModel()->select(first, QItemSelectionModel::ClearAndSelect
+        | QItemSelectionModel::Rows);
+    QTimer::singleShot(0, &window, [&]() {
+        auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+        if (!menu)
+        {
+            error = QStringLiteral("Torrent context menu did not open.");
+            return;
+        }
+        QAction *exportFile = nullptr;
+        for (QAction *item : menu->actions())
+            if (item->objectName() == QLatin1String("torrentContextExportTorrent"))
+                exportFile = item;
+        if (!exportFile)
+            error = QStringLiteral("Export .torrent is absent.");
+        else
+            exportFile->trigger();
+        menu->close();
+    });
+    QVERIFY(QMetaObject::invokeMethod(table, "customContextMenuRequested",
+        Qt::DirectConnection, Q_ARG(QPoint, table->visualRect(first).center())));
+    watchdog.stop();
+    QApplication::instance()->removeEventFilter(&choose);
+    QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, originallyNative);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QCOMPARE(choose.opened, 1);
+
+    const QString destination = temp.filePath(QStringLiteral("Already present.torrent"));
+    QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(destination), 7000);
+    QFile saved(destination);
+    QVERIFY(saved.open(QIODevice::ReadOnly));
+    QCOMPARE(saved.readAll(), server.exportedTorrent());
 }
 
 QTEST_MAIN(ConnectionWorkflowTest)
