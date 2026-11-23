@@ -1191,6 +1191,13 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
             dialog.setLabelText(tr("New name:"));
             dialog.setInputMode(QInputDialog::TextInput);
             dialog.setTextValue(current);
+            // Torrent names can be much longer than QInputDialog's compact
+            // default width. Keep the user's chosen size and position using
+            // the same geometry tracker as other native application dialogs.
+            dialog.setMinimumWidth(480);
+            dialog.resize(620, qMax(dialog.sizeHint().height(), 125));
+            dialog.setSizeGripEnabled(true);
+            trackDialogGeometry(dialog, QStringLiteral("RenameTorrent"));
             if (dialog.exec() != QDialog::Accepted)
                 break;
             const QString name = dialog.textValue().replace(
