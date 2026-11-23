@@ -1954,10 +1954,33 @@ private slots:
         QVERIFY(increase);
         if (increase->isEnabled())
         {
-            const int width = down->width();
+            const int oldPointSize = window.fontPointSize();
             increase->trigger();
-            QTRY_VERIFY(down->width() >= width);
-            QVERIFY(up->fontMetrics().horizontalAdvance(up->text()) <= up->width());
+            QCOMPARE(window.fontPointSize(), oldPointSize + 1);
+            // Font metrics can differ across pixel-sized and point-sized
+            // platform fonts. Check actual readable capacity, not an assumed
+            // monotonic pixel width when the font preference changes.
+            QTRY_VERIFY(down->width() >= down->fontMetrics().horizontalAdvance(
+                QStringLiteral("D: %1 MiB/s").arg(locale.toString(1023.5, 'f', 1))));
+            QTRY_VERIFY(up->width() >= up->fontMetrics().horizontalAdvance(
+                QStringLiteral("U: %1 MiB/s").arg(locale.toString(1023.5, 'f', 1))));
+            QCoreApplication::processEvents();
+            QList<QRect> enlarged;
+            for (QLabel *label : fields)
+                enlarged.append(label->geometry());
+
+            server.setStatusRates({
+                {QStringLiteral("dl_info_speed"), 1023.5 * 1024 * 1024},
+                {QStringLiteral("up_info_speed"), 512.5 * 1024 * 1024}
+            });
+            QTRY_COMPARE_WITH_TIMEOUT(down->text(),
+                QStringLiteral("D: %1 MiB/s").arg(locale.toString(1023.5, 'f', 1)), 6000);
+            QCOMPARE(up->text(), QStringLiteral("U: %1 MiB/s").arg(locale.toString(512.5, 'f', 1)));
+            QCoreApplication::processEvents();
+            for (int i = 0; i < fields.size(); ++i)
+                QCOMPARE(fields.at(i)->geometry(), enlarged.at(i));
+            for (QLabel *label : {down, up, free})
+                QVERIFY(label->fontMetrics().horizontalAdvance(label->text()) <= label->width());
             auto *reset = window.findChild<QAction *>(QStringLiteral("fontSizeReset"));
             QVERIFY(reset);
             reset->trigger();

@@ -345,6 +345,8 @@ MainWindow::MainWindow(QWidget *parent, QSettings *settings,
     m_serverFreeSpaceLabel->setToolTip(tr(
         "Free space on the selected server's default save drive, not this computer."));
     m_ui->statusBar->addPermanentWidget(m_serverFreeSpaceLabel);
+    for (auto *label : {m_downloadRateLabel, m_uploadRateLabel, m_serverFreeSpaceLabel})
+        label->installEventFilter(this);
     updateStatusBarFieldWidths();
     restoreWindowLayout();
     applyLocalBehaviorPreferences();
@@ -915,6 +917,16 @@ void MainWindow::enableTorrentDrops(QWidget *widget)
 
 bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 {
+    if ((watched == m_downloadRateLabel || watched == m_uploadRateLabel
+            || watched == m_serverFreeSpaceLabel)
+        && (event->type() == QEvent::FontChange
+            || event->type() == QEvent::StyleChange
+            || event->type() == QEvent::LocaleChange))
+    {
+        // Parent font events can arrive before propagation to child labels.
+        // Measure after the labels have processed their own change events.
+        QTimer::singleShot(0, this, [this]() { updateStatusBarFieldWidths(); });
+    }
     if (event->type() == QEvent::DragEnter || event->type() == QEvent::DragMove
         || event->type() == QEvent::Drop)
     {
@@ -1475,7 +1487,7 @@ void MainWindow::updateStatusBarFieldWidths()
     const QLocale locale;
     const auto reserve = [&locale](QLabel *label, const QString &pattern,
                                  const QStringList &units) {
-        const QFontMetrics metrics(label->font());
+        const QFontMetrics metrics = label->fontMetrics();
         int width = metrics.horizontalAdvance(label->text());
         for (int digit = 1; digit <= 9; ++digit)
         {
