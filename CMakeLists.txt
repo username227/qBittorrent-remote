@@ -290,6 +290,7 @@ if(BUILD_TESTING)
     add_remote_workflow_group(remote_connection_preferences_workflow 60
         connectionProtocolAndListeningPortFollowSelectedServer
         connectionLimitsFollowSelectedServer
+        i2pConfigurationFollowsSelectedServerAndBuild
     )
 
     # Check the registration against the actual QtTest-discovered functions.
