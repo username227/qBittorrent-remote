@@ -6,6 +6,8 @@
 #include "ui_optionsdialog.h"
 
 #include <QAbstractButton>
+#include <QAction>
+#include <QStyle>
 #include <QAbstractItemView>
 #include <QAbstractSpinBox>
 #include <QCheckBox>
@@ -128,6 +130,7 @@ RemotePreferencesDialog::RemotePreferencesDialog(QSettings &settings,
                                                  Remote::RemoteSession *session)
     : QDialog(parent)
     , m_settings(settings)
+    , m_remoteProfileId(preferredProfileId)
     , m_mappingStore(settings)
     , m_ui(std::make_unique<Ui::OptionsDialog>())
     , m_remoteSession(session)
@@ -150,6 +153,7 @@ RemotePreferencesDialog::RemotePreferencesDialog(QSettings &settings,
     disableUnimplementedControls();
     loadLocalBehaviorControls();
     bindServerBehaviorControls();
+    bindDownloadsSavingControls();
     populateAdvancedPlaceholders();
     buildRemotePathsPage(preferredProfileId);
 
@@ -458,13 +462,7 @@ void RemotePreferencesDialog::bindRemoteControl(const char *key, QWidget *widget
 {
     RemoteField field{QString::fromLatin1(key), widget, {}, {}, {},
                       std::move(dependency), std::move(tooltip)};
-    const auto changed = [this]() {
-        if (!m_loadingRemotePreferences)
-        {
-            refreshRemoteControls();
-            updateButtons();
-        }
-    };
+    const auto changed = [this]() { remoteFieldChanged(); };
     const auto boolean = [&field](auto *control) {
         field.read = [control]() { return QJsonValue(control->isChecked()); };
         field.write = [control](const QJsonValue &value) { control->setChecked(value.toBool()); };
@@ -528,6 +526,144 @@ void RemotePreferencesDialog::bindServerBehaviorControls()
     bindRemoteControl("file_log_age", m_ui->spinFileLogAge, deleteOld);
     bindRemoteControl("file_log_age_type", m_ui->comboFileLogAgeType, deleteOld);
     bindRemoteControl("performance_warning", m_ui->checkBoxPerformanceWarning);
+}
+
+void RemotePreferencesDialog::remoteFieldChanged()
+{
+    if (!m_loadingRemotePreferences)
+    {
+        refreshRemoteControls();
+        updateButtons();
+    }
+}
+
+void RemotePreferencesDialog::bindBooleanCombo(const char *key, QComboBox *combo,
+    int trueIndex, const QString &tooltip)
+{
+    bindRemoteField(RemoteField{
+        QString::fromLatin1(key), combo,
+        [combo, trueIndex]() { return QJsonValue(combo->currentIndex() == trueIndex); },
+        [combo, trueIndex](const QJsonValue &value) {
+            combo->setCurrentIndex(value.toBool() ? trueIndex : 1 - trueIndex);
+        },
+        [](const QJsonValue &value) { return value.isBool(); },
+        {}, tooltip
+    });
+    connect(combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this]() { remoteFieldChanged(); });
+}
+
+void RemotePreferencesDialog::bindRemotePath(const char *key, QLineEdit *line,
+    std::function<bool()> dependency)
+{
+    // The text always represents a server path. Browsing is explicitly a
+    // translation from a locally mounted directory, not remote filesystem I/O.
+    bindRemoteControl(key, line, std::move(dependency),
+        tr("Absolute directory on the connected server. Type a server path, "
+           "or use the folder button to select a mapped local NAS directory."));
+    auto *browse = line->addAction(style()->standardIcon(QStyle::SP_DirOpenIcon),
+                                   QLineEdit::TrailingPosition);
+    browse->setObjectName(line->objectName() + QStringLiteral("Browse"));
+    browse->setToolTip(tr("Choose mapped local NAS directory"));
+    connect(browse, &QAction::triggered, this, [this, line]() {
+        if (line->isEnabled())
+            browseRemotePath(line);
+    });
+}
+
+void RemotePreferencesDialog::browseRemotePath(QLineEdit *line)
+{
+    // The Servers page selector edits local mappings only. Always use the
+    // authenticated profile captured when this Preferences dialog opened.
+    const auto entries = m_staged.contains(m_remoteProfileId)
+        ? m_staged.value(m_remoteProfileId) : m_mappingStore.mappings(m_remoteProfileId);
+    if (entries.isEmpty())
+    {
+        QMessageBox::information(this, tr("No path mappings"),
+            tr("Configure a local NAS mount in Preferences → Servers first, "
+               "or type the absolute server path manually."));
+        return;
+    }
+    QString initial = Remote::PathMappingStore::toLocal(line->text(), entries);
+    if (initial.isEmpty() || !QDir(initial).exists())
+        initial = entries.constFirst().localRoot;
+    const QString local = QFileDialog::getExistingDirectory(
+        this, tr("Choose mapped local NAS directory"), initial);
+    if (local.isEmpty())
+        return;
+    const QString remote = Remote::PathMappingStore::toRemote(local, entries);
+    if (remote.isEmpty())
+    {
+        QMessageBox::warning(this, tr("Unmapped local directory"),
+            tr("The selected folder is not covered by a mapping for this connected server. "
+               "The server path has not been changed."));
+        return;
+    }
+    line->setText(remote);
+}
+
+void RemotePreferencesDialog::bindDownloadsSavingControls()
+{
+    bindRemoteControl("preallocate_all", m_ui->checkPreallocateAll, {},
+        tr("Pre-allocate files on the connected server's disk before downloading."));
+    bindRemoteControl("incomplete_files_ext", m_ui->checkAppendqB, {},
+        tr("The server appends .!qB to incomplete files. Changing this may rename existing incomplete files."));
+    bindRemoteControl("use_unwanted_folder", m_ui->checkUnwantedFolder, {},
+        tr("Keep unselected files in the server's .unwanted folder."));
+
+    bindBooleanCombo("auto_tmm_enabled", m_ui->comboSavingMode, 1,
+        tr("Default management mode for newly added torrents on the server."));
+    bindBooleanCombo("torrent_changed_tmm_enabled", m_ui->comboTorrentCategoryChanged, 0,
+        tr("When a torrent category changes, relocate it or switch it to Manual Mode."));
+    bindBooleanCombo("save_path_changed_tmm_enabled", m_ui->comboCategoryDefaultPathChanged, 0,
+        tr("When a default save or incomplete path changes, relocate affected torrents "
+           "or switch them to Manual Mode."));
+    bindBooleanCombo("category_changed_tmm_enabled", m_ui->comboCategoryChanged, 0,
+        tr("When a category save path changes, relocate affected torrents "
+           "or switch them to Manual Mode."));
+    bindRemoteControl("use_category_paths_in_manual_mode", m_ui->checkUseCategoryPaths, {},
+        tr("Resolve relative save paths against the category path instead of the default path."));
+    bindRemotePath("save_path", m_ui->textSavePath);
+    bindRemoteControl("temp_path_enabled", m_ui->checkUseDownloadPath);
+    bindRemotePath("temp_path", m_ui->textDownloadPath, [this]() {
+        return remoteFieldAvailable("temp_path_enabled") && m_ui->checkUseDownloadPath->isChecked();
+    });
+}
+
+bool RemotePreferencesDialog::validateDownloadChanges(const QJsonObject &changes)
+{
+    // This client supports absolute POSIX NAS paths. Do not resolve relative
+    // text against the desktop filesystem, guess a mapping, or require a mount.
+    for (const QString &key : {QStringLiteral("save_path"), QStringLiteral("temp_path")})
+    {
+        if (!changes.contains(key))
+            continue;
+        const QString path = changes.value(key).toString();
+        if (!path.startsWith(QLatin1Char('/')) || path.contains(QLatin1Char('\\'))
+            || path.contains(QLatin1Char('\n')) || path.contains(QLatin1Char('\r'))
+            || path.contains(QChar::Null))
+        {
+            QMessageBox::warning(this, tr("Invalid server directory"),
+                tr("Enter an absolute POSIX directory on the connected server, "
+                   "or choose a mapped local NAS directory."));
+            return false;
+        }
+    }
+    // Changing the default paths or the incomplete-folder toggle can have
+    // consequences for existing torrents, not just subsequent additions.
+    if (changes.contains(QStringLiteral("save_path"))
+        || changes.contains(QStringLiteral("temp_path"))
+        || changes.contains(QStringLiteral("temp_path_enabled"))
+        || changes.contains(QStringLiteral("use_category_paths_in_manual_mode")))
+    {
+        return QMessageBox::question(this, tr("Change server download locations"),
+            tr("These settings affect the connected server. Depending on its torrent "
+               "management policies, existing torrents may be relocated or switched "
+               "to Manual Mode. The server performs those changes, even if this "
+               "application is closed. Apply these settings?"),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes;
+    }
+    return true;
 }
 
 bool RemotePreferencesDialog::remoteFieldAvailable(const char *key) const
@@ -651,8 +787,20 @@ void RemotePreferencesDialog::verifyRemoteChanges(const QJsonObject &changes)
                 return;
             QJsonObject unapplied;
             for (auto it = changes.constBegin(); it != changes.constEnd(); ++it)
-                if (values.value(it.key()) != it.value())
+            {
+                const QJsonValue returned = values.value(it.key());
+                // qBittorrent can canonicalize directory spelling (for
+                // example, remove a trailing slash). Accept equivalent POSIX
+                // paths without claiming that the remote filesystem exists.
+                const bool pathKey = it.key() == QLatin1String("save_path")
+                    || it.key() == QLatin1String("temp_path");
+                const bool equivalentPath = pathKey && returned.isString() && it.value().isString()
+                    && returned.toString().startsWith(QLatin1Char('/'))
+                    && it.value().toString().startsWith(QLatin1Char('/'))
+                    && QDir::cleanPath(returned.toString()) == QDir::cleanPath(it.value().toString());
+                if (returned != it.value() && !equivalentPath)
                     unapplied.insert(it.key(), it.value());
+            }
             // Use authoritative read-back as the new baseline. Keep any
             // representable, unconfirmed edits staged for an explicit retry.
             dialog->populateRemoteFields(values, unapplied);
@@ -1051,6 +1199,17 @@ void RemotePreferencesDialog::applyChanges(bool closeAfter)
         finishApply();
         return;
     }
+    if (!m_remoteSession || !m_remoteSession->isConnected() || !m_remotePreferencesLoaded)
+    {
+        remoteSaveFailed(tr("The server is no longer available. Reopen Preferences after reconnecting."));
+        return;
+    }
+    if (!validateDownloadChanges(changes))
+    {
+        m_closeAfterApply = false;
+        return;
+    }
+    // A modal confirmation can run the event loop while a server disconnects.
     if (!m_remoteSession || !m_remoteSession->isConnected() || !m_remotePreferencesLoaded)
     {
         remoteSaveFailed(tr("The server is no longer available. Reopen Preferences after reconnecting."));
