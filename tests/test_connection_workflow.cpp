@@ -37,6 +37,7 @@
 #include <QSignalSpy>
 #include <QButtonGroup>
 #include <QFile>
+#include <QFileInfo>
 #include <QFileDialog>
 #include <QFontInfo>
 #include <QHash>
@@ -2918,6 +2919,199 @@ private slots:
         expectedOther.insert(QStringLiteral("save_path"), QStringLiteral("/remote-only/Second + data"));
         QCOMPARE(second.serverPreferences(), expectedOther);
         QCOMPARE(first.commandsFor("/api/v2/app/setPreferences"), 2);
+    }
+
+    void localOriginalTorrentDeletionRequiresConfirmedAddition()
+    {
+        DemoQbittorrentServer server(true), other(true);
+        server.enableModernResponses();
+        QJsonObject snapshot{{QStringLiteral("torrents"), QJsonObject()}};
+        server.setSidebarSnapshot(snapshot);
+        other.setSidebarSnapshot(snapshot);
+        QVERIFY(server.start() && other.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("prefs.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, server.url());
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(QStringLiteral("v5.3.0")), 6000);
+        openConnectDialog(window, other.url(), false, true, true, QStringLiteral("Other seedbox"));
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(QStringLiteral("Connected to Other seedbox")), 6000);
+        auto *tabs = window.findChild<QTabWidget *>(QStringLiteral("serverTabs"));
+        auto *prefs = window.findChild<QAction *>(QStringLiteral("actionOptions"));
+        QVERIFY(tabs && prefs);
+        tabs->setCurrentIndex(0);
+        bool configured = false;
+        QTimer::singleShot(0, &window, [&]() {
+            auto *dlg = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget());
+            QVERIFY(dlg);
+            const auto cleanup = qScopeGuard([dlg]() { if (dlg->isVisible()) dlg->reject(); });
+            auto *sections = dlg->findChild<QListWidget *>(QStringLiteral("preferencesSections"));
+            auto *remove = dlg->findChild<QGroupBox *>(QStringLiteral("deleteTorrentBox"));
+            auto *cancel = dlg->findChild<QCheckBox *>(QStringLiteral("deleteCancelledTorrentBox"));
+            auto *apply = dlg->findChild<QPushButton *>(QStringLiteral("preferencesApply"));
+            QVERIFY(sections && remove && cancel && apply);
+            sections->setCurrentRow(2);
+            QVERIFY(remove->isEnabled() && !remove->isChecked() && !cancel->isEnabled());
+            remove->setChecked(true);
+            QVERIFY(cancel->isEnabled());
+            cancel->setChecked(true);
+            apply->click();
+            QVERIFY(!apply->isEnabled());
+            configured = true;
+        });
+        // Provide a successful preferences endpoint without server deletion keys.
+        server.setServerPreferences(QJsonObject{});
+        other.setServerPreferences(QJsonObject{});
+        prefs->trigger();
+        QVERIFY(configured);
+        QVERIFY(settings.value(QStringLiteral("Preferences/Downloads/DeleteOriginalTorrent")).toBool());
+        QVERIFY(settings.value(QStringLiteral("Preferences/Downloads/DeleteCancelledTorrent")).toBool());
+        QCOMPARE(server.commandsFor("/api/v2/app/setPreferences"), 0);
+        auto *pane = qobject_cast<ServerPane *>(tabs->currentWidget());
+        QVERIFY(pane);
+        auto *table = pane->table();
+        auto *model = pane->model();
+        QVERIFY(table && model);
+        QTRY_VERIFY_WITH_TIMEOUT(model->hasFullSync(), 6000);
+
+        QJsonObject records;
+        QHash<QString, QString> hashByPath;
+        for (int i = 1; i <= 8; ++i)
+        {
+            const QByteArray name = QByteArrayLiteral("deletion-") + QByteArray::number(i);
+            const QByteArray bytes = QByteArrayLiteral("d4:infod6:lengthi")
+                + QByteArray::number(100 + i) + QByteArrayLiteral("e4:name")
+                + QByteArray::number(name.size()) + ':' + name + QByteArrayLiteral("ee");
+            const QString path = temp.filePath(QStringLiteral("original-%1.torrent").arg(i));
+            QFile file(path);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write(bytes), qint64(bytes.size()));
+            file.close();
+            Remote::TorrentMetadata parsed;
+            QVERIFY(Remote::TorrentMetadataReader::read(bytes, parsed));
+            QVERIFY(!parsed.infoHashV1.isEmpty());
+            hashByPath.insert(path, parsed.infoHashV1);
+        }
+        auto path = [&](int i) { return temp.filePath(QStringLiteral("original-%1.torrent").arg(i)); };
+        auto publish = [&](DemoQbittorrentServer &target, const QStringList &paths) {
+            QJsonObject torrents;
+            for (const auto &p : paths)
+                torrents.insert(hashByPath.value(p), QJsonObject{
+                    {QStringLiteral("name"), QFileInfo(p).fileName()},
+                    {QStringLiteral("state"), QStringLiteral("stoppedDL")}});
+            target.setSidebarSnapshot(QJsonObject{{QStringLiteral("torrents"), torrents}});
+        };
+        auto drop = [&](const QStringList &paths, bool cancel, bool keep, bool options = true) {
+            QMimeData mime;
+            QList<QUrl> urls;
+            for (const auto &p : paths) urls.append(QUrl::fromLocalFile(p));
+            mime.setUrls(urls);
+            auto *viewport = table->viewport();
+            QDragEnterEvent enter(QPoint(10, 10), Qt::CopyAction, &mime,
+                Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(viewport, &enter);
+            QVERIFY(enter.isAccepted());
+            bool handled = false;
+            if (options)
+            {
+                QTimer::singleShot(0, &window, [&]() {
+                    auto *dlg = qobject_cast<RemoteAddTorrentDialog *>(QApplication::activeModalWidget());
+                    QVERIFY(dlg);
+                    const auto cleanup = qScopeGuard([dlg]() { if (dlg->isVisible()) dlg->reject(); });
+                    auto *box = dlg->findChild<QCheckBox *>(QStringLiteral("doNotDeleteTorrentCheckBox"));
+                    auto *buttons = dlg->findChild<QDialogButtonBox *>(QStringLiteral("buttonBox"));
+                    QVERIFY(box && buttons && box->isEnabled() && box->isVisible());
+                    box->setChecked(keep);
+                    QTRY_VERIFY_WITH_TIMEOUT(buttons->button(QDialogButtonBox::Ok)->isEnabled(), 6000);
+                    buttons->button(cancel ? QDialogButtonBox::Cancel : QDialogButtonBox::Ok)->click();
+                    handled = true;
+                });
+            }
+            QDropEvent event(QPointF(10, 10), Qt::CopyAction, &mime, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(viewport, &event);
+            QVERIFY(event.isAccepted());
+            QVERIFY(!options || handled);
+        };
+        drop({path(1)}, true, true);
+        QVERIFY(QFile::exists(path(1)));
+        drop({path(2)}, true, false);
+        QVERIFY(!QFile::exists(path(2)));
+        QCOMPARE(server.commandsFor("/api/v2/torrents/add"), 0);
+
+        drop({path(1)}, false, true);
+        QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor("/api/v2/torrents/add"), 1, 6000);
+        publish(server, {path(1)});
+        QTRY_VERIFY_WITH_TIMEOUT(model->torrents().contains(hashByPath.value(path(1))), 6000);
+        QVERIFY(QFile::exists(path(1)));
+
+        // Even HTTP 204 and another server's matching hash cannot delete a file.
+        drop({path(3), path(4)}, false, false);
+        QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor("/api/v2/torrents/add"), 2, 6000);
+        publish(other, {path(3), path(4)});
+        publish(server, {path(1), path(3)});
+        QTRY_VERIFY_WITH_TIMEOUT(model->torrents().contains(hashByPath.value(path(3))), 6000);
+        QVERIFY(QFile::exists(path(3)) && QFile::exists(path(4)));
+        publish(server, {path(1), path(3), path(4)});
+        QTRY_VERIFY_WITH_TIMEOUT(!QFile::exists(path(3)) && !QFile::exists(path(4)), 6000);
+        QCOMPARE(other.commandsFor("/api/v2/torrents/add"), 0);
+
+        // No-dialog path follows the same confirmation rule, and a changed
+        // local file must never be removed even after its original hash appears.
+        settings.setValue(QStringLiteral("Preferences/Downloads/ShowAdditionDialog"), false);
+        drop({path(5)}, false, false, false);
+        QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor("/api/v2/torrents/add"), 3, 6000);
+        QFile replaced(path(5));
+        QVERIFY(replaced.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        QCOMPARE(replaced.write("replacement"), qint64(11));
+        replaced.close();
+        publish(server, {path(1), path(3), path(4), path(5)});
+        QTRY_VERIFY_WITH_TIMEOUT(model->torrents().contains(hashByPath.value(path(5))), 6000);
+        QVERIFY(QFile::exists(path(5)));
+        drop({path(6)}, false, false, false);
+        QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor("/api/v2/torrents/add"), 4, 6000);
+        publish(server, {path(1), path(3), path(4), path(5), path(6)});
+        QTRY_VERIFY_WITH_TIMEOUT(!QFile::exists(path(6)), 6000);
+
+        // A rejected upload never authorizes deletion, even if another
+        // client subsequently adds that same infohash on the target server.
+        server.rejectTorrentCommands();
+        bool rejected = false;
+        QTimer warningDriver;
+        connect(&warningDriver, &QTimer::timeout, &window, [&]() {
+            if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget()))
+            {
+                rejected = box->windowTitle() == QStringLiteral("Remote torrent operation failed");
+                box->reject();
+            }
+        });
+        warningDriver.start(20);
+        drop({path(7)}, false, false, false);
+        QTRY_VERIFY_WITH_TIMEOUT(rejected, 6000);
+        warningDriver.stop();
+        publish(server, {path(1), path(3), path(4), path(5), path(6), path(7)});
+        QTRY_VERIFY_WITH_TIMEOUT(model->torrents().contains(hashByPath.value(path(7))), 6000);
+        QVERIFY(QFile::exists(path(7)));
+
+        // The local preference is independent of the legacy server's API.
+        tabs->setCurrentIndex(1);
+        settings.setValue(QStringLiteral("Preferences/Downloads/DeleteOriginalTorrent"), false);
+        // A disabled preference must retain the original after a successful
+        // addition. Reuse the actual viewport of the selected legacy pane.
+        auto *legacyPane = qobject_cast<ServerPane *>(tabs->currentWidget());
+        QVERIFY(legacyPane);
+        table = legacyPane->table();
+        model = legacyPane->model();
+        QTRY_VERIFY_WITH_TIMEOUT(model->hasFullSync(), 6000);
+        drop({path(8)}, false, false, false);
+        QTRY_COMPARE_WITH_TIMEOUT(other.commandsFor("/api/v2/torrents/add"), 1, 6000);
+        publish(other, {path(3), path(4), path(8)});
+        QTRY_VERIFY_WITH_TIMEOUT(model->torrents().contains(hashByPath.value(path(8))), 6000);
+        QVERIFY(QFile::exists(path(8)));
+        QCOMPARE(server.commandsFor("/api/v2/app/setPreferences"), 0);
+        QCOMPARE(other.commandsFor("/api/v2/app/setPreferences"), 0);
     }
 
     void downloadsNotificationsAndProgramsFollowSelectedServer()

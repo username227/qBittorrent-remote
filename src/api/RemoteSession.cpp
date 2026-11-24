@@ -1602,7 +1602,8 @@ void RemoteSession::addTorrentFile(const QString &filename, const QByteArray &co
 }
 
 void RemoteSession::addTorrentFiles(const QList<TorrentUpload> &files,
-                                    const AddTorrentOptions &options)
+                                    const AddTorrentOptions &options,
+                                    std::function<void()> accepted)
 {
     const QString description = files.size() == 1
         ? tr("Add torrent file") : tr("Add %1 torrent files").arg(files.size());
@@ -1674,7 +1675,7 @@ void RemoteSession::addTorrentFiles(const QList<TorrentUpload> &files,
     // and all selected .torrent files to qBittorrent's real Web API.
     queueOperation(QStringLiteral("api/v2/torrents/add"), body,
                    QByteArrayLiteral("multipart/form-data; boundary=") + boundary,
-                   description, true);
+                   description, true, std::move(accepted));
 }
 
 bool RemoteSession::isConnected() const noexcept

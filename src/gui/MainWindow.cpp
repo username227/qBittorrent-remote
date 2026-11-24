@@ -46,6 +46,9 @@
 #include <QFileDialog>
 #include <QFile>
 #include <QFileInfo>
+#include <QDateTime>
+#include <QCryptographicHash>
+#include <QDeadlineTimer>
 #include <QSaveFile>
 #include <QHash>
 #include <QInputDialog>
@@ -231,6 +234,50 @@ QString existingHash(const TorrentModel &model, const QStringList &candidateHash
     return {};
 }
 
+// Local metadata paths never cross the remote API boundary. Capture the
+// exact bytes and file identity information before any modal interaction.
+struct OriginalTorrentFile
+{
+    QString path;
+    QString canonicalPath;
+    QDateTime modified;
+    qint64 size = 0;
+    QByteArray digest;
+    QStringList hashes;
+};
+
+struct PendingOriginalDeletion
+{
+    QList<OriginalTorrentFile> originals;
+    QDeadlineTimer deadline{30000};
+};
+
+bool removeUnchangedOriginal(const OriginalTorrentFile &original)
+{
+    // Refuse symlinks, non-torrent files, changed paths or replaced contents.
+    // A missing/changed file is retained; no recursive or remote deletion.
+    if (original.hashes.isEmpty() || original.canonicalPath.isEmpty()
+        || !original.path.endsWith(QLatin1String(".torrent"), Qt::CaseInsensitive))
+        return false;
+    const QFileInfo info(original.path);
+    if (!info.isFile() || info.isSymLink()
+        || info.canonicalFilePath() != original.canonicalPath
+        || info.lastModified() != original.modified || info.size() != original.size)
+        return false;
+    QFile file(original.path);
+    if (!file.open(QIODevice::ReadOnly))
+        return false;
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    if (!hash.addData(&file) || hash.result() != original.digest)
+        return false;
+    file.close();
+    const QFileInfo current(original.path);
+    if (!current.isFile() || current.isSymLink() || current.canonicalFilePath() != original.canonicalPath
+        || current.lastModified() != original.modified || current.size() != original.size)
+        return false;
+    return QFile::remove(original.path);
+}
+
 QIcon upstreamIcon(const char *name)
 {
     return QIcon(QStringLiteral(":/icons/") + QString::fromLatin1(name) + QStringLiteral(".svg"));
@@ -274,6 +321,7 @@ struct MainWindow::SessionContext
     bool connected = false;
     bool altSpeedModeKnown = false;
     bool altSpeedMode = false;
+    QList<PendingOriginalDeletion> pendingOriginalDeletions;
 };
 
 MainWindow::MainWindow(QWidget *parent, QSettings *settings,
@@ -855,11 +903,19 @@ void MainWindow::setupActions()
 
         QList<Remote::TorrentUpload> uploads;
         uploads.reserve(filenames.size());
+        QList<OriginalTorrentFile> originals;
+        originals.reserve(filenames.size());
+        const bool deleteOriginal = m_settings->value(
+            QStringLiteral("Preferences/Downloads/DeleteOriginalTorrent"), false).toBool();
+        const bool deleteCancelled = deleteOriginal && m_settings->value(
+            QStringLiteral("Preferences/Downloads/DeleteCancelledTorrent"), false).toBool();
         constexpr qint64 maxSingleBytes = 32LL * 1024 * 1024;
         constexpr qint64 maxBatchBytes = 128LL * 1024 * 1024;
         qint64 totalBytes = 0;
         for (const QString &filename : filenames)
         {
+            QFileInfo before(filename);
+            if (deleteOriginal) before.stat();
             QFile file(filename);
             if (!file.open(QIODevice::ReadOnly))
             {
@@ -885,6 +941,22 @@ void MainWindow::setupActions()
             }
             totalBytes += size;
             uploads.append({QFileInfo(filename).fileName(), contents});
+            OriginalTorrentFile original;
+            if (deleteOriginal && before.isFile() && !before.isSymLink())
+            {
+                original.path = before.absoluteFilePath();
+                original.canonicalPath = before.canonicalFilePath();
+                original.modified = before.lastModified();
+                original.size = contents.size();
+                original.digest = QCryptographicHash::hash(contents, QCryptographicHash::Sha256);
+                Remote::TorrentMetadata metadata;
+                if (Remote::TorrentMetadataReader::read(contents, metadata))
+                {
+                    if (!metadata.infoHashV1.isEmpty()) original.hashes.append(metadata.infoHashV1);
+                    if (!metadata.infoHashV2.isEmpty()) original.hashes.append(metadata.infoHashV2);
+                }
+            }
+            originals.append(original);
         }
         if (uploads.size() > 256)
         {
@@ -902,6 +974,7 @@ void MainWindow::setupActions()
         auto target = server;
         Remote::AddTorrentOptions options;
         QJsonValue mergeDefault(QJsonValue::Undefined);
+        bool removeAfterAdd = deleteOriginal;
         if (showOptions)
         {
             RemoteAddTorrentDialog dialog(*m_settings, server->profile,
@@ -918,7 +991,21 @@ void MainWindow::setupActions()
                 });
             trackDialogGeometry(dialog, QStringLiteral("AddTorrent"));
             if (dialog.exec() != QDialog::Accepted)
+            {
+                // Programmatic rejection, window close, and shutdown are
+                // not explicit permission to delete unsubmitted metadata.
+                if (deleteCancelled && dialog.explicitlyCancelled()
+                    && !dialog.keepOriginalTorrentFiles())
+                {
+                    int retained = 0;
+                    for (const auto &original : originals)
+                        if (!removeUnchangedOriginal(original)) ++retained;
+                    if (retained)
+                        statusBar()->showMessage(tr("%1 original .torrent file(s) retained because they changed or could not be deleted.").arg(retained), 8000);
+                }
                 return;
+            }
+            removeAfterAdd = deleteOriginal && !dialog.keepOriginalTorrentFiles();
             target = connectedById(dialog.selectedServerId());
             if (!target)
             {
@@ -931,6 +1018,34 @@ void MainWindow::setupActions()
         }
         else
             options.useServerDefaults = true;
+
+        // HTTP success alone does not identify which files were accepted.
+        // Only queue deletion after acceptance, with a complete pre-upload
+        // model showing that each candidate was absent. Subsequent sync on
+        // this exact session must show every submitted infohash.
+        const auto submit = [this, target, options, removeAfterAdd](
+            const QList<Remote::TorrentUpload> &files,
+            const QList<OriginalTorrentFile> &candidates) {
+            if (!containsConnection(target) || !target->connected) return;
+            bool verify = removeAfterAdd && !candidates.isEmpty()
+                && candidates.size() == files.size() && target->pane->model()->hasFullSync();
+            for (const auto &original : candidates)
+                if (original.hashes.isEmpty() || !existingHash(*target->pane->model(), original.hashes).isEmpty())
+                    verify = false;
+            if (!verify)
+            {
+                target->session->addTorrentFiles(files, options);
+                return;
+            }
+            const QPointer<MainWindow> owner(this);
+            const std::weak_ptr<SessionContext> weakTarget(target);
+            target->session->addTorrentFiles(files, options, [owner, weakTarget, candidates]() {
+                const auto live = weakTarget.lock();
+                if (!owner || !live || !owner->containsConnection(live) || !live->connected)
+                    return;
+                live->pendingOriginalDeletions.append(PendingOriginalDeletion{candidates});
+            });
+        };
 
         if (!batch)
         {
@@ -946,7 +1061,7 @@ void MainWindow::setupActions()
                 if (offerTrackerMerge(target, identity, confirm, mergeDefault))
                     return;
             }
-            target->session->addTorrentFile(uploads.first().filename, uploads.first().contents, options);
+            submit(uploads, originals);
             return;
         }
 
@@ -955,10 +1070,12 @@ void MainWindow::setupActions()
         // The server can change in the dialog, so detect duplicates only
         // against the *chosen* remote session after the user accepts.
         QList<Remote::TorrentUpload> toUpload;
+        QList<OriginalTorrentFile> submittedOriginals;
         QSet<QString> hashesSeen;
         QStringList skipped;
-        for (const Remote::TorrentUpload &upload : uploads)
+        for (qsizetype index = 0; index < uploads.size(); ++index)
         {
+            const Remote::TorrentUpload &upload = uploads.at(index);
             Remote::TorrentMetadata metadata;
             QString error;
             if (!Remote::TorrentMetadataReader::read(upload.contents, metadata, &error)
@@ -983,6 +1100,7 @@ void MainWindow::setupActions()
             for (const QString &hash : identity.hashes)
                 hashesSeen.insert(hash);
             toUpload.append(upload);
+            submittedOriginals.append(originals.at(index));
         }
         if (!skipped.isEmpty())
         {
@@ -1001,7 +1119,7 @@ void MainWindow::setupActions()
         }
         if (!containsConnection(target) || !target->connected)
             return;
-        target->session->addTorrentFiles(toUpload, options);
+        submit(toUpload, submittedOriginals);
     };
     connect(m_ui->actionOpen, &QAction::triggered, this, [this]() {
         if (!activeConnection()) return;
@@ -1820,6 +1938,7 @@ void MainWindow::removeConnection(const std::shared_ptr<SessionContext> &connect
     if (tabIndex >= 0)
         m_views->removeTab(tabIndex);
 
+    connection->pendingOriginalDeletions.clear();
     m_connections.removeOne(connection);
     if (connection->session)
         connection->session->disconnectFromServer();
@@ -2634,6 +2753,34 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
             if (!containsConnection(connection))
                 return;
             connection->pane->applySync(payload);
+            // No extra polling and no deletion from another server's data.
+            // A partially accepted batch is retained in full if not confirmed.
+            auto &pending = connection->pendingOriginalDeletions;
+            for (qsizetype i = pending.size(); i > 0; --i)
+            {
+                const auto &entry = pending.at(i - 1);
+                if (entry.deadline.hasExpired() || !m_settings->value(
+                        QStringLiteral("Preferences/Downloads/DeleteOriginalTorrent"), false).toBool())
+                {
+                    const bool expired = entry.deadline.hasExpired();
+                    pending.removeAt(i - 1);
+                    if (expired)
+                        statusBar()->showMessage(tr("Original .torrent files retained: server addition was not fully confirmed."), 8000);
+                    continue;
+                }
+                bool confirmed = connection->pane->model()->hasFullSync();
+                for (const auto &original : entry.originals)
+                    if (existingHash(*connection->pane->model(), original.hashes).isEmpty())
+                        confirmed = false;
+                if (!confirmed) continue;
+                const auto originals = entry.originals;
+                pending.removeAt(i - 1);
+                int retained = 0;
+                for (const auto &original : originals)
+                    if (!removeUnchangedOriginal(original)) ++retained;
+                if (retained)
+                    statusBar()->showMessage(tr("%1 original .torrent file(s) retained because they changed or could not be deleted.").arg(retained), 8000);
+            }
             const QJsonObject state = payload.value(QStringLiteral("server_state")).toObject();
             const QJsonValue alt = state.value(QStringLiteral("use_alt_speed_limits"));
             if (payload.value(QStringLiteral("full_update")).toBool()

@@ -121,7 +121,8 @@ public:
     void addTorrentFile(const QString &filename, const QByteArray &contents,
                         const AddTorrentOptions &options);
     void addTorrentFiles(const QList<TorrentUpload> &files,
-                         const AddTorrentOptions &options);
+                         const AddTorrentOptions &options,
+                         std::function<void()> accepted = {});
     // Merge only explicitly supplied announce URLs into the existing remote
     // torrent; no local tracker traffic and no re-add of torrent metadata.
     void addTorrentTrackers(const QString &hash, const QStringList &urls);
