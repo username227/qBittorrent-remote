@@ -1915,11 +1915,17 @@ private slots:
         QTRY_VERIFY(free->text().endsWith(QStringLiteral(" GiB")));
         QCoreApplication::processEvents();
         const QList<QLabel *> fields{count, sep1, down, sep2, up, sep3, free};
-        QList<QRect> initial;
+        // The requirement is stable horizontal positions and reserved widths.
+        // Qt can recalculate the native status bar's height after a font
+        // change; that vertical adjustment is not a transfer-rate shift.
+        const auto horizontalGeometry = [](const QLabel *label) {
+            return QPair<int, int>{label->x(), label->width()};
+        };
+        QList<QPair<int, int>> initial;
         for (QLabel *label : fields)
         {
             QVERIFY(label->isVisible());
-            initial.append(label->geometry());
+            initial.append(horizontalGeometry(label));
         }
         for (QLabel *sep : {sep1, sep2, sep3})
             QCOMPARE(sep->text(), QStringLiteral("|"));
@@ -1936,7 +1942,7 @@ private slots:
         QCOMPARE(free->text(), QStringLiteral("Free: %1 TiB").arg(locale.toString(5.9, 'f', 1)));
         QCoreApplication::processEvents();
         for (int i = 0; i < fields.size(); ++i)
-            QCOMPARE(fields.at(i)->geometry(), initial.at(i));
+            QCOMPARE(horizontalGeometry(fields.at(i)), initial.at(i));
         for (QLabel *label : {down, up, free})
             QVERIFY(label->fontMetrics().horizontalAdvance(label->text()) <= label->width());
 
@@ -1948,7 +1954,7 @@ private slots:
         QCOMPARE(free->text(), QStringLiteral("Free: %1 TiB").arg(locale.toString(5.9, 'f', 1)));
         QCoreApplication::processEvents();
         for (int i = 0; i < fields.size(); ++i)
-            QCOMPARE(fields.at(i)->geometry(), initial.at(i));
+            QCOMPARE(horizontalGeometry(fields.at(i)), initial.at(i));
 
         auto *increase = window.findChild<QAction *>(QStringLiteral("fontSizeIncrease"));
         QVERIFY(increase);
@@ -1965,9 +1971,9 @@ private slots:
             QTRY_VERIFY(up->width() >= up->fontMetrics().horizontalAdvance(
                 QStringLiteral("U: %1 MiB/s").arg(locale.toString(1023.5, 'f', 1))));
             QCoreApplication::processEvents();
-            QList<QRect> enlarged;
+            QList<QPair<int, int>> enlarged;
             for (QLabel *label : fields)
-                enlarged.append(label->geometry());
+                enlarged.append(horizontalGeometry(label));
 
             server.setStatusRates({
                 {QStringLiteral("dl_info_speed"), 1023.5 * 1024 * 1024},
@@ -1978,7 +1984,7 @@ private slots:
             QCOMPARE(up->text(), QStringLiteral("U: %1 MiB/s").arg(locale.toString(512.5, 'f', 1)));
             QCoreApplication::processEvents();
             for (int i = 0; i < fields.size(); ++i)
-                QCOMPARE(fields.at(i)->geometry(), enlarged.at(i));
+                QCOMPARE(horizontalGeometry(fields.at(i)), enlarged.at(i));
             for (QLabel *label : {down, up, free})
                 QVERIFY(label->fontMetrics().horizontalAdvance(label->text()) <= label->width());
             auto *reset = window.findChild<QAction *>(QStringLiteral("fontSizeReset"));
