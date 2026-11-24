@@ -422,7 +422,10 @@ void MainWindow::setupMainArea()
             const auto connection = *it;
             QMenu menu(this);
             menu.setObjectName(QStringLiteral("serverTabContextMenu"));
-            auto *preferences = menu.addAction(upstreamIcon("configure"), tr("Preferences..."));
+            QString serverName = connection->profile.name;
+            serverName.replace(QLatin1Char('&'), QStringLiteral("&&"));
+            auto *preferences = menu.addAction(upstreamIcon("configure"),
+                tr("%1 Preferences...").arg(serverName));
             preferences->setObjectName(QStringLiteral("serverTabPreferences"));
             preferences->setEnabled(connection->connected);
             connect(preferences, &QAction::triggered, this, [this, connection]() {

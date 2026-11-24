@@ -2317,6 +2317,7 @@ private slots:
         const auto withDialog = [&](const std::function<void(RemotePreferencesDialog *)> &drive,
                                     bool background = false) {
             bool opened = false;
+            QString clickedPreferencesLabel;
             const auto driveDialog = [&]() {
                 auto *dialog = qobject_cast<RemotePreferencesDialog *>(
                     QApplication::activeModalWidget());
@@ -2350,6 +2351,7 @@ private slots:
                     for (auto *action : menu->actions())
                         if (action->objectName() == QLatin1String("serverTabPreferences") && action->isEnabled())
                         {
+                            clickedPreferencesLabel = action->text();
                             QTimer::singleShot(0, &window, driveDialog);
                             action->trigger();
                             break;
@@ -2367,6 +2369,8 @@ private slots:
             watchdog.stop();
             QVERIFY(opened);
             QVERIFY(!timedOut);
+            if (background)
+                QCOMPARE(clickedPreferencesLabel, QStringLiteral("Demo seedbox Preferences..."));
         };
         const QString newPath = QStringLiteral("/share/Second/Logs + & 100% ü");
         const auto changedBody = [](const DemoQbittorrentServer &server) {
