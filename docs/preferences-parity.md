@@ -63,3 +63,7 @@ Credentials and session cookies are not stored in Preferences.
 - Native Speed navigation now uses the upstream `speedometer.svg` asset
   (not `chart-line.svg`) with 28 × 28 navigation icons, up from 25 × 25.
   Tile heights remain font-aware, and section labels/fonts do not change.
+
+## Shared remote preferences transaction
+
+Server-side fields use the authenticated session captured when Preferences opens, independent of the local path-mapping profile selector. Only keys present with representable types/values are enabled. Missing or unknown values remain explicitly unavailable; no defaults are written to unsupported servers. Edits are compared against the loaded baseline; reverting an edit removes it from the delta. Apply/OK submit only changed keys, wait for the scoped write response and fetch preferences again to verify every requested value. A rejected or unconfirmed write keeps the dialog open; any representable unapplied values remain staged. Local changes are validated first and saved only after remote confirmation (local filesystem failures are reported separately). Closing or cancelling before Apply/OK sends no write; a write in flight cannot be cancelled. Server values, including future credentials, are never stored in QSettings. The existing Behavior log controls are the first consumer; the Downloads controls remain disabled until subsequent PRs.
