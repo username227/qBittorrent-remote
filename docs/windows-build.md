@@ -25,6 +25,7 @@ pacman -S --needed \
   mingw-w64-ucrt-x86_64-ninja \
   mingw-w64-ucrt-x86_64-qt6-base \
   mingw-w64-ucrt-x86_64-qt6-svg \
+  mingw-w64-ucrt-x86_64-qt6-multimedia \
   mingw-w64-ucrt-x86_64-qtkeychain \
   mingw-w64-ucrt-x86_64-openssl \
   mingw-w64-ucrt-x86_64-nsis

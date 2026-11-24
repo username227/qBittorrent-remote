@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/MainWindow.h"
+#include "gui/CompletionNotifier.h"
 #include "gui/ServerPane.h"
 #include "gui/RemotePreferencesDialog.h"
 #include "gui/RemoteFileSystemPathComboEdit.h"
@@ -168,7 +169,20 @@ public:
                             ++m_syncRequests;
                             const QUrlQuery query(QString::fromLatin1(path.mid(path.indexOf('?') + 1)));
                             const int rid = query.queryItemValue(QStringLiteral("rid")).toInt();
-                            if (!m_sidebarSnapshot.isEmpty())
+                            if (m_completionSyncDemo)
+                            {
+                                QJsonObject snapshot;
+                                if (rid == 0)
+                                {
+                                    snapshot = m_completionSnapshot;
+                                    snapshot.insert(QStringLiteral("full_update"), true);
+                                }
+                                else if (!m_completionPatches.isEmpty())
+                                    snapshot = m_completionPatches.takeFirst();
+                                snapshot.insert(QStringLiteral("rid"), rid + 1);
+                                response = QJsonDocument(snapshot).toJson(QJsonDocument::Compact);
+                            }
+                            else if (!m_sidebarSnapshot.isEmpty())
                             {
                                 QJsonObject snapshot = m_sidebarSnapshot;
                                 snapshot.insert(QStringLiteral("rid"), rid + 1);
@@ -754,6 +768,12 @@ public:
     int syncRequests() const noexcept { return m_syncRequests; }
     void enableTorrentSyncDemo() { m_demoTorrents = true; }
     void setSidebarSnapshot(const QJsonObject &snapshot) { m_sidebarSnapshot = snapshot; }
+    void setCompletionSnapshot(const QJsonObject &snapshot)
+    {
+        m_completionSyncDemo = true;
+        m_completionSnapshot = snapshot;
+    }
+    void queueCompletionPatch(const QJsonObject &patch) { m_completionPatches.append(patch); }
     QJsonObject sidebarSnapshot() const { return m_sidebarSnapshot; }
     void setStatusRates(const QJsonObject &rates)
     {
@@ -922,6 +942,9 @@ private:
     int m_logouts = 0;
     bool m_demoTorrents = false;
     QJsonObject m_sidebarSnapshot;
+    bool m_completionSyncDemo = false;
+    QJsonObject m_completionSnapshot;
+    QList<QJsonObject> m_completionPatches;
     bool m_statusRatesDemo = false;
     QJsonObject m_statusRates;
     bool m_trayDemo = false;
@@ -2056,6 +2079,172 @@ private slots:
         QCOMPARE(vault.reads, 0);
         QCOMPARE(vault.writes, 0);
         QCOMPARE(vault.erases, 0);
+    }
+
+    void completionNotificationsFollowLiveServerTransitionsAndLocalPreferences()
+    {
+        DemoQbittorrentServer first(true), second(true);
+        const QString hash = QStringLiteral("0000000000000000000000000000000000000001");
+        const QString old = QStringLiteral("0000000000000000000000000000000000000002");
+        const QString added = QStringLiteral("0000000000000000000000000000000000000003");
+        const QString fresh = QStringLiteral("0000000000000000000000000000000000000004");
+        const auto record = [](const QString &name, bool complete, int stamp) {
+            return QJsonObject{
+                {QStringLiteral("name"), name},
+                {QStringLiteral("state"), complete ? QStringLiteral("uploading") : QStringLiteral("downloading")},
+                {QStringLiteral("progress"), complete ? 1.0 : 0.5},
+                {QStringLiteral("amount_left"), complete ? 0 : 100},
+                {QStringLiteral("completion_on"), stamp}
+            };
+        };
+        const auto snapshot = [&](const QString &name) {
+            return QJsonObject{{QStringLiteral("torrents"), QJsonObject{
+                {hash, record(name, false, -1)},
+                {old, record(QStringLiteral("Old completed torrent"), true, 100)}
+            }}};
+        };
+        first.setCompletionSnapshot(snapshot(QStringLiteral("First download")));
+        second.setCompletionSnapshot(snapshot(QStringLiteral("Second download")));
+        first.setServerPreferences({{QStringLiteral("upnp"), false}});
+        second.setServerPreferences({{QStringLiteral("upnp"), true}});
+        QVERIFY(first.start() && second.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("completion.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        auto *notifier = window.findChild<CompletionNotifier *>();
+        auto *tabs = window.findChild<QTabWidget *>(QStringLiteral("serverTabs"));
+        auto *prefs = window.findChild<QAction *>(QStringLiteral("actionOptions"));
+        QVERIFY(notifier && tabs && prefs);
+        // Leave the real sync, preference and delivery-request workflow
+        // intact, but disconnect the notifier's own OS/audio delivery slots.
+        // Offscreen Qt alone does not isolate the desktop DBus or audio session.
+        // Never pop up notifications or play sounds during CTest, even when
+        // makepkg runs it inside an active desktop session.
+        QVERIFY(QObject::disconnect(notifier, nullptr, notifier, nullptr));
+        QSignalSpy notices(notifier, &CompletionNotifier::notificationRequested);
+        QSignalSpy sounds(notifier, &CompletionNotifier::soundRequested);
+        QVERIFY(notices.isValid() && sounds.isValid());
+        openConnectDialog(window, first.url());
+        QTRY_VERIFY_WITH_TIMEOUT(first.syncRequests() > 0, 6000);
+        openConnectDialog(window, second.url(), false, true, true, QStringLiteral("Second seedbox"));
+        QTRY_COMPARE_WITH_TIMEOUT(tabs->count(), 2, 6000);
+        auto *firstPane = qobject_cast<ServerPane *>(tabs->widget(0));
+        auto *secondPane = qobject_cast<ServerPane *>(tabs->widget(1));
+        QVERIFY(firstPane && secondPane);
+        QTRY_VERIFY_WITH_TIMEOUT(firstPane->model()->hasFullSync()
+            && secondPane->model()->hasFullSync(), 6000);
+        QCOMPARE(notices.size(), 0);
+        QCOMPARE(sounds.size(), 0);
+        tabs->setCurrentIndex(1);
+
+        const auto patch = [](DemoQbittorrentServer &server, const QString &id, const QJsonObject &fields) {
+            server.queueCompletionPatch({{QStringLiteral("torrents"), QJsonObject{{id, fields}}}});
+        };
+        // A timestamp may arrive before the progress delta. Inactive tabs
+        // must continue to dispatch, with the correct server name.
+        patch(first, hash, {{QStringLiteral("completion_on"), 200}});
+        QTRY_COMPARE_WITH_TIMEOUT(firstPane->model()->torrents().value(hash)
+            .value(QStringLiteral("completion_on")).toInt(), 200, 6000);
+        QCOMPARE(notices.size(), 0);
+        patch(first, hash, {{QStringLiteral("progress"), 1.0},
+            {QStringLiteral("amount_left"), 0}, {QStringLiteral("state"), QStringLiteral("uploading")}});
+        QTRY_COMPARE_WITH_TIMEOUT(notices.size(), 1, 6000);
+        QVERIFY(notices.at(0).at(0).toString().contains(QStringLiteral("Demo seedbox")));
+        QCOMPARE(notices.at(0).at(1).toString(), QStringLiteral("First download"));
+        QCOMPARE(sounds.size(), 0);
+        QCOMPARE(tabs->currentIndex(), 1);
+
+        const auto changePreferences = [&](bool beforeNotify, bool beforeSound,
+                                           bool notify, bool sound, bool save) {
+            bool finished = false;
+            QTimer::singleShot(0, &window, [&]() {
+                auto *dlg = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget());
+                QVERIFY(dlg);
+                const auto cleanup = qScopeGuard([dlg]() { if (dlg->isVisible()) dlg->reject(); });
+                auto *sections = dlg->findChild<QListWidget *>(QStringLiteral("preferencesSections"));
+                auto *notification = dlg->findChild<QCheckBox *>(QStringLiteral("checkNotifyTorrentCompletion"));
+                auto *audio = dlg->findChild<QCheckBox *>(QStringLiteral("checkSoundTorrentCompletion"));
+                auto *tray = dlg->findChild<QGroupBox *>(QStringLiteral("checkShowSystray"));
+                auto *apply = dlg->findChild<QPushButton *>(QStringLiteral("preferencesApply"));
+                QVERIFY(sections && notification && audio && tray && apply);
+                sections->setCurrentRow(1);
+                QVERIFY(notification->isEnabled() && audio->isEnabled() && !tray->isChecked());
+                QCOMPARE(notification->isChecked(), beforeNotify);
+                QCOMPARE(audio->isChecked(), beforeSound);
+                notification->setChecked(notify);
+                audio->setChecked(sound);
+                QVERIFY(apply->isEnabled());
+                if (save)
+                {
+                    apply->click();
+                    QTRY_VERIFY_WITH_TIMEOUT(!apply->isEnabled(), 6000);
+                }
+                finished = true;
+            });
+            prefs->trigger();
+            QVERIFY(finished);
+        };
+        changePreferences(true, false, false, true, false);
+        changePreferences(true, false, false, true, true);
+        QCOMPARE(settings.value(QStringLiteral("Preferences/Behavior/NotifyTorrentCompletion")).toBool(), false);
+        QCOMPARE(settings.value(QStringLiteral("Preferences/Behavior/SoundTorrentCompletion")).toBool(), true);
+
+        // Same infohash on a different server must complete independently.
+        // This time progress arrives first; sound-only still dispatches once.
+        patch(second, hash, {{QStringLiteral("progress"), 1.0},
+            {QStringLiteral("amount_left"), 0}, {QStringLiteral("state"), QStringLiteral("uploading")}});
+        QTRY_COMPARE_WITH_TIMEOUT(secondPane->model()->torrents().value(hash)
+            .value(QStringLiteral("progress")).toDouble(), 1.0, 6000);
+        QCOMPARE(sounds.size(), 0);
+        patch(second, hash, {{QStringLiteral("completion_on"), 300}});
+        QTRY_COMPARE_WITH_TIMEOUT(sounds.size(), 1, 6000);
+        QCOMPARE(notices.size(), 1);
+
+        changePreferences(false, true, true, true, true);
+        // A newly discovered complete torrent is not an observed download.
+        patch(second, added, record(QStringLiteral("Already present"), true, 400));
+        QTRY_VERIFY_WITH_TIMEOUT(secondPane->model()->torrents().contains(added), 6000);
+        QCOMPARE(notices.size(), 1);
+        QCOMPARE(sounds.size(), 1);
+        // Checking progress of a completed torrent must not arm an event.
+        patch(second, old, {{QStringLiteral("state"), QStringLiteral("checkingUP")},
+            {QStringLiteral("progress"), 0.25}});
+        QTRY_COMPARE_WITH_TIMEOUT(secondPane->model()->torrents().value(old)
+            .value(QStringLiteral("progress")).toDouble(), 0.25, 6000);
+        patch(second, old, record(QStringLiteral("Old completed torrent"), true, 100));
+        QTRY_COMPARE_WITH_TIMEOUT(secondPane->model()->torrents().value(old)
+            .value(QStringLiteral("progress")).toDouble(), 1.0, 6000);
+        QCOMPARE(notices.size(), 1);
+        QCOMPARE(sounds.size(), 1);
+
+        patch(second, fresh, record(QStringLiteral("New download"), false, -1));
+        QTRY_VERIFY_WITH_TIMEOUT(secondPane->model()->torrents().contains(fresh), 6000);
+        patch(second, fresh, record(QStringLiteral("New download"), true, 500));
+        QTRY_COMPARE_WITH_TIMEOUT(notices.size(), 2, 6000);
+        QTRY_COMPARE_WITH_TIMEOUT(sounds.size(), 2, 6000);
+        QVERIFY(notices.at(1).at(0).toString().contains(QStringLiteral("Second seedbox")));
+        QCOMPARE(notices.at(1).at(1).toString(), QStringLiteral("New download"));
+
+        patch(second, fresh, {{QStringLiteral("completion_on"), 500}});
+        const int beforeRepeat = second.syncRequests();
+        QTRY_VERIFY_WITH_TIMEOUT(second.syncRequests() > beforeRepeat + 1, 7000);
+        QCOMPARE(notices.size(), 2);
+        QCOMPARE(sounds.size(), 2);
+
+        // A full sync after a gap establishes a silent baseline.
+        second.queueCompletionPatch({{QStringLiteral("full_update"), true},
+            {QStringLiteral("torrents"), QJsonObject{
+                {hash, record(QStringLiteral("Second download"), true, 300)},
+                {fresh, record(QStringLiteral("New download"), true, 500)}
+            }}});
+        QTRY_VERIFY_WITH_TIMEOUT(!secondPane->model()->torrents().contains(old), 6000);
+        QCOMPARE(notices.size(), 2);
+        QCOMPARE(sounds.size(), 2);
+        QCOMPARE(first.commandsFor("/api/v2/app/setPreferences"), 0);
+        QCOMPARE(second.commandsFor("/api/v2/app/setPreferences"), 0);
     }
 
     void liveTorrentRowsFollowFullUpdatesPatchesAndRemovals()

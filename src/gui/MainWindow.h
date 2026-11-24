@@ -23,6 +23,7 @@ class QComboBox;
 class QPushButton;
 class HidableTabWidget;
 class ServerPane;
+class CompletionNotifier;
 
 namespace Remote { class RemoteSession; }
 namespace Ui { class MainWindow; }
@@ -51,6 +52,7 @@ private:
     bool eventFilter(QObject *watched, QEvent *event) override;
     void enableTorrentDrops(QWidget *widget);
     void setupTray();
+    void observeTorrentCompletions(SessionContext &connection, const QJsonObject &payload);
     void updateTrayActionState();
     void refreshTrayDisconnectMenu();
     void updateTraySettings();
@@ -96,6 +98,7 @@ private:
     QLabel *m_freeSpaceSeparator = nullptr;
     QLabel *m_serverFreeSpaceLabel = nullptr;
     QSystemTrayIcon *m_trayIcon = nullptr;
+    CompletionNotifier *m_completionNotifier = nullptr;
     QMenu *m_trayMenu = nullptr;
     QMenu *m_trayDisconnectMenu = nullptr;
     QAction *m_trayToggleAction = nullptr;

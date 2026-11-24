@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/MainWindow.h"
+#include "gui/CompletionNotifier.h"
 #include "gui/ServerPane.h"
 #include "gui/TorrentModel.h"
 #include "gui/FilterSidebar.h"
@@ -51,6 +52,7 @@
 #include <QDeadlineTimer>
 #include <QSaveFile>
 #include <QHash>
+#include <QJsonArray>
 #include <QInputDialog>
 #include <QItemSelectionModel>
 #include <QSortFilterProxyModel>
@@ -322,6 +324,7 @@ struct MainWindow::SessionContext
     bool altSpeedModeKnown = false;
     bool altSpeedMode = false;
     QList<PendingOriginalDeletion> pendingOriginalDeletions;
+    QHash<QString, qint64> incompleteCompletionTimes;
 };
 
 MainWindow::MainWindow(QWidget *parent, QSettings *settings,
@@ -354,6 +357,7 @@ MainWindow::MainWindow(QWidget *parent, QSettings *settings,
     setupMainArea();
     setupActions();
     setupTray();
+    m_completionNotifier = new CompletionNotifier(m_trayIcon, this);
     updateFontActionStates();
 
     // Retain server identity/version as the default left-hand status text.
@@ -1949,6 +1953,67 @@ void MainWindow::removeConnection(const std::shared_ptr<SessionContext> &connect
     updateActiveUi();
 }
 
+void MainWindow::observeTorrentCompletions(SessionContext &connection,
+                                           const QJsonObject &payload)
+{
+    auto &incomplete = connection.incompleteCompletionTimes;
+    const auto *model = connection.pane->model();
+    const bool full = payload.value(QStringLiteral("full_update")).toBool();
+    // An initial or replacement snapshot establishes a baseline only.
+    // Never replay old completions after connecting or recovering sync.
+    if (full || !model->hasFullSync())
+        incomplete.clear();
+    if (!model->hasFullSync())
+        return;
+    for (const auto &removed : payload.value(QStringLiteral("torrents_removed")).toArray())
+        incomplete.remove(removed.toString());
+
+    QStringList completed;
+    const auto patches = payload.value(QStringLiteral("torrents")).toObject();
+    for (auto it = patches.constBegin(); it != patches.constEnd(); ++it)
+    {
+        const auto &records = model->torrents();
+        const auto found = records.constFind(it.key());
+        if (found == records.constEnd())
+            continue;
+        const QJsonObject &torrent = found.value();
+        const auto state = torrent.value(QStringLiteral("state")).toString();
+        // In checking states qBittorrent reports check progress, not
+        // download progress. Rechecking an existing seed is not a download.
+        if (state.startsWith(QLatin1String("checking")))
+            continue;
+        const auto progress = torrent.value(QStringLiteral("progress"));
+        const auto time = torrent.value(QStringLiteral("completion_on"));
+        const qint64 stamp = time.toInteger(-1);
+        if (!progress.isDouble() || !time.isDouble()
+            || time.toDouble() != stamp || progress.toDouble() < 0
+            || progress.toDouble() > 1)
+            continue;
+        const auto left = torrent.value(QStringLiteral("amount_left"));
+        if (progress.toDouble() < 1.0)
+        {
+            if ((!left.isDouble() || left.toDouble() > 0)
+                && !incomplete.contains(it.key()))
+                incomplete.insert(it.key(), stamp);
+            continue;
+        }
+        if (full || (left.isDouble() && left.toDouble() != 0))
+            continue;
+        const auto previous = incomplete.constFind(it.key());
+        // Require a new positive completion timestamp. Progress and time
+        // may arrive in separate deltas; keep the baseline until both agree.
+        if (previous == incomplete.constEnd() || stamp <= 0 || stamp <= previous.value())
+            continue;
+        incomplete.remove(it.key());
+        const QString name = torrent.value(QStringLiteral("name")).toString();
+        completed.append(name.isEmpty() ? it.key() : name);
+    }
+    if (!completed.isEmpty())
+        m_completionNotifier->deliver(connection.profile.name, completed,
+            m_settings->value(QStringLiteral("Preferences/Behavior/NotifyTorrentCompletion"), true).toBool(),
+            m_settings->value(QStringLiteral("Preferences/Behavior/SoundTorrentCompletion"), false).toBool());
+}
+
 void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
                                   const QString &password)
 {
@@ -2760,6 +2825,7 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
             if (!containsConnection(connection))
                 return;
             connection->pane->applySync(payload);
+            observeTorrentCompletions(*connection, payload);
             // No extra polling and no deletion from another server's data.
             // A partially accepted batch is retained in full if not confirmed.
             auto &pending = connection->pendingOriginalDeletions;
