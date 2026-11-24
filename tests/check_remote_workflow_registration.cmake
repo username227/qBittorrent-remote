@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Registration integrity check, not a substitute for any functional test.
+cmake_minimum_required(VERSION 3.21)
 execute_process(
     COMMAND "${TEST_EXECUTABLE}" -functions
     RESULT_VARIABLE result
