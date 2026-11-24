@@ -164,6 +164,7 @@ RemotePreferencesDialog::RemotePreferencesDialog(QSettings &settings,
     bindTorrentAdditionDefaults();
     bindBackupAndWatchedFolders();
     bindExcludedFileNames();
+    bindNotificationAndProgramControls();
     populateAdvancedPlaceholders();
     buildRemotePathsPage(preferredProfileId);
 
@@ -673,6 +674,124 @@ void RemotePreferencesDialog::bindExcludedFileNames()
            "their priority automatically set to \"Do not download\"."));
 }
 
+void RemotePreferencesDialog::bindNotificationAndProgramControls()
+{
+    bindRemoteControl("mail_notification_enabled", m_ui->groupMailNotification);
+    const auto mailEnabled = [this]() {
+        return remoteFieldAvailable("mail_notification_enabled")
+            && m_ui->groupMailNotification->isChecked();
+    };
+    bindRemoteControl("mail_notification_sender", m_ui->senderEmailTxt, mailEnabled);
+    bindRemoteControl("mail_notification_email", m_ui->lineEditDestEmail, mailEnabled);
+    bindRemoteControl("mail_notification_smtp", m_ui->lineEditSMTPServer, mailEnabled,
+        tr("SMTP host or host:port, accessed from the connected server."));
+    // The legacy Boolean cannot represent STARTTLS. Keep its native
+    // checkbox separate from the modern string-valued encryption selector.
+    auto *encryption = m_ui->comboSMTPEncryption;
+    encryption->addItems({tr("None"), tr("STARTTLS"), tr("SMTPS")});
+    bindStringCombo("mail_notification_encryption_type", encryption,
+        {QStringLiteral("None"), QStringLiteral("STARTTLS"), QStringLiteral("SMTPS")}, mailEnabled);
+    m_legacySmtpSsl = new QCheckBox(tr("Use SSL connection"), m_ui->groupMailNotification);
+    m_legacySmtpSsl->setObjectName(QStringLiteral("checkSmtpSSL"));
+    m_ui->layoutSMTPEncryption->insertWidget(1, m_legacySmtpSsl);
+    m_legacySmtpSsl->hide();
+    bindRemoteControl("mail_notification_ssl_enabled", m_legacySmtpSsl, [this, mailEnabled]() {
+        return mailEnabled() && !remoteFieldAvailable("mail_notification_encryption_type");
+    });
+    bindRemoteControl("mail_notification_auth_enabled", m_ui->groupMailNotifAuth, mailEnabled);
+    const auto authEnabled = [this, mailEnabled]() {
+        return mailEnabled() && remoteFieldAvailable("mail_notification_auth_enabled")
+            && m_ui->groupMailNotifAuth->isChecked();
+    };
+    bindRemoteControl("mail_notification_username", m_ui->mailNotifUsername, authEnabled);
+    // The API returns the password as a string. It remains in this
+    // dialog's in-memory transaction, never in desktop QSettings.
+    m_ui->mailNotifPassword->setEchoMode(QLineEdit::Password);
+    bindRemoteControl("mail_notification_password", m_ui->mailNotifPassword, authEnabled);
+    connect(m_ui->sendTestEmail, &QPushButton::clicked, this, &RemotePreferencesDialog::sendTestEmail);
+
+    bindRemoteControl("autorun_on_torrent_added_enabled", m_ui->groupBoxRunOnAdded);
+    bindRemoteControl("autorun_on_torrent_added_program", m_ui->lineEditRunOnAdded, [this]() {
+        return remoteFieldAvailable("autorun_on_torrent_added_enabled")
+            && m_ui->groupBoxRunOnAdded->isChecked();
+    });
+    bindRemoteControl("autorun_enabled", m_ui->groupBoxRunOnFinished);
+    bindRemoteControl("autorun_program", m_ui->lineEditRunOnFinished, [this]() {
+        return remoteFieldAvailable("autorun_enabled") && m_ui->groupBoxRunOnFinished->isChecked();
+    });
+    auto *note = new QLabel(tr("Programs run on the connected server, not this desktop, "
+        "even when qBittorrent Remote is closed."), m_ui->autoRunBox);
+    note->setWordWrap(true);
+    m_ui->verticalLayout_19->insertWidget(0, note);
+    m_ui->labelAutoRunParam->setText(QStringList{
+        tr("Supported parameters (case sensitive):"),
+        tr("    %N: Torrent name"), tr("    %L: Category"), tr("    %G: Tags (separated by comma)"),
+        tr("    %F: Content path (same as root path for multifile torrent)"),
+        tr("    %R: Root path (first torrent subdirectory path)"), tr("    %D: Save path"),
+        tr("    %C: Number of files"), tr("    %Z: Torrent size (bytes)"),
+        tr("    %T: Current tracker"), tr("    %I: Info hash v1 (or '-' if unavailable)"),
+        tr("    %J: Info hash v2 (or '-' if unavailable)"),
+        tr("    %K: Torrent ID (either sha-1 info hash for v1 torrent or truncated sha-256 info hash for v2/hybrid torrent)"),
+        tr("    %M: Comment (on servers supporting this parameter)"),
+        tr("Tip: Encapsulate parameter with quotation marks to avoid text being cut off at whitespace (e.g., \"%N\")")
+    }.join(QLatin1Char('\n')));
+}
+
+bool RemotePreferencesDialog::hasPendingMailChanges() const
+{
+    const auto changes = remoteChanges();
+    for (auto it = changes.constBegin(); it != changes.constEnd(); ++it)
+        if (it.key().startsWith(QLatin1String("mail_notification_")))
+            return true;
+    return false;
+}
+
+void RemotePreferencesDialog::refreshNotificationControls()
+{
+    const bool modern = remoteFieldAvailable("mail_notification_encryption_type");
+    const bool legacy = remoteFieldAvailable("mail_notification_ssl_enabled") && !modern;
+    m_legacySmtpSsl->setVisible(legacy);
+    m_ui->comboSMTPEncryption->setVisible(!legacy);
+    const int index = m_ui->comboSMTPEncryption->currentIndex();
+    const int port = legacy ? (m_legacySmtpSsl->isChecked() ? 465 : 25)
+        : (index == 1 ? 587 : (index == 2 ? 465 : 25));
+    m_ui->labelSMTPEncryptionPortInfo->setText(tr("Default port: %1").arg(port));
+    m_ui->labelSMTPEncryptionPortInfo->setVisible(modern || legacy);
+    const bool dirty = hasPendingMailChanges();
+    const bool available = m_remoteSession && m_remoteSession->isConnected()
+        && remoteFieldAvailable("mail_notification_enabled") && m_ui->groupMailNotification->isChecked()
+        && remoteFieldAvailable("mail_notification_sender") && remoteFieldAvailable("mail_notification_email")
+        && remoteFieldAvailable("mail_notification_smtp");
+    m_ui->sendTestEmail->setEnabled(available && !m_remoteBusy && !dirty);
+    m_ui->sendTestEmail->setToolTip(dirty
+        ? tr("Apply the changed email settings before sending a test email.")
+        : tr("Ask the connected server to send a test email using its saved settings."));
+}
+
+void RemotePreferencesDialog::sendTestEmail()
+{
+    if (!m_remoteSession || !m_remoteSession->isConnected() || m_remoteBusy
+        || !m_ui->sendTestEmail->isEnabled() || hasPendingMailChanges())
+        return;
+    m_testEmailPending = true;
+    setRemoteBusy(true);
+    const QPointer<RemotePreferencesDialog> dialog(this);
+    m_remoteSession->sendTestEmail([dialog]() {
+        if (!dialog || !dialog->m_testEmailPending) return;
+        dialog->m_testEmailPending = false;
+        dialog->setRemoteBusy(false);
+        QMessageBox::information(dialog, dialog->tr("Test email"),
+            dialog->tr("The server accepted the request to send a test email. "
+                       "Check the recipient's inbox and the server log; delivery is not confirmed."));
+    }, [dialog](const QString &) {
+        if (!dialog || !dialog->m_testEmailPending) return;
+        dialog->m_testEmailPending = false;
+        dialog->setRemoteBusy(false);
+        QMessageBox::warning(dialog, dialog->tr("Test email"),
+            dialog->tr("The test email request could not be confirmed by the server."));
+    });
+}
+
 void RemotePreferencesDialog::bindBackupAndWatchedFolders()
 {
     bindRemoteControl("torrent_files_backup_enabled", m_ui->backupDirCheckBox);
@@ -920,6 +1039,30 @@ void RemotePreferencesDialog::bindDownloadsSavingControls()
 
 bool RemotePreferencesDialog::validateDownloadChanges(const QJsonObject &changes)
 {
+    // A saved program is executed by the NAS on future torrent events.
+    // Confirm all command edits conservatively, even if currently disabled:
+    // another client may have enabled the hook since the preferences read.
+    const bool commandEdit = changes.contains(QStringLiteral("autorun_on_torrent_added_program"))
+        || changes.contains(QStringLiteral("autorun_program"));
+    const bool enableAdded = changes.value(QStringLiteral("autorun_on_torrent_added_enabled")).toBool();
+    const bool enableFinished = changes.value(QStringLiteral("autorun_enabled")).toBool();
+    if ((enableAdded && (!remoteFieldAvailable("autorun_on_torrent_added_program")
+            || m_ui->lineEditRunOnAdded->text().trimmed().isEmpty()))
+        || (enableFinished && (!remoteFieldAvailable("autorun_program")
+            || m_ui->lineEditRunOnFinished->text().trimmed().isEmpty())))
+    {
+        QMessageBox::warning(this, tr("Missing server command"),
+            tr("Enter a supported, non-empty server command before enabling an external program."));
+        return false;
+    }
+    if ((commandEdit || enableAdded || enableFinished)
+        && QMessageBox::question(this, tr("Change server external programs"),
+            tr("These commands will run on the connected server when the configured torrent events "
+               "occur, even when this application is closed. Verify the commands and server paths. "
+               "Apply these changes?"), QMessageBox::Yes | QMessageBox::No, QMessageBox::No)
+            != QMessageBox::Yes)
+        return false;
+
     // This client supports absolute POSIX NAS paths. Do not resolve relative
     // text against the desktop filesystem, guess a mapping, or require a mount.
     for (const QString &key : {QStringLiteral("save_path"), QStringLiteral("temp_path"),
@@ -1019,6 +1162,7 @@ void RemotePreferencesDialog::refreshRemoteControls()
     }
     m_ui->stopConditionLabel->setEnabled(m_ui->stopConditionComboBox->isEnabled());
     refreshWatchedFolderButtons();
+    refreshNotificationControls();
 }
 
 void RemotePreferencesDialog::populateRemoteFields(const QJsonObject &values,
@@ -1116,7 +1260,14 @@ void RemotePreferencesDialog::remoteDisconnected()
         .arg(m_remoteTargetName.isEmpty() ? tr("Server") : m_remoteTargetName));
     m_remotePreferencesLoaded = false;
     refreshRemoteControls();
-    if (m_remoteBusy)
+    if (m_testEmailPending)
+    {
+        m_testEmailPending = false;
+        setRemoteBusy(false);
+        QMessageBox::warning(this, tr("Test email"),
+            tr("The server disconnected. The test email request could not be confirmed."));
+    }
+    else if (m_remoteBusy)
         remoteSaveFailed(tr("The selected server disconnected. The update could not be confirmed."));
     else
         updateButtons();
@@ -1544,6 +1695,7 @@ void RemotePreferencesDialog::updateButtons()
     if (m_applyButton)
         m_applyButton->setEnabled(!m_remoteBusy && (!m_changedProfiles.isEmpty()
                                   || m_behaviorDirty || m_additionDirty || !remoteChanges().isEmpty()));
+    refreshNotificationControls();
 }
 
 void RemotePreferencesDialog::applyChanges(bool closeAfter)

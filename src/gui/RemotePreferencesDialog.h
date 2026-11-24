@@ -16,6 +16,7 @@
 
 class QAction;
 class QComboBox;
+class QCheckBox;
 class QLineEdit;
 class QLabel;
 class QDialogButtonBox;
@@ -56,6 +57,10 @@ private:
     void bindTorrentAdditionDefaults();
     void bindBackupAndWatchedFolders();
     void bindExcludedFileNames();
+    void bindNotificationAndProgramControls();
+    void refreshNotificationControls();
+    void sendTestEmail();
+    bool hasPendingMailChanges() const;
     void displayWatchedFolders();
     void refreshWatchedFolderButtons();
     void editWatchedFolder(bool existing);
@@ -133,6 +138,8 @@ private:
     bool m_remotePreferencesLoaded = false;
     bool m_loadingRemotePreferences = false;
     bool m_remoteBusy = false;
+    bool m_testEmailPending = false;
+    QCheckBox *m_legacySmtpSsl = nullptr;
     bool m_closeAfterApply = false;
     QPointer<Remote::RemoteSession> m_remoteSession;
     QPointer<TorrentModel> m_torrentModel;

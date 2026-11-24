@@ -369,6 +369,18 @@ public:
                                 response = "Ok.";
                             }
                         }
+                        else if (m_preferencesDemo && hasCookie && fields.value(0) == "POST"
+                                 && path == "/api/v2/app/sendTestEmail")
+                        {
+                            m_commands.append({path, body});
+                            if (m_rejectPreferences)
+                            {
+                                code = 400;
+                                response = "Rejected";
+                            }
+                            else
+                                response = "Ok.";
+                        }
                         else if (m_trayDemo && hasCookie
                                  && path == "/api/v2/app/preferences")
                         {
@@ -2908,10 +2920,172 @@ private slots:
         QCOMPARE(first.commandsFor("/api/v2/app/setPreferences"), 2);
     }
 
+    void downloadsNotificationsAndProgramsFollowSelectedServer()
+    {
+        DemoQbittorrentServer modern(true), legacy(true);
+        modern.enableModernResponses();
+        QJsonObject initial{
+            {QStringLiteral("mail_notification_enabled"), true},
+            {QStringLiteral("mail_notification_sender"), QStringLiteral("sender@example.invalid")},
+            {QStringLiteral("mail_notification_email"), QStringLiteral("recipient@example.invalid")},
+            {QStringLiteral("mail_notification_smtp"), QStringLiteral("smtp.example.invalid")},
+            {QStringLiteral("mail_notification_encryption_type"), QStringLiteral("SMTPS")},
+            {QStringLiteral("mail_notification_auth_enabled"), true},
+            {QStringLiteral("mail_notification_username"), QStringLiteral("demo")},
+            {QStringLiteral("mail_notification_password"), QStringLiteral("fake-smtp-secret")},
+            {QStringLiteral("autorun_on_torrent_added_enabled"), false},
+            {QStringLiteral("autorun_on_torrent_added_program"), QStringLiteral("/server/on-added")},
+            {QStringLiteral("autorun_enabled"), false},
+            {QStringLiteral("autorun_program"), QStringLiteral("/server/on-finished")}
+        };
+        QJsonObject other = initial;
+        other.remove(QStringLiteral("mail_notification_encryption_type"));
+        other.insert(QStringLiteral("mail_notification_ssl_enabled"), false);
+        modern.setServerPreferences(initial);
+        legacy.setServerPreferences(other);
+        QVERIFY(modern.start() && legacy.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("prefs.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, modern.url());
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(QStringLiteral("v5.3.0")), 6000);
+        openConnectDialog(window, legacy.url(), false, true, true, QStringLiteral("Legacy seedbox"));
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(QStringLiteral("Connected to Legacy seedbox")), 6000);
+        auto *tabs = window.findChild<QTabWidget *>(QStringLiteral("serverTabs"));
+        auto *prefs = window.findChild<QAction *>(QStringLiteral("actionOptions"));
+        QVERIFY(tabs && prefs);
+
+        const auto workflow = [&](bool modernServer, bool save) {
+            tabs->setCurrentIndex(modernServer ? 0 : 1);
+            bool finished = false;
+            QTimer::singleShot(0, &window, [&]() {
+                auto *dlg = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget());
+                QVERIFY(dlg);
+                const auto cleanup = qScopeGuard([dlg]() { if (dlg->isVisible()) dlg->reject(); });
+                auto *sections = dlg->findChild<QListWidget *>(QStringLiteral("preferencesSections"));
+                auto *mail = dlg->findChild<QGroupBox *>(QStringLiteral("groupMailNotification"));
+                auto *auth = dlg->findChild<QGroupBox *>(QStringLiteral("groupMailNotifAuth"));
+                auto *password = dlg->findChild<QLineEdit *>(QStringLiteral("mailNotifPassword"));
+                auto *encryption = dlg->findChild<QComboBox *>(QStringLiteral("comboSMTPEncryption"));
+                auto *ssl = dlg->findChild<QCheckBox *>(QStringLiteral("checkSmtpSSL"));
+                auto *send = dlg->findChild<QPushButton *>(QStringLiteral("sendTestEmail"));
+                auto *added = dlg->findChild<QGroupBox *>(QStringLiteral("groupBoxRunOnAdded"));
+                auto *program = dlg->findChild<QLineEdit *>(QStringLiteral("lineEditRunOnAdded"));
+                auto *apply = dlg->findChild<QPushButton *>(QStringLiteral("preferencesApply"));
+                QVERIFY(sections && mail && auth && password && encryption && ssl && send && added && program && apply);
+                sections->setCurrentRow(2);
+                QTRY_VERIFY_WITH_TIMEOUT(send->isEnabled() && added->isEnabled(), 6000);
+                QCOMPARE(password->echoMode(), QLineEdit::Password);
+                QCOMPARE(password->text(), QStringLiteral("fake-smtp-secret"));
+                auth->setChecked(false);
+                QVERIFY(!password->isEnabled() && !send->isEnabled());
+                auth->setChecked(true);
+                if (modernServer)
+                {
+                    QVERIFY(encryption->isVisible() && !ssl->isVisible());
+                    QCOMPARE(encryption->currentIndex(), 2);
+                    encryption->setCurrentIndex(1);
+                    password->setText(QStringLiteral("fake+new&%secret"));
+                    QVERIFY(!program->isEnabled());
+                    added->setChecked(true);
+                    QVERIFY(program->isEnabled());
+                    program->setText(QStringLiteral("/server/new-hook \"%N\""));
+                }
+                else
+                {
+                    QVERIFY(ssl->isVisible() && !encryption->isVisible());
+                    QVERIFY(!ssl->isChecked());
+                    ssl->click();
+                }
+                QVERIFY(apply->isEnabled() && !send->isEnabled());
+                if (save)
+                {
+                    bool confirm = false;
+                    bool accepted = false;
+                    bool notified = false;
+                    QTimer driver;
+                    connect(&driver, &QTimer::timeout, dlg, [&]() {
+                        if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget()))
+                        {
+                            if (box->windowTitle() == QStringLiteral("Change server external programs"))
+                            {
+                                confirm = true;
+                                box->button(accepted ? QMessageBox::Yes : QMessageBox::No)->click();
+                            }
+                            else if (box->windowTitle() == QStringLiteral("Test email")
+                                     && box->icon() == QMessageBox::Information)
+                            {
+                                notified = true;
+                                box->accept();
+                            }
+                            else
+                            {
+                                QTest::qFail("Unexpected modal during notification workflow", __FILE__, __LINE__);
+                                box->reject();
+                            }
+                        }
+                    });
+                    driver.start(20);
+                    if (modernServer)
+                    {
+                        apply->click();
+                        QVERIFY(confirm && apply->isEnabled() && !send->isEnabled());
+                        QCOMPARE(modern.commandsFor("/api/v2/app/setPreferences"), 0);
+                        confirm = false;
+                    }
+                    accepted = true;
+                    apply->click();
+                    if (modernServer) QVERIFY(confirm);
+                    QTRY_VERIFY_WITH_TIMEOUT(send->isEnabled() && !apply->isEnabled(), 6000);
+                    send->click();
+                    QTRY_VERIFY_WITH_TIMEOUT(notified && send->isEnabled(), 6000);
+                }
+                finished = true;
+            });
+            prefs->trigger();
+            QVERIFY(finished);
+        };
+
+        workflow(true, false);
+        QCOMPARE(modern.serverPreferences(), initial);
+        QCOMPARE(modern.commandsFor("/api/v2/app/setPreferences"), 0);
+        QCOMPARE(modern.commandsFor("/api/v2/app/sendTestEmail"), 0);
+        workflow(true, true);
+        QJsonObject expected = initial;
+        expected.insert(QStringLiteral("mail_notification_encryption_type"), QStringLiteral("STARTTLS"));
+        expected.insert(QStringLiteral("mail_notification_password"), QStringLiteral("fake+new&%secret"));
+        expected.insert(QStringLiteral("autorun_on_torrent_added_enabled"), true);
+        expected.insert(QStringLiteral("autorun_on_torrent_added_program"), QStringLiteral("/server/new-hook \"%N\""));
+        QCOMPARE(modern.serverPreferences(), expected);
+        QCOMPARE(modern.commandsFor("/api/v2/app/setPreferences"), 1);
+        QCOMPARE(modern.commandsFor("/api/v2/app/sendTestEmail"), 1);
+        QCOMPARE(legacy.serverPreferences(), other);
+        QCOMPARE(legacy.commandsFor("/api/v2/app/sendTestEmail"), 0);
+        workflow(false, true);
+        other.insert(QStringLiteral("mail_notification_ssl_enabled"), true);
+        QCOMPARE(legacy.serverPreferences(), other);
+        QCOMPARE(legacy.commandsFor("/api/v2/app/setPreferences"), 1);
+        QCOMPARE(legacy.commandsFor("/api/v2/app/sendTestEmail"), 1);
+        QCOMPARE(modern.serverPreferences(), expected);
+        QCOMPARE(modern.commandsFor("/api/v2/app/sendTestEmail"), 1);
+        settings.sync();
+        QFile persisted(settings.fileName());
+        QVERIFY(persisted.open(QIODevice::ReadOnly));
+        const auto contents = persisted.readAll();
+        QVERIFY(!contents.contains("fake-smtp-secret") && !contents.contains("fake+new&%secret")
+            && !contents.contains("fake%2Bnew") && !contents.contains("mail_notification_password"));
+    }
+
     void downloadsExclusionsFollowSelectedServerCapabilities()
     {
         DemoQbittorrentServer modern(true), legacy(true);
         modern.enableModernResponses();
+        // Synthetic future-capability server: 5.3.0 itself does not expose
+        // this key. Capability-driven controls must not rely on the label.
+        modern.setReportedVersions(QStringLiteral("v5.3.0"), QStringLiteral("2.17.0"));
         const QJsonObject initialModern{
             {QStringLiteral("excluded_file_names_enabled"), false},
             {QStringLiteral("excluded_file_names"), QStringLiteral("*.exe\nreadme.txt")},
