@@ -53,6 +53,7 @@ private:
     void loadLocalBehaviorControls();
     void loadLocalAdditionControls();
     void bindServerBehaviorControls();
+    void bindConnectionListeningControls();
     void bindDownloadsSavingControls();
     void bindTorrentAdditionDefaults();
     void bindBackupAndWatchedFolders();

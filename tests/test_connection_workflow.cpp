@@ -368,6 +368,9 @@ public:
                                             m_preferences.insert(it.key(), directory && it.value().isString()
                                                 ? QJsonValue(QDir::cleanPath(it.value().toString()))
                                                 : it.value());
+                                            if (it.key() == QLatin1String("listen_port")
+                                                && m_preferences.contains(QStringLiteral("random_port")))
+                                                m_preferences.insert(QStringLiteral("random_port"), it.value().toInt() == 0);
                                         }
                                 }
                                 response = "Ok.";
@@ -3408,6 +3411,175 @@ private slots:
         QCOMPARE(delta, expectedDelta);
         QCOMPARE(modern.serverPreferences(), expectedModern);
         QCOMPARE(modern.commandsFor("/api/v2/app/setPreferences"), 2);
+    }
+
+    void connectionProtocolAndListeningPortFollowSelectedServer()
+    {
+        DemoQbittorrentServer legacy(true), modern(true);
+        modern.enableModernResponses();
+        const QJsonObject initialLegacy{
+            {QStringLiteral("bittorrent_protocol"), 0},
+            {QStringLiteral("listen_port"), 0},
+            {QStringLiteral("random_port"), true},
+            {QStringLiteral("upnp"), false},
+            {QStringLiteral("web_ui_port"), 6363}
+        };
+        const QJsonObject initialModern{
+            {QStringLiteral("bittorrent_protocol"), 1},
+            {QStringLiteral("listen_port"), 51413},
+            {QStringLiteral("random_port"), false},
+            {QStringLiteral("upnp"), true},
+            {QStringLiteral("web_ui_port"), 6364}
+        };
+        legacy.setServerPreferences(initialLegacy);
+        modern.setServerPreferences(initialModern);
+        QVERIFY(legacy.start() && modern.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("prefs.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, legacy.url());
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(QStringLiteral("v5.1.4")), 6000);
+        openConnectDialog(window, modern.url(), false, true, true, QStringLiteral("Modern seedbox"));
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(QStringLiteral("v5.3.0")), 6000);
+        auto *tabs = window.findChild<QTabWidget *>(QStringLiteral("serverTabs"));
+        auto *prefs = window.findChild<QAction *>(QStringLiteral("actionOptions"));
+        QVERIFY(tabs && prefs);
+        tabs->setCurrentIndex(0);
+
+        // Exercise the actual native controls, including Random and Cancel.
+        for (const bool save : {false, true})
+        {
+            bool finished = false;
+            QTimer::singleShot(0, &window, [&]() {
+                auto *dlg = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget());
+                QVERIFY(dlg);
+                const auto cleanup = qScopeGuard([dlg]() { if (dlg->isVisible()) dlg->reject(); });
+                auto *sections = dlg->findChild<QListWidget *>(QStringLiteral("preferencesSections"));
+                auto *protocol = dlg->findChild<QComboBox *>(QStringLiteral("comboProtocol"));
+                auto *port = dlg->findChild<QSpinBox *>(QStringLiteral("spinPort"));
+                auto *random = dlg->findChild<QPushButton *>(QStringLiteral("randomButton"));
+                auto *upnp = dlg->findChild<QCheckBox *>(QStringLiteral("checkUPnP"));
+                auto *apply = dlg->findChild<QPushButton *>(QStringLiteral("preferencesApply"));
+                QVERIFY(sections && protocol && port && random && upnp && apply);
+                sections->setCurrentRow(3);
+                QTRY_VERIFY_WITH_TIMEOUT(protocol->isEnabled() && port->isEnabled()
+                    && random->isEnabled() && upnp->isEnabled(), 6000);
+                QCOMPARE(protocol->count(), 3);
+                QCOMPARE(protocol->currentIndex(), 0);
+                QCOMPARE(port->value(), 0);
+                QCOMPARE(port->text(), QStringLiteral("Any"));
+                QVERIFY(!upnp->isChecked() && !apply->isEnabled());
+                random->click();
+                QVERIFY(port->value() >= 1024 && port->value() <= 65535);
+                QVERIFY(apply->isEnabled());
+                QCOMPARE(legacy.commandsFor("/api/v2/app/setPreferences"), 0);
+                protocol->setCurrentIndex(2);
+                port->setValue(49152);
+                upnp->click();
+                if (save)
+                {
+                    apply->click();
+                    QTRY_VERIFY_WITH_TIMEOUT(port->isEnabled() && !apply->isEnabled(), 6000);
+                    QCOMPARE(port->value(), 49152);
+                    QCOMPARE(protocol->currentIndex(), 2);
+                    QVERIFY(upnp->isChecked());
+                }
+                finished = true;
+            });
+            prefs->trigger();
+            QVERIFY(finished);
+            if (!save)
+                QCOMPARE(legacy.serverPreferences(), initialLegacy);
+        }
+        QJsonObject expectedLegacy = initialLegacy;
+        expectedLegacy.insert(QStringLiteral("bittorrent_protocol"), 2);
+        expectedLegacy.insert(QStringLiteral("listen_port"), 49152);
+        expectedLegacy.insert(QStringLiteral("random_port"), false);
+        expectedLegacy.insert(QStringLiteral("upnp"), true);
+        QCOMPARE(legacy.serverPreferences(), expectedLegacy);
+        QCOMPARE(modern.serverPreferences(), initialModern);
+        QCOMPARE(legacy.commandsFor("/api/v2/app/setPreferences"), 1);
+        const auto delta = [](DemoQbittorrentServer &server) {
+            const QUrlQuery form(QString::fromUtf8(server.lastCommandBody("/api/v2/app/setPreferences")));
+            return QJsonDocument::fromJson(form.queryItemValue(
+                QStringLiteral("json"), QUrl::FullyDecoded).toUtf8()).object();
+        };
+        const QJsonObject expectedLegacyDelta{
+            {QStringLiteral("bittorrent_protocol"), 2},
+            {QStringLiteral("listen_port"), 49152},
+            {QStringLiteral("upnp"), true}
+        };
+        QCOMPARE(delta(legacy), expectedLegacyDelta);
+
+        // HTTP 204 mutations on the modern server use the same binding.
+        tabs->setCurrentIndex(1);
+        bool finished = false;
+        QTimer::singleShot(0, &window, [&]() {
+            auto *dlg = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget());
+            QVERIFY(dlg);
+            const auto cleanup = qScopeGuard([dlg]() { if (dlg->isVisible()) dlg->reject(); });
+            auto *sections = dlg->findChild<QListWidget *>(QStringLiteral("preferencesSections"));
+            auto *protocol = dlg->findChild<QComboBox *>(QStringLiteral("comboProtocol"));
+            auto *port = dlg->findChild<QSpinBox *>(QStringLiteral("spinPort"));
+            auto *upnp = dlg->findChild<QCheckBox *>(QStringLiteral("checkUPnP"));
+            auto *apply = dlg->findChild<QPushButton *>(QStringLiteral("preferencesApply"));
+            QVERIFY(sections && protocol && port && upnp && apply);
+            sections->setCurrentRow(3);
+            QTRY_VERIFY_WITH_TIMEOUT(port->isEnabled(), 6000);
+            QCOMPARE(protocol->currentIndex(), 1);
+            QCOMPARE(port->value(), 51413);
+            QVERIFY(upnp->isChecked());
+            port->setValue(0);
+            apply->click();
+            QTRY_VERIFY_WITH_TIMEOUT(port->isEnabled() && !apply->isEnabled(), 6000);
+            QCOMPARE(port->text(), QStringLiteral("Any"));
+            finished = true;
+        });
+        prefs->trigger();
+        QVERIFY(finished);
+        QJsonObject expectedModern = initialModern;
+        expectedModern.insert(QStringLiteral("listen_port"), 0);
+        expectedModern.insert(QStringLiteral("random_port"), true);
+        QCOMPARE(modern.serverPreferences(), expectedModern);
+        const QJsonObject expectedModernDelta{{QStringLiteral("listen_port"), 0}};
+        QCOMPARE(delta(modern), expectedModernDelta);
+        QCOMPARE(legacy.serverPreferences(), expectedLegacy);
+
+        // Invalid or absent values remain disabled, even when a deprecated
+        // random_port alias is present.
+        modern.setServerPreferences(QJsonObject{
+            {QStringLiteral("bittorrent_protocol"), 99},
+            {QStringLiteral("listen_port"), 65536},
+            {QStringLiteral("random_port"), true}
+        });
+        finished = false;
+        const int reads = modern.preferenceReads();
+        QTimer::singleShot(0, &window, [&]() {
+            auto *dlg = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget());
+            QVERIFY(dlg);
+            const auto cleanup = qScopeGuard([dlg]() { if (dlg->isVisible()) dlg->reject(); });
+            auto *sections = dlg->findChild<QListWidget *>(QStringLiteral("preferencesSections"));
+            auto *protocol = dlg->findChild<QComboBox *>(QStringLiteral("comboProtocol"));
+            auto *port = dlg->findChild<QSpinBox *>(QStringLiteral("spinPort"));
+            auto *random = dlg->findChild<QPushButton *>(QStringLiteral("randomButton"));
+            auto *upnp = dlg->findChild<QCheckBox *>(QStringLiteral("checkUPnP"));
+            auto *apply = dlg->findChild<QPushButton *>(QStringLiteral("preferencesApply"));
+            QVERIFY(sections && protocol && port && random && upnp && apply);
+            sections->setCurrentRow(3);
+            // Wait until the server preferences read occurs, including the
+            // reply dispatch, before checking unavailable states.
+            QTRY_VERIFY_WITH_TIMEOUT(modern.preferenceReads() > reads, 6000);
+            QTest::qWait(100);
+            QVERIFY(!protocol->isEnabled() && !port->isEnabled()
+                && !random->isEnabled() && !upnp->isEnabled() && !apply->isEnabled());
+            finished = true;
+        });
+        prefs->trigger();
+        QVERIFY(finished);
+        QCOMPARE(modern.commandsFor("/api/v2/app/setPreferences"), 1);
     }
 
     void legacyBackupDestinationsUseNativeControls()
