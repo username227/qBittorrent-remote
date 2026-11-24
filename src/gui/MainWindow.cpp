@@ -1508,8 +1508,8 @@ void MainWindow::updateStatusBarIndicators()
         explanation = tr("Offline. This usually means that qBittorrent failed to listen on the selected port for incoming connections.");
     else
         explanation = tr("BitTorrent connectivity has not been reported by the selected server.");
-    const int small = style()->pixelMetric(QStyle::PM_SmallIconSize, nullptr, this);
-    m_connectionStatusLabel->setPixmap(upstreamIcon(connectionIcon).pixmap(QSize(small, small), devicePixelRatioF()));
+    m_connectionStatusLabel->setPixmap(upstreamIcon(connectionIcon).pixmap(
+        m_alternativeSpeedButton->iconSize(), devicePixelRatioF()));
     m_connectionStatusLabel->setToolTip(tr("<b>Connection Status:</b><br>%1").arg(explanation));
     m_connectionStatusLabel->setAccessibleDescription(explanation);
 
@@ -1656,6 +1656,12 @@ void MainWindow::updateStatusBarFieldWidths()
         const QSize compartment = m_alternativeSpeedButton->sizeHint();
         m_alternativeSpeedButton->setFixedSize(compartment);
         m_connectionStatusLabel->setFixedSize(compartment);
+        // Use the spare interior space for the SVG artwork instead of
+        // growing either compartment or the status bar itself. Re-measure
+        // from the original small icon metric on every font/style change.
+        const int artwork = qMax(small, qMin(compartment.width(), compartment.height()) - 2);
+        m_alternativeSpeedButton->setIconSize(QSize(artwork, artwork));
+        updateStatusBarIndicators();
     }
 
     // Reserve space using the actual label font and locale, not padded
