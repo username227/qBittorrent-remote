@@ -175,6 +175,23 @@ public:
                                     }}
                                 }).toJson(QJsonDocument::Compact);
                             }
+                            else if (m_savingManagementTorrent.isBool())
+                            {
+                                const QJsonObject torrents{
+                                    {QStringLiteral("0123456789abcdef0123456789abcdef01234567"),
+                                        QJsonObject{
+                                            {QStringLiteral("name"), QStringLiteral("Existing download")},
+                                            {QStringLiteral("state"), QStringLiteral("uploading")},
+                                            {QStringLiteral("progress"), 1},
+                                            {QStringLiteral("auto_tmm"), m_savingManagementTorrent}
+                                        }}
+                                };
+                                response = QJsonDocument(QJsonObject{
+                                    {QStringLiteral("rid"), rid + 1},
+                                    {QStringLiteral("full_update"), rid == 0},
+                                    {QStringLiteral("torrents"), rid == 0 ? torrents : QJsonObject()}
+                                }).toJson(QJsonDocument::Compact);
+                            }
                             else if (!m_existingTorrentHash.isEmpty())
                             {
                                 if (rid == 0)
@@ -650,6 +667,7 @@ public:
     QString reportedQbtVersion() const { return QString::fromUtf8(m_reportedQbtVersion); }
     QString reportedApiVersion() const { return QString::fromUtf8(m_reportedApiVersion); }
     void enableQueueingDemo() { m_queueingEnabled = true; }
+    void setSavingManagementTorrent(bool automatic) { m_savingManagementTorrent = automatic; }
     void setExistingTorrentHash(const QString &hash) { m_existingTorrentHash = hash; }
     void setExistingTorrentPrivate(bool value) { m_existingTorrentPrivate = value; }
     void enableNativePresentationDemo() { m_demoNativePresentation = true; }
@@ -784,6 +802,7 @@ private:
     QJsonObject m_preferences;
     bool m_queueingEnabled = false;
     bool m_mappedFolderDemo = false;
+    QJsonValue m_savingManagementTorrent;
     QString m_existingTorrentHash;
     bool m_existingTorrentPrivate = false;
     bool m_demoNativePresentation = false;
@@ -2221,6 +2240,9 @@ private slots:
         };
         first.setServerPreferences(initial);
         second.setServerPreferences(other);
+        // Defaults deliberately disagree with existing torrent modes.
+        first.setSavingManagementTorrent(true);
+        second.setSavingManagementTorrent(false);
         QVERIFY(first.start() && second.start());
         QTemporaryDir temp;
         QVERIFY(temp.isValid());
@@ -2240,6 +2262,13 @@ private slots:
         openConnectDialog(window, second.url(), false, true, true, QStringLiteral("Second seedbox"));
         QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(
             QStringLiteral("Connected to Second seedbox")), 6000);
+        // Wait for authenticated sync to populate both real transfer views.
+        for (int i = 0; i < tabs->count(); ++i)
+        {
+            auto *table = tabs->widget(i)->findChild<QTableView *>(QStringLiteral("torrentList"));
+            QVERIFY(table && table->model());
+            QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 1, 6000);
+        }
         const auto profiles = Remote::ProfileStore(settings).profiles();
         QCOMPARE(profiles.size(), 2);
         QString firstId, secondId;
@@ -2399,6 +2428,17 @@ private slots:
                 {QStringLiteral("mail_notification_enabled"), true}
             };
             QCOMPARE(first.serverPreferences(), expected);
+            // A trailing slash is the same path, even with Auto TMM torrents.
+            save->setText(QStringLiteral("/share/First/finished/"));
+            QVERIFY(!apply->isEnabled());
+            // The manual category-path preference changes future suggestions,
+            // not existing torrent locations, even on this Auto TMM server.
+            manualPaths->setChecked(false);
+            apply->click();
+            QTRY_VERIFY_WITH_TIMEOUT(buttons->isEnabled(), 6000);
+            QVERIFY(!apply->isEnabled());
+            QCOMPARE(confirmationCount, 2);
+            QVERIFY(!first.serverPreferences().value(QStringLiteral("use_category_paths_in_manual_mode")).toBool());
             // Cancel a new edit after a confirmed Apply.
             save->setText(QStringLiteral("/share/First/never-apply"));
             buttons->button(QDialogButtonBox::Cancel)->click();
@@ -2414,7 +2454,7 @@ private slots:
         options->trigger();
         watchdog.stop();
         QVERIFY(opened && !timedOut);
-        QCOMPARE(first.commandsFor("/api/v2/app/setPreferences"), 1);
+        QCOMPARE(first.commandsFor("/api/v2/app/setPreferences"), 2);
         QCOMPARE(first.serverPreferences().value(QStringLiteral("save_path")).toString(),
                  QStringLiteral("/share/First/finished"));
 
@@ -2451,11 +2491,12 @@ private slots:
         watchdog.stop();
         modalDriver.stop();
         QVERIFY(opened && !timedOut);
+        QCOMPARE(confirmationCount, 2); // Manual torrents: no relocation warning.
         QCOMPARE(second.commandsFor("/api/v2/app/setPreferences"), 1);
         QJsonObject expectedOther = other;
         expectedOther.insert(QStringLiteral("save_path"), QStringLiteral("/remote-only/Second + data"));
         QCOMPARE(second.serverPreferences(), expectedOther);
-        QCOMPARE(first.commandsFor("/api/v2/app/setPreferences"), 1);
+        QCOMPARE(first.commandsFor("/api/v2/app/setPreferences"), 2);
     }
 
     void statusBarFieldsStayFixedDuringAuthenticatedRateUpdates()

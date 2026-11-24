@@ -27,10 +27,12 @@ public:
     void setUseStateColors(bool enabled);
     QString hashForRow(int row) const;
     const QHash<QString, QJsonObject> &torrents() const noexcept;
+    bool hasFullSync() const noexcept { return m_hasFullSync; }
 
 private:
     QHash<QString, QJsonObject> m_torrents;
     QStringList m_hashes;
+    bool m_hasFullSync = false;
     bool m_hideZeroValues = false;
     int m_hideZeroMode = 0;
     bool m_useStateColors = true;

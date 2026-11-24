@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/RemotePreferencesDialog.h"
 #include "gui/DesktopAutostart.h"
+#include "gui/TorrentModel.h"
 #include "api/ServerProfile.h"
 #include "api/RemoteSession.h"
 #include "ui_optionsdialog.h"
@@ -127,13 +128,15 @@ void setUnsupported(QWidget *widget)
 RemotePreferencesDialog::RemotePreferencesDialog(QSettings &settings,
                                                  const QString &preferredProfileId,
                                                  QWidget *parent,
-                                                 Remote::RemoteSession *session)
+                                                 Remote::RemoteSession *session,
+                                                 TorrentModel *torrentModel)
     : QDialog(parent)
     , m_settings(settings)
     , m_remoteProfileId(preferredProfileId)
     , m_mappingStore(settings)
     , m_ui(std::make_unique<Ui::OptionsDialog>())
     , m_remoteSession(session)
+    , m_torrentModel(torrentModel)
 {
     m_ui->setupUi(this);
     setObjectName(QStringLiteral("remotePreferencesDialog"));
@@ -649,21 +652,39 @@ bool RemotePreferencesDialog::validateDownloadChanges(const QJsonObject &changes
             return false;
         }
     }
-    // Changing the default paths or the incomplete-folder toggle can have
-    // consequences for existing torrents, not just subsequent additions.
-    if (changes.contains(QStringLiteral("save_path"))
-        || changes.contains(QStringLiteral("temp_path"))
-        || changes.contains(QStringLiteral("temp_path_enabled"))
-        || changes.contains(QStringLiteral("use_category_paths_in_manual_mode")))
+    // Upstream's path setters can relocate Auto TMM torrents or switch
+    // them to Manual Mode. Existing Manual Mode torrents retain their paths;
+    // use_category_paths_in_manual_mode only changes suggested paths.
+    if (!changes.contains(QStringLiteral("save_path"))
+        && !changes.contains(QStringLiteral("temp_path"))
+        && !changes.contains(QStringLiteral("temp_path_enabled")))
+        return true;
+
+    // Reuse the captured server's synchronized, unfiltered torrent model.
+    // Unknown or incomplete state is not proof that all torrents are manual.
+    if (m_torrentModel && m_torrentModel->hasFullSync())
     {
-        return QMessageBox::question(this, tr("Change server download locations"),
-            tr("These settings affect the connected server. Depending on its torrent "
-               "management policies, existing torrents may be relocated or switched "
-               "to Manual Mode. The server performs those changes, even if this "
-               "application is closed. Apply these settings?"),
-            QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes;
+        bool allManual = true;
+        const auto &torrents = m_torrentModel->torrents();
+        for (const auto &torrent : torrents)
+        {
+            const auto mode = torrent.value(QStringLiteral("auto_tmm"));
+            if (!mode.isBool() || mode.toBool())
+            {
+                allManual = false;
+                break;
+            }
+        }
+        if (allManual)
+            return true;
     }
-    return true;
+
+    return QMessageBox::question(this, tr("Change server download locations"),
+        tr("These settings affect the connected server. Depending on its torrent "
+           "management policies, existing torrents may be relocated or switched "
+           "to Manual Mode. The server performs those changes, even if this "
+           "application is closed. Apply these settings?"),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes;
 }
 
 bool RemotePreferencesDialog::remoteFieldAvailable(const char *key) const
@@ -714,9 +735,26 @@ void RemotePreferencesDialog::populateRemoteFields(const QJsonObject &values,
 QJsonObject RemotePreferencesDialog::remoteChanges() const
 {
     QJsonObject changes;
+    const auto withoutTrailingSlash = [](QString path) {
+        while (path.size() > 1 && path.endsWith(QLatin1Char('/')))
+            path.chop(1);
+        return path;
+    };
     for (const auto &field : m_remoteFields)
-        if (!field.baseline.isUndefined() && field.read() != field.baseline)
-            changes.insert(field.key, field.read());
+    {
+        if (field.baseline.isUndefined())
+            continue;
+        const auto value = field.read();
+        if (value == field.baseline)
+            continue;
+        if ((field.key == QLatin1String("save_path") || field.key == QLatin1String("temp_path"))
+            && value.isString() && field.baseline.isString()
+            && value.toString().startsWith(QLatin1Char('/'))
+            && field.baseline.toString().startsWith(QLatin1Char('/'))
+            && withoutTrailingSlash(value.toString()) == withoutTrailingSlash(field.baseline.toString()))
+            continue;
+        changes.insert(field.key, value);
+    }
     return changes;
 }
 

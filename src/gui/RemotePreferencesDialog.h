@@ -20,6 +20,7 @@ class QDialogButtonBox;
 class QPushButton;
 class QSettings;
 class QTableWidget;
+class TorrentModel;
 namespace Ui { class OptionsDialog; }
 namespace Remote { class RemoteSession; }
 
@@ -34,7 +35,8 @@ public:
     explicit RemotePreferencesDialog(QSettings &settings,
                                      const QString &preferredProfileId = {},
                                      QWidget *parent = nullptr,
-                                     Remote::RemoteSession *session = nullptr);
+                                     Remote::RemoteSession *session = nullptr,
+                                     TorrentModel *torrentModel = nullptr);
     ~RemotePreferencesDialog() override;
 
 signals:
@@ -115,4 +117,5 @@ private:
     bool m_remoteBusy = false;
     bool m_closeAfterApply = false;
     QPointer<Remote::RemoteSession> m_remoteSession;
+    QPointer<TorrentModel> m_torrentModel;
 };

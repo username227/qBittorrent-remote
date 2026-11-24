@@ -292,10 +292,14 @@ void TorrentModel::applySync(const QJsonObject &payload)
         beginResetModel();
         m_hashes.clear();
         m_torrents.clear();
+        m_hasFullSync = true;
         for (auto it = patches.constBegin(); it != patches.constEnd(); ++it)
         {
             if (!it.value().isObject())
+            {
+                m_hasFullSync = false;
                 continue;
+            }
             m_hashes.append(it.key());
             m_torrents.insert(it.key(), it.value().toObject());
         }
@@ -319,7 +323,10 @@ void TorrentModel::applySync(const QJsonObject &payload)
     for (auto it = patches.constBegin(); it != patches.constEnd(); ++it)
     {
         if (!it.value().isObject())
+        {
+            m_hasFullSync = false;
             continue;
+        }
         const QString hash = it.key();
         const int row = m_hashes.indexOf(hash);
         QJsonObject record = row < 0 ? QJsonObject() : m_torrents.value(hash);
@@ -369,6 +376,7 @@ void TorrentModel::setUseStateColors(bool enabled)
 void TorrentModel::clear()
 {
     beginResetModel();
+    m_hasFullSync = false;
     m_hashes.clear();
     m_torrents.clear();
     endResetModel();
