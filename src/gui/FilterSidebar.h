@@ -10,6 +10,7 @@
 #include <QtGlobal>
 
 class QListWidget;
+class QMenu;
 class QTreeWidget;
 class QTreeWidgetItem;
 class QSettings;
@@ -22,6 +23,11 @@ class FilterSidebar final : public QScrollArea
     Q_OBJECT
 public:
     explicit FilterSidebar(QWidget *parent = nullptr);
+    enum class Group { Status, Categories, Tags, Trackers, TrackerStatus, Directories };
+    enum class GroupAction { Add, AddSubcategory, Edit, Remove, RemoveUnused, Start, ForceStart, Stop, RemoveTorrents };
+    Q_ENUM(Group)
+    Q_ENUM(GroupAction)
+    void setGroupActionsEnabled(bool enabled) { m_groupActionsEnabled = enabled; }
 
     void refreshFontMetrics();
     void setHideZeroStatusFilters(bool hide);
@@ -36,6 +42,7 @@ public:
 
 signals:
     void filtersChanged();
+    void groupActionRequested(Group group, const QString &key, GroupAction action);
 
 private:
     struct DirectoryTotals {
@@ -48,6 +55,9 @@ private:
     void updateDirectoryLabels();
     void resizeDirectoryTree();
     void showDirectoryOptions(const QPoint &position, QWidget *source);
+    void showGroupOptions(QListWidget *list, Group group, const QPoint &position);
+    void appendTorrentActions(QMenu &menu, Group group, const QString &key);
+    bool m_groupActionsEnabled = false;
 
     QListWidget *m_status = nullptr;
     QListWidget *m_categories = nullptr;

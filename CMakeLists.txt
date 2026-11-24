@@ -75,6 +75,9 @@ add_library(qbittorrent_remote_gui STATIC
     src/gui/ConnectionDialog.h
     src/gui/RemotePreferencesDialog.cpp
     src/gui/RemotePreferencesDialog.h
+    src/gui/RemoteCategoryDialog.cpp
+    src/gui/RemoteCategoryDialog.h
+    src/gui/remotetorrentcategorydialog.ui
     src/gui/RemoteSpeedLimitsDialog.cpp
     src/gui/RemoteSpeedLimitsDialog.h
     src/gui/upstream/layouts/speedlimitdialog.ui
@@ -314,6 +317,10 @@ if(BUILD_TESTING)
     add_remote_workflow_group(remote_tracker_workflow 60
         nativeTrackerListEditorReplacesAllSelectedTorrents
         privateTrackerAdditionPolicyThroughEditor
+    )
+
+    add_remote_workflow_group(remote_sidebar_management_workflow 75
+        nativeSidebarMenusManageSelectedServerAndVisibleTorrents
     )
 
     add_remote_workflow_group(remote_preferences_workflow 60

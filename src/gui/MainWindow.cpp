@@ -5,6 +5,7 @@
 #include "gui/FilterSidebar.h"
 #include "gui/ConnectionDialog.h"
 #include "gui/RemotePreferencesDialog.h"
+#include "gui/RemoteCategoryDialog.h"
 #include "gui/RemoteSpeedLimitsDialog.h"
 #include "gui/RemoteAddTorrentDialog.h"
 #include "gui/RemoteTrackerEntriesDialog.h"
@@ -72,6 +73,7 @@
 #include <QSignalBlocker>
 #include <QTimer>
 #include <QTabWidget>
+#include <QTabBar>
 #include <algorithm>
 
 namespace
@@ -403,6 +405,43 @@ void MainWindow::setupMainArea()
     connect(m_views, &QTabWidget::currentChanged, this,
             [this](int) { updateActiveUi(); });
 
+    auto *tabBar = m_views->tabBar();
+    tabBar->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(tabBar, &QTabBar::customContextMenuRequested, this,
+        [this, tabBar](const QPoint &position) {
+            const int index = tabBar->tabAt(position);
+            if (index < 0)
+                return;
+            const auto *pane = m_views->widget(index);
+            const auto it = std::find_if(m_connections.cbegin(), m_connections.cend(),
+                [pane](const auto &connection) { return connection->pane == pane; });
+            if (it == m_connections.cend())
+                return;
+            // Capture the actual clicked connection, not its tab index or
+            // the active server. Sync/disconnect events can run in the menu.
+            const auto connection = *it;
+            QMenu menu(this);
+            menu.setObjectName(QStringLiteral("serverTabContextMenu"));
+            QString serverName = connection->profile.name;
+            serverName.replace(QLatin1Char('&'), QStringLiteral("&&"));
+            auto *preferences = menu.addAction(upstreamIcon("configure"),
+                tr("%1 Preferences...").arg(serverName));
+            preferences->setObjectName(QStringLiteral("serverTabPreferences"));
+            preferences->setEnabled(connection->connected);
+            connect(preferences, &QAction::triggered, this, [this, connection]() {
+                if (containsConnection(connection) && connection->connected)
+                    openPreferences(connection);
+            });
+            menu.addSeparator();
+            auto *disconnect = menu.addAction(upstreamIcon("disconnected"), tr("Disconnect"));
+            disconnect->setObjectName(QStringLiteral("serverTabDisconnect"));
+            connect(disconnect, &QAction::triggered, this, [this, connection]() {
+                if (containsConnection(connection))
+                    removeConnection(connection);
+            });
+            menu.exec(tabBar->mapToGlobal(position));
+        });
+
     // Keep the original, shared native qBittorrent toolbar search.
     // Each server pane keeps its own search string and filter column.
     auto *filterPanel = new QWidget(m_ui->toolBar);
@@ -571,16 +610,7 @@ void MainWindow::setupActions()
     // a currently connected server: local path mappings belong to saved
     // server profiles and never require an authenticated session.
     connect(m_ui->actionOptions, &QAction::triggered, this, [this]() {
-        const auto server = activeConnection();
-        const QString profileId = server ? server->profile.id : m_preferredServerId;
-        RemotePreferencesDialog dialog(*m_settings, profileId, this,
-                                      server && server->connected ? server->session : nullptr,
-                                      server && server->connected ? server->pane->model() : nullptr);
-        connect(&dialog, &RemotePreferencesDialog::localBehaviorApplied,
-                this, &MainWindow::applyLocalBehaviorPreferences);
-        trackDialogGeometry(dialog, QStringLiteral("Preferences"));
-        dialog.exec();
-        refreshContentPathMappings();
+        openPreferences(activeConnection());
     });
 
     m_ui->menuHelp->clear();
@@ -633,42 +663,7 @@ void MainWindow::setupActions()
     bindCommand(m_ui->actionBottomQueuePos, Remote::RemoteSession::TorrentCommand::BottomPriority);
 
     connect(m_ui->actionDelete, &QAction::triggered, this, [this]() {
-        const auto server = activeConnection();
-        const QStringList hashes = selectedTorrentHashes();
-        if (!server || !server->connected || hashes.isEmpty())
-            return;
-
-        const bool confirmDeletion = m_settings->value(
-            QStringLiteral("Preferences/Behavior/ConfirmTorrentDeletion"), true).toBool();
-        if (!confirmDeletion)
-        {
-            // With confirmations disabled, perform metadata-only deletion.
-            // Never silently delete downloaded NAS content.
-            server->session->commandTorrents(
-                Remote::RemoteSession::TorrentCommand::Delete, hashes, false);
-            return;
-        }
-
-        QMessageBox prompt(this);
-        prompt.setObjectName(QStringLiteral("removeTorrentsDialog"));
-        prompt.setIcon(QMessageBox::Warning);
-        prompt.setWindowTitle(tr("Remove torrents"));
-        prompt.setText(tr("Remove %1 selected torrent(s) from %2?")
-                           .arg(hashes.size()).arg(server->profile.name));
-        prompt.setInformativeText(tr("Removing a torrent does not delete its downloaded files "
-                                      "unless you explicitly select the option below."));
-        auto *deleteFiles = new QCheckBox(
-            tr("Also delete downloaded files from the REMOTE server"), &prompt);
-        prompt.setCheckBox(deleteFiles);
-        prompt.setStandardButtons(QMessageBox::Yes | QMessageBox::Cancel);
-        prompt.setDefaultButton(QMessageBox::Cancel);
-        if (prompt.exec() != QMessageBox::Yes || !containsConnection(server)
-            || !server->connected)
-            return;
-
-        server->session->commandTorrents(
-            Remote::RemoteSession::TorrentCommand::Delete,
-            hashes, deleteFiles->isChecked());
+        removeRemoteTorrents(activeConnection(), selectedTorrentHashes());
     });
 
     // A duplicate is identified by its actual infohash in the chosen
@@ -960,6 +955,21 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         }
     }
     return QMainWindow::eventFilter(watched, event);
+}
+
+void MainWindow::openPreferences(const std::shared_ptr<SessionContext> &server)
+{
+    if (server && !containsConnection(server))
+        return;
+    const QString profileId = server ? server->profile.id : m_preferredServerId;
+    RemotePreferencesDialog dialog(*m_settings, profileId, this,
+                                  server && server->connected ? server->session : nullptr,
+                                  server && server->connected ? server->pane->model() : nullptr);
+    connect(&dialog, &RemotePreferencesDialog::localBehaviorApplied,
+            this, &MainWindow::applyLocalBehaviorPreferences);
+    trackDialogGeometry(dialog, QStringLiteral("Preferences"));
+    dialog.exec();
+    refreshContentPathMappings();
 }
 
 void MainWindow::refreshContentPathMappings()
@@ -1588,6 +1598,44 @@ void MainWindow::updateActiveUi()
     }
 }
 
+void MainWindow::removeRemoteTorrents(const std::shared_ptr<SessionContext> &server, const QStringList &hashes)
+{
+    if (!server || !server->connected || hashes.isEmpty())
+        return;
+
+    const bool confirmDeletion = m_settings->value(
+        QStringLiteral("Preferences/Behavior/ConfirmTorrentDeletion"), true).toBool();
+    if (!confirmDeletion)
+    {
+        // With confirmations disabled, perform metadata-only deletion.
+        // Never silently delete downloaded NAS content.
+        server->session->commandTorrents(
+            Remote::RemoteSession::TorrentCommand::Delete, hashes, false);
+        return;
+    }
+
+    QMessageBox prompt(this);
+    prompt.setObjectName(QStringLiteral("removeTorrentsDialog"));
+    prompt.setIcon(QMessageBox::Warning);
+    prompt.setWindowTitle(tr("Remove torrents"));
+    prompt.setText(tr("Remove %1 selected torrent(s) from %2?")
+                       .arg(hashes.size()).arg(server->profile.name));
+    prompt.setInformativeText(tr("Removing a torrent does not delete its downloaded files "
+                                  "unless you explicitly select the option below."));
+    auto *deleteFiles = new QCheckBox(
+        tr("Also delete downloaded files from the REMOTE server"), &prompt);
+    prompt.setCheckBox(deleteFiles);
+    prompt.setStandardButtons(QMessageBox::Yes | QMessageBox::Cancel);
+    prompt.setDefaultButton(QMessageBox::Cancel);
+    if (prompt.exec() != QMessageBox::Yes || !containsConnection(server)
+        || !server->connected)
+        return;
+
+    server->session->commandTorrents(
+        Remote::RemoteSession::TorrentCommand::Delete,
+        hashes, deleteFiles->isChecked());
+}
+
 void MainWindow::removeConnection(const std::shared_ptr<SessionContext> &connection)
 {
     if (!containsConnection(connection))
@@ -2013,21 +2061,203 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
             if (!hashes.isEmpty())
                 session->setTorrentCategory(hashes, category);
         });
-    connect(connection->pane, &ServerPane::torrentNewCategoryRequested, this,
-        [this, session, selectedForContext]() {
-            QInputDialog dialog(this);
-            dialog.setObjectName(QStringLiteral("newTorrentCategoryDialog"));
-            dialog.setWindowTitle(tr("New category"));
-            dialog.setLabelText(tr("Category name:"));
-            dialog.setInputMode(QInputDialog::TextInput);
-            trackDialogGeometry(dialog, QStringLiteral("NewTorrentCategory"));
-            if (dialog.exec() != QDialog::Accepted)
+    const auto groupValid = [this, connection]() {
+        return containsConnection(connection) && connection->connected && activeConnection() == connection
+            && connection->pane->hasFullSync();
+    };
+    const auto categoryEditor = [this, connection, session, groupValid](QString name, bool edit, bool assign) {
+        if (!groupValid()) return;
+        const auto &definitions = connection->pane->categoryDefinitions();
+        QJsonObject definition = definitions.value(name).toObject();
+        if (edit && !definition.value(QStringLiteral("savePath")).isString())
+        {
+            QMessageBox::information(this, tr("Category unavailable"), tr("The server has not supplied this category's save path."));
+            return;
+        }
+        const QStringList initialSelection = assign ? selectedTorrentHashes() : QStringList();
+        if (assign && initialSelection.isEmpty()) return;
+        const auto names = connection->pane->categories();
+        QSet<QString> existing(names.cbegin(), names.cend());
+        QJsonObject capabilities;
+        for (auto it = definitions.constBegin(); it != definitions.constEnd(); ++it)
+        {
+            const auto record = it.value().toObject();
+            for (auto field = record.constBegin(); field != record.constEnd(); ++field)
+                capabilities.insert(field.key(), field.value());
+        }
+        if (edit) capabilities = definition;
+        else definition = {};
+        Remote::PathMappingStore store(*m_settings);
+        RemoteCategoryDialog dialog(name, edit, definition, capabilities, existing,
+                                    store.mappings(connection->profile.id), this);
+        trackDialogGeometry(dialog, QStringLiteral("TorrentCategory"));
+        if (dialog.exec() != QDialog::Accepted || !groupValid()) return;
+        const auto fields = dialog.fields();
+        const auto &torrents = connection->pane->model()->torrents();
+        if (assign && (selectedTorrentHashes() != initialSelection
+            || std::any_of(initialSelection.cbegin(), initialSelection.cend(),
+                [&torrents](const QString &hash) { return !torrents.contains(hash); })))
+            return;
+        if (edit && (fields.contains(QStringLiteral("savePath")) || fields.contains(QStringLiteral("downloadPathEnabled"))))
+        {
+            bool risk = false;
+            for (const auto &torrent : torrents)
+            {
+                const auto cat = torrent.value(QStringLiteral("category"));
+                const auto mode = torrent.value(QStringLiteral("auto_tmm"));
+                if ((!cat.isString() || cat.toString() == name || cat.toString().startsWith(name + QLatin1Char('/')))
+                    && (!mode.isBool() || mode.toBool()))
+                {
+                    risk = true;
+                    break;
+                }
+            }
+            if (risk && QMessageBox::question(this, tr("Change category save path"),
+                tr("Automatically managed torrents may be relocated or switched to Manual Mode on the server. Continue?"),
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
                 return;
-            const QString category = dialog.textValue().trimmed();
-            const QStringList hashes = selectedForContext();
-            if (!category.isEmpty() && !hashes.isEmpty())
-                session->createAndAssignTorrentCategory(hashes, category);
-        });
+        }
+        if (groupValid())
+            session->saveCategory(dialog.categoryName(), fields, edit, initialSelection);
+    };
+    connect(connection->pane, &ServerPane::torrentNewCategoryRequested, this,
+        [this, categoryEditor]() { categoryEditor(tr("New Category"), false, true); });
+
+    connect(connection->pane->sidebar(), &FilterSidebar::groupActionRequested, this,
+        [this, connection, session, groupValid, categoryEditor](FilterSidebar::Group group, const QString &key,
+                                                              FilterSidebar::GroupAction action) {
+        using Group = FilterSidebar::Group;
+        using Action = FilterSidebar::GroupAction;
+        using Command = Remote::RemoteSession::TorrentCommand;
+        if (!groupValid()) return;
+        const bool category = group == Group::Categories;
+        const bool tagGroup = group == Group::Tags;
+        const bool tracker = group == Group::Trackers;
+        const bool named = category ? key.startsWith(QLatin1String("category:"))
+            : tagGroup ? key.startsWith(QLatin1String("tag:"))
+            : tracker && key.startsWith(QLatin1String("tracker:"));
+        const QString name = named ? key.mid(category ? 9 : tagGroup ? 4 : 8) : QString();
+        if (category && (action == Action::Add || action == Action::AddSubcategory || action == Action::Edit))
+        {
+            categoryEditor(action == Action::Edit ? name : action == Action::AddSubcategory
+                ? name + QLatin1Char('/') + tr("New Category") : tr("New Category"),
+                action == Action::Edit, false);
+            return;
+        }
+        if (tagGroup && action == Action::Add)
+        {
+            bool ok = false;
+            const QString tag = QInputDialog::getText(this, tr("Add tag"), tr("Tag name:"),
+                                                      QLineEdit::Normal, {}, &ok).trimmed();
+            if (!ok || tag.isEmpty() || !groupValid()) return;
+            if (tag.contains(QLatin1Char(',')) || tag.contains(QLatin1Char('\n')) || tag.contains(QLatin1Char('\r')))
+            {
+                QMessageBox::warning(this, tr("Invalid tag name"), tr("Tag names cannot contain commas or line breaks."));
+                return;
+            }
+            if (connection->pane->tagDefinitions().contains(tag))
+            {
+                QMessageBox::warning(this, tr("Tag exists"), tr("Tag name already exists."));
+                return;
+            }
+            session->manageTagDefinitions({tag}, true);
+            return;
+        }
+        const auto &torrents = connection->pane->model()->torrents();
+        if ((category || tagGroup) && (action == Action::Remove || action == Action::RemoveUnused))
+        {
+            QStringList definitions = category ? connection->pane->categories() : connection->pane->tagDefinitions().values();
+            QStringList remove;
+            if (action == Action::Remove)
+            {
+                if (named && definitions.contains(name)) remove.append(name);
+            }
+            else
+            {
+                QSet<QString> used;
+                for (const auto &torrent : torrents)
+                {
+                    const auto membership = torrent.value(category ? QStringLiteral("category") : QStringLiteral("tags"));
+                    if (!membership.isString())
+                    {
+                        QMessageBox::information(this, tr("Membership unavailable"), tr("The server has not supplied all torrent memberships."));
+                        return;
+                    }
+                    if (category)
+                    {
+                        QString cat = membership.toString();
+                        while (!cat.isEmpty())
+                        {
+                            used.insert(cat);
+                            const auto slash = cat.lastIndexOf(QLatin1Char('/'));
+                            if (slash < 0) break;
+                            cat.truncate(slash);
+                        }
+                    }
+                    else for (const auto &tag : membership.toString().split(QLatin1Char(','), Qt::SkipEmptyParts))
+                        used.insert(tag.trimmed());
+                }
+                for (const auto &entry : definitions)
+                    if (!used.contains(entry)) remove.append(entry);
+            }
+            if (remove.isEmpty()) return;
+            if (category && action == Action::Remove
+                && QMessageBox::question(this, tr("Remove category"),
+                    tr("Remove this category and its subcategories? Existing torrents may change category or location on the server."),
+                    QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
+                return;
+            if (!groupValid()) return;
+            if (category) session->removeCategories(remove);
+            else for (qsizetype i = 0; i < remove.size(); i += 128)
+                session->manageTagDefinitions(remove.mid(i, 128), false);
+            return;
+        }
+        if (tracker && action == Action::Remove && named)
+        {
+            if (name == QLatin1String("(unknown tracker)")) return;
+            if (QMessageBox::question(this, tr("Removal confirmation"),
+                tr("Are you sure you want to remove tracker \"%1\" from all torrents on %2?")
+                    .arg(name, connection->profile.name),
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes
+                || !groupValid())
+                return;
+            QHash<QString, QStringList> removals;
+            const auto &trackers = connection->pane->trackerDefinitions();
+            for (auto it = trackers.constBegin(); it != trackers.constEnd(); ++it)
+            {
+                if (QUrl(it.key()).host().compare(name, Qt::CaseInsensitive) != 0) continue;
+                for (const auto &hash : it.value())
+                    if (connection->pane->model()->torrents().contains(hash))
+                        removals[hash].append(it.key());
+            }
+            if (removals.isEmpty())
+            {
+                QMessageBox::information(this, tr("Tracker unavailable"), tr("The server has not supplied the tracker memberships needed for safe removal."));
+                return;
+            }
+            for (auto it = removals.constBegin(); it != removals.constEnd(); ++it)
+                for (qsizetype i = 0; i < it.value().size(); i += 128)
+                    session->removeTorrentTrackers(it.key(), it.value().mid(i, 128));
+            return;
+        }
+        // Upstream's bulk actions target all visible rows, not selected rows.
+        QStringList hashes;
+        auto *proxy = connection->pane->proxy();
+        for (int row = 0; row < proxy->rowCount(); ++row)
+        {
+            const auto hash = connection->pane->model()->hashForRow(proxy->mapToSource(proxy->index(row, 0)).row());
+            if (!hash.isEmpty()) hashes.append(hash);
+        }
+        if (hashes.isEmpty()) return;
+        switch (action)
+        {
+        case Action::Start: session->commandTorrents(Command::Start, hashes); break;
+        case Action::ForceStart: session->commandTorrents(Command::ForceStart, hashes); break;
+        case Action::Stop: session->commandTorrents(Command::Stop, hashes); break;
+        case Action::RemoveTorrents: removeRemoteTorrents(connection, hashes); break;
+        default: break;
+        }
+    });
     connect(connection->pane, &ServerPane::torrentTagRequested, this,
         [session, selectedForContext](const QString &tag, bool add) {
             const QStringList hashes = selectedForContext();

@@ -2,6 +2,7 @@
 #include "gui/MainWindow.h"
 #include "gui/ServerPane.h"
 #include "gui/RemotePreferencesDialog.h"
+#include "gui/RemoteFileSystemPathComboEdit.h"
 #include "gui/RemoteSpeedLimitsDialog.h"
 #include "gui/MappedContentTreeWidget.h"
 #include "gui/TorrentModel.h"
@@ -151,7 +152,14 @@ public:
                             ++m_syncRequests;
                             const QUrlQuery query(QString::fromLatin1(path.mid(path.indexOf('?') + 1)));
                             const int rid = query.queryItemValue(QStringLiteral("rid")).toInt();
-                            if (m_statusRatesDemo)
+                            if (!m_sidebarSnapshot.isEmpty())
+                            {
+                                QJsonObject snapshot = m_sidebarSnapshot;
+                                snapshot.insert(QStringLiteral("rid"), rid + 1);
+                                snapshot.insert(QStringLiteral("full_update"), true);
+                                response = QJsonDocument(snapshot).toJson(QJsonDocument::Compact);
+                            }
+                            else if (m_statusRatesDemo)
                             {
                                 response = QJsonDocument(QJsonObject{
                                     {QStringLiteral("rid"), rid + 1},
@@ -417,6 +425,77 @@ public:
                             // and options changes, not protocol implementation
                             // details such as exact API request counts.
                             const QUrlQuery form(QString::fromUtf8(body));
+                            if (!m_sidebarSnapshot.isEmpty() && !m_rejectCommands)
+                            {
+                                auto categories = m_sidebarSnapshot.value(QStringLiteral("categories")).toObject();
+                                auto tags = m_sidebarSnapshot.value(QStringLiteral("tags")).toArray();
+                                auto torrents = m_sidebarSnapshot.value(QStringLiteral("torrents")).toObject();
+                                auto trackers = m_sidebarSnapshot.value(QStringLiteral("trackers")).toObject();
+                                const auto get = [&form](const QString &key) {
+                                    return form.queryItemValue(key, QUrl::FullyDecoded);
+                                };
+                                if (path == "/api/v2/torrents/createCategory" || path == "/api/v2/torrents/editCategory")
+                                {
+                                    const QString name = get(QStringLiteral("category"));
+                                    auto definition = categories.value(name).toObject();
+                                    definition.insert(QStringLiteral("name"), name);
+                                    if (form.hasQueryItem(QStringLiteral("savePath")))
+                                        definition.insert(QStringLiteral("savePath"), get(QStringLiteral("savePath")));
+                                    categories.insert(name, definition);
+                                }
+                                else if (path == "/api/v2/torrents/createTags")
+                                {
+                                    for (const auto &tag : get(QStringLiteral("tags")).split(QLatin1Char(','), Qt::SkipEmptyParts))
+                                        if (!tags.contains(QJsonValue(tag))) tags.append(tag);
+                                }
+                                else if (path == "/api/v2/torrents/deleteTags")
+                                {
+                                    QJsonArray remaining;
+                                    const auto remove = get(QStringLiteral("tags")).split(QLatin1Char(','));
+                                    for (const auto &tag : tags)
+                                        if (!remove.contains(tag.toString())) remaining.append(tag);
+                                    tags = remaining;
+                                }
+                                else if (path == "/api/v2/torrents/stop"
+                                         || path == "/api/v2/torrents/start"
+                                         || path == "/api/v2/torrents/setForceStart")
+                                {
+                                    for (const auto &hash : get(QStringLiteral("hashes")).split(QLatin1Char('|')))
+                                    {
+                                        auto torrent = torrents.value(hash).toObject();
+                                        if (torrent.isEmpty()) continue;
+                                        torrent.insert(QStringLiteral("state"), path == "/api/v2/torrents/stop"
+                                            ? QStringLiteral("stoppedUP") : path == "/api/v2/torrents/setForceStart"
+                                            ? QStringLiteral("forcedUP") : QStringLiteral("uploading"));
+                                        torrents.insert(hash, torrent);
+                                    }
+                                }
+                                else if (path == "/api/v2/torrents/delete")
+                                {
+                                    for (const auto &hash : get(QStringLiteral("hashes")).split(QLatin1Char('|')))
+                                        torrents.remove(hash);
+                                }
+                                else if (path == "/api/v2/torrents/removeTrackers")
+                                {
+                                    const auto hash = get(QStringLiteral("hash"));
+                                    for (const auto &encoded : get(QStringLiteral("urls")).split(QLatin1Char('|')))
+                                    {
+                                        const auto url = QUrl::fromPercentEncoding(encoded.toUtf8());
+                                        QJsonArray remaining;
+                                        for (const auto &member : trackers.value(url).toArray())
+                                            if (member.toString() != hash) remaining.append(member);
+                                        if (remaining.isEmpty()) trackers.remove(url);
+                                        else trackers.insert(url, remaining);
+                                    }
+                                    auto torrent = torrents.value(hash).toObject();
+                                    torrent.insert(QStringLiteral("tracker"), QStringLiteral(""));
+                                    torrents.insert(hash, torrent);
+                                }
+                                m_sidebarSnapshot.insert(QStringLiteral("categories"), categories);
+                                m_sidebarSnapshot.insert(QStringLiteral("tags"), tags);
+                                m_sidebarSnapshot.insert(QStringLiteral("torrents"), torrents);
+                                m_sidebarSnapshot.insert(QStringLiteral("trackers"), trackers);
+                            }
                             if (m_statefulContentDemo && !m_rejectCommands
                                 && path == "/api/v2/torrents/renameFile")
                             {
@@ -632,6 +711,8 @@ public:
     int logouts() const noexcept { return m_logouts; }
     int syncRequests() const noexcept { return m_syncRequests; }
     void enableTorrentSyncDemo() { m_demoTorrents = true; }
+    void setSidebarSnapshot(const QJsonObject &snapshot) { m_sidebarSnapshot = snapshot; }
+    QJsonObject sidebarSnapshot() const { return m_sidebarSnapshot; }
     void setStatusRates(const QJsonObject &rates)
     {
         m_statusRatesDemo = true;
@@ -790,6 +871,7 @@ private:
     QByteArray m_reportedApiVersion = QByteArrayLiteral("2.11.3");
     int m_logouts = 0;
     bool m_demoTorrents = false;
+    QJsonObject m_sidebarSnapshot;
     bool m_statusRatesDemo = false;
     QJsonObject m_statusRates;
     bool m_trayDemo = false;
@@ -1963,6 +2045,228 @@ private slots:
         QVERIFY(window.statusBar()->currentMessage().contains(QStringLiteral("Demo seedbox")));
     }
 
+    void nativeSidebarMenusManageSelectedServerAndVisibleTorrents()
+    {
+        DemoQbittorrentServer first(true), second(true);
+        const QString hashA = QStringLiteral("0000000000000000000000000000000000000001");
+        const QString hashB = QStringLiteral("0000000000000000000000000000000000000002");
+        const QString trackerUrl = QStringLiteral("https://tracker.example/announce");
+        const QJsonObject snapshot{
+            {QStringLiteral("categories"), QJsonObject{
+                {QStringLiteral("Music"), QJsonObject{{QStringLiteral("name"), QStringLiteral("Music")},
+                    {QStringLiteral("savePath"), QStringLiteral("/share/Music")}}}}},
+            {QStringLiteral("tags"), QJsonArray{QStringLiteral("keep"), QStringLiteral("unused")}},
+            {QStringLiteral("trackers"), QJsonObject{{trackerUrl, QJsonArray{hashA, hashB}}}},
+            {QStringLiteral("torrents"), QJsonObject{
+                {hashA, QJsonObject{{QStringLiteral("name"), QStringLiteral("Music torrent")},
+                    {QStringLiteral("state"), QStringLiteral("uploading")},
+                    {QStringLiteral("progress"), 1}, {QStringLiteral("auto_tmm"), false},
+                    {QStringLiteral("category"), QStringLiteral("Music")},
+                    {QStringLiteral("save_path"), QStringLiteral("/share/Music")},
+                    {QStringLiteral("tags"), QStringLiteral("keep")}, {QStringLiteral("tracker"), trackerUrl}}},
+                {hashB, QJsonObject{{QStringLiteral("name"), QStringLiteral("Other torrent")},
+                    {QStringLiteral("state"), QStringLiteral("uploading")},
+                    {QStringLiteral("progress"), 1}, {QStringLiteral("auto_tmm"), false},
+                    {QStringLiteral("category"), QStringLiteral("")},
+                    {QStringLiteral("save_path"), QStringLiteral("/share/Music/Classical")},
+                    {QStringLiteral("tags"), QStringLiteral("")}, {QStringLiteral("tracker"), trackerUrl}}}}}
+        };
+        first.setSidebarSnapshot(snapshot);
+        second.setSidebarSnapshot(snapshot);
+        QVERIFY(first.start() && second.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("sidebar.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, first.url());
+        auto *tabs = window.findChild<QTabWidget *>(QStringLiteral("serverTabs"));
+        QVERIFY(tabs);
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(
+            QStringLiteral("Connected to Demo seedbox")), 6000);
+        openConnectDialog(window, second.url(), false, true, true, QStringLiteral("Second seedbox"));
+        QTRY_COMPARE_WITH_TIMEOUT(tabs->count(), 2, 6000);
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(
+            QStringLiteral("Connected to Second seedbox")), 6000);
+        tabs->setCurrentIndex(0);
+        auto *pane = qobject_cast<ServerPane *>(tabs->currentWidget());
+        QVERIFY(pane);
+        QTRY_COMPARE_WITH_TIMEOUT(pane->table()->model()->rowCount(), 2, 6000);
+        auto *categories = pane->findChild<QListWidget *>(QStringLiteral("categoryFilterList"));
+        auto *tags = pane->findChild<QListWidget *>(QStringLiteral("tagFilterList"));
+        auto *status = pane->findChild<QListWidget *>(QStringLiteral("filterList"));
+        auto *trackers = pane->findChild<QListWidget *>(QStringLiteral("trackerFilterList"));
+        QVERIFY(categories && tags && status && trackers);
+        const auto findRow = [](QListWidget *list, const QString &key) -> QListWidgetItem * {
+            for (int i = 0; i < list->count(); ++i)
+                if (list->item(i)->data(Qt::UserRole).toString() == key) return list->item(i);
+            return nullptr;
+        };
+        using Drive = std::function<void(QDialog *)>;
+        const auto invokeMenu = [&](QWidget *view, const QPoint &position, const QString &actionName,
+                                    const Drive &drive) {
+            bool invoked = false, opened = false, timedOut = false;
+            QTimer watchdog;
+            connect(&watchdog, &QTimer::timeout, &window, [&]() {
+                timedOut = true;
+                if (auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget())) dialog->reject();
+                if (auto *menu = QApplication::activePopupWidget()) menu->close();
+            });
+            watchdog.start(6000);
+            QTimer::singleShot(0, &window, [&]() {
+                auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+                if (!menu) return;
+                for (auto *action : menu->actions())
+                {
+                    if (action->objectName() != actionName) continue;
+                    invoked = true;
+                    if (drive)
+                        QTimer::singleShot(0, &window, [&]() {
+                            auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+                            if (!dialog) return;
+                            opened = true;
+                            const auto cleanup = qScopeGuard([dialog]() {
+                                if (dialog->isVisible()) dialog->reject();
+                            });
+                            drive(dialog);
+                        });
+                    action->trigger();
+                    break;
+                }
+                menu->close();
+            });
+            QVERIFY(QMetaObject::invokeMethod(view, "customContextMenuRequested", Qt::DirectConnection,
+                Q_ARG(QPoint, position)));
+            QVERIFY(invoked && !timedOut && (!drive || opened));
+        };
+        const auto menuAction = [&](QListWidget *list, const QString &key, const QString &actionName,
+                                    const Drive &drive = {}) {
+            auto *item = findRow(list, key);
+            QVERIFY(item);
+            invokeMenu(list, list->visualItemRect(item).center(), actionName, drive);
+        };
+        const auto setCategory = [&](QDialog *dialog, const QString &name, const QString &path, bool edit) {
+            auto *categoryName = dialog->findChild<QLineEdit *>(QStringLiteral("textCategoryName"));
+            auto *savePath = dialog->findChild<RemoteFileSystemPathComboEdit *>(QStringLiteral("comboSavePath"));
+            auto *buttons = dialog->findChild<QDialogButtonBox *>(QStringLiteral("buttonBox"));
+            QVERIFY(categoryName && savePath && buttons);
+            if (edit)
+            {
+                QCOMPARE(categoryName->text(), name);
+                QCOMPARE(savePath->currentText(), QStringLiteral("/share/Classical"));
+                QVERIFY(!categoryName->isEnabled());
+            }
+            else categoryName->setText(name);
+            savePath->setEditText(path);
+            buttons->button(QDialogButtonBox::Ok)->click();
+        };
+        menuAction(categories, QStringLiteral("all"), QStringLiteral("sidebarGroupAdd"), [&](QDialog *dialog) {
+            setCategory(dialog, QStringLiteral("Classical"), QStringLiteral("/share/Classical"), false);
+        });
+        QTRY_VERIFY_WITH_TIMEOUT(findRow(categories, QStringLiteral("category:Classical")), 6000);
+        menuAction(categories, QStringLiteral("category:Classical"), QStringLiteral("sidebarGroupEdit"), [&](QDialog *dialog) {
+            setCategory(dialog, QStringLiteral("Classical"), QStringLiteral("/share/New Classical"), true);
+        });
+        QTRY_COMPARE_WITH_TIMEOUT(first.sidebarSnapshot().value(QStringLiteral("categories")).toObject()
+            .value(QStringLiteral("Classical")).toObject().value(QStringLiteral("savePath")).toString(),
+            QStringLiteral("/share/New Classical"), 6000);
+        // Cancel does not replace the server's category settings.
+        menuAction(categories, QStringLiteral("category:Classical"), QStringLiteral("sidebarGroupEdit"), [&](QDialog *dialog) {
+            auto *path = dialog->findChild<RemoteFileSystemPathComboEdit *>(QStringLiteral("comboSavePath"));
+            QVERIFY(path);
+            path->setEditText(QStringLiteral("/never-saved"));
+            dialog->reject();
+        });
+        QCOMPARE(first.sidebarSnapshot().value(QStringLiteral("categories")).toObject()
+            .value(QStringLiteral("Classical")).toObject().value(QStringLiteral("savePath")).toString(),
+            QStringLiteral("/share/New Classical"));
+        menuAction(tags, QStringLiteral("all"), QStringLiteral("sidebarGroupAdd"), [&](QDialog *dialog) {
+            auto *input = qobject_cast<QInputDialog *>(dialog);
+            QVERIFY(input);
+            input->setTextValue(QStringLiteral("new tag"));
+            input->accept();
+        });
+        QTRY_VERIFY_WITH_TIMEOUT(findRow(tags, QStringLiteral("tag:new tag")), 6000);
+        menuAction(tags, QStringLiteral("all"), QStringLiteral("sidebarGroupRemoveUnused"));
+        QTRY_VERIFY_WITH_TIMEOUT(!findRow(tags, QStringLiteral("tag:unused"))
+            && !findRow(tags, QStringLiteral("tag:new tag")), 6000);
+        QVERIFY(findRow(tags, QStringLiteral("tag:keep")));
+        // Status actions apply to all visible torrents, including other filters.
+        categories->setCurrentItem(findRow(categories, QStringLiteral("category:Music")));
+        QTRY_COMPARE(pane->table()->model()->rowCount(), 1);
+        menuAction(status, QStringLiteral("all"), QStringLiteral("sidebarGroupStop"));
+        QTRY_COMPARE_WITH_TIMEOUT(first.sidebarSnapshot().value(QStringLiteral("torrents")).toObject()
+            .value(hashA).toObject().value(QStringLiteral("state")).toString(), QStringLiteral("stoppedUP"), 6000);
+        QCOMPARE(first.sidebarSnapshot().value(QStringLiteral("torrents")).toObject()
+            .value(hashB).toObject().value(QStringLiteral("state")).toString(), QStringLiteral("uploading"));
+        // Removing a tracker host is global on this server, unlike visible-row actions.
+        menuAction(trackers, QStringLiteral("tracker:tracker.example"), QStringLiteral("sidebarGroupRemove"),
+            [](QDialog *dialog) {
+                auto *confirm = qobject_cast<QMessageBox *>(dialog);
+                QVERIFY(confirm);
+                confirm->button(QMessageBox::Yes)->click();
+            });
+        QTRY_VERIFY_WITH_TIMEOUT(!first.sidebarSnapshot().value(QStringLiteral("trackers")).toObject().contains(trackerUrl), 6000);
+        QTRY_VERIFY_WITH_TIMEOUT(!findRow(trackers, QStringLiteral("tracker:tracker.example")), 6000);
+
+        // Directories shares the same real bulk actions. Right-click selects
+        // the directory and uses the exact-path/subfolder filter and other
+        // active filters, not the selected rows in the transfer list.
+        categories->setCurrentItem(findRow(categories, QStringLiteral("all")));
+        trackers->setCurrentItem(findRow(trackers, QStringLiteral("all")));
+        auto *directories = pane->findChild<QTreeWidget *>(QStringLiteral("directoryFilterTree"));
+        QVERIFY(directories);
+        const auto directoryAction = [&](const QString &action, const Drive &drive = {}) {
+            QTreeWidgetItem *music = nullptr;
+            for (QTreeWidgetItemIterator it(directories); *it; ++it)
+                if ((*it)->data(0, Qt::UserRole).toString() == QStringLiteral("/share/Music"))
+                {
+                    music = *it;
+                    break;
+                }
+            QVERIFY(music);
+            directories->scrollToItem(music);
+            invokeMenu(directories, directories->visualItemRect(music).center(), action, drive);
+        };
+        const auto state = [&](const QString &hash) {
+            return first.sidebarSnapshot().value(QStringLiteral("torrents")).toObject()
+                .value(hash).toObject().value(QStringLiteral("state")).toString();
+        };
+        directoryAction(QStringLiteral("sidebarGroupStart"));
+        QTRY_COMPARE_WITH_TIMEOUT(state(hashA), QStringLiteral("uploading"), 6000);
+        QCOMPARE(pane->table()->model()->rowCount(), 1);
+        directoryAction(QStringLiteral("sidebarGroupForceStart"));
+        QTRY_COMPARE_WITH_TIMEOUT(state(hashA), QStringLiteral("forcedUP"), 6000);
+        QCOMPARE(state(hashB), QStringLiteral("uploading"));
+
+        directoryAction(QStringLiteral("directoryIncludeSubfolders"));
+        QTRY_COMPARE(pane->table()->model()->rowCount(), 2);
+        directoryAction(QStringLiteral("sidebarGroupStop"));
+        QTRY_VERIFY_WITH_TIMEOUT(state(hashA) == QLatin1String("stoppedUP")
+            && state(hashB) == QLatin1String("stoppedUP"), 6000);
+
+        categories->setCurrentItem(findRow(categories, QStringLiteral("category:Music")));
+        QTRY_COMPARE(pane->table()->model()->rowCount(), 1);
+        directoryAction(QStringLiteral("sidebarGroupRemoveTorrents"), [](QDialog *dialog) {
+            auto *confirm = qobject_cast<QMessageBox *>(dialog);
+            QVERIFY(confirm);
+            confirm->button(QMessageBox::Cancel)->click();
+        });
+        QCOMPARE(first.sidebarSnapshot().value(QStringLiteral("torrents")).toObject().size(), 2);
+        directoryAction(QStringLiteral("sidebarGroupRemoveTorrents"), [](QDialog *dialog) {
+            auto *confirm = qobject_cast<QMessageBox *>(dialog);
+            QVERIFY(confirm && confirm->checkBox());
+            QVERIFY(!confirm->checkBox()->isChecked());
+            confirm->button(QMessageBox::Yes)->click();
+        });
+        QTRY_VERIFY_WITH_TIMEOUT(!first.sidebarSnapshot().value(QStringLiteral("torrents")).toObject().contains(hashA), 6000);
+        QVERIFY(first.sidebarSnapshot().value(QStringLiteral("torrents")).toObject().contains(hashB));
+        QCOMPARE(QUrlQuery(QString::fromUtf8(first.lastCommandBody("/api/v2/torrents/delete")))
+            .queryItemValue(QStringLiteral("deleteFiles")), QStringLiteral("false"));
+        QCOMPARE(second.sidebarSnapshot(), snapshot);
+    }
+
     void remotePreferencesReadApplyVerifyAndCancelOnSelectedServer()
     {
         DemoQbittorrentServer first(true);
@@ -2010,9 +2314,11 @@ private slots:
         QVERIFY(options);
         // Exercise the real menu and modal dialog rather than calling the
         // preference transport or the field binding helpers directly.
-        const auto withDialog = [&](const std::function<void(RemotePreferencesDialog *)> &drive) {
+        const auto withDialog = [&](const std::function<void(RemotePreferencesDialog *)> &drive,
+                                    bool background = false) {
             bool opened = false;
-            QTimer::singleShot(0, &window, [&]() {
+            QString clickedPreferencesLabel;
+            const auto driveDialog = [&]() {
                 auto *dialog = qobject_cast<RemotePreferencesDialog *>(
                     QApplication::activeModalWidget());
                 if (!dialog)
@@ -2026,7 +2332,7 @@ private slots:
                 QVERIFY(navigation);
                 navigation->setCurrentRow(1);
                 drive(dialog);
-            });
+            };
             // Dismiss a dialog only on a test timeout, never pretend it passed.
             QTimer watchdog;
             bool timedOut = false;
@@ -2036,10 +2342,35 @@ private slots:
                     dialog->reject();
             });
             watchdog.start(12000);
-            options->trigger();
+            if (background)
+            {
+                auto *bar = tabs->tabBar();
+                QTimer::singleShot(0, &window, [&]() {
+                    auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+                    if (!menu) return;
+                    for (auto *action : menu->actions())
+                        if (action->objectName() == QLatin1String("serverTabPreferences") && action->isEnabled())
+                        {
+                            clickedPreferencesLabel = action->text();
+                            QTimer::singleShot(0, &window, driveDialog);
+                            action->trigger();
+                            break;
+                        }
+                    menu->close();
+                });
+                QVERIFY(QMetaObject::invokeMethod(bar, "customContextMenuRequested",
+                    Qt::DirectConnection, Q_ARG(QPoint, bar->tabRect(0).center())));
+            }
+            else
+            {
+                QTimer::singleShot(0, &window, driveDialog);
+                options->trigger();
+            }
             watchdog.stop();
             QVERIFY(opened);
             QVERIFY(!timedOut);
+            if (background)
+                QCOMPARE(clickedPreferencesLabel, QStringLiteral("Demo seedbox Preferences..."));
         };
         const QString newPath = QStringLiteral("/share/Second/Logs + & 100% ü");
         const auto changedBody = [](const DemoQbittorrentServer &server) {
@@ -2058,6 +2389,9 @@ private slots:
             QVERIFY(!path->isEnabled()); // No fictitious editable values before GET.
             QTRY_VERIFY_WITH_TIMEOUT(path->isEnabled(), 6000);
             QCOMPARE(path->text(), QStringLiteral("/share/Second/log"));
+            auto *target = dialog->findChild<QLabel *>(QStringLiteral("preferencesRemoteTarget"));
+            QVERIFY(target && target->isVisible());
+            QVERIFY(target->text().contains(QStringLiteral("Second seedbox")));
             QVERIFY(!size->isEnabled() && !age->isEnabled() && !ageType->isEnabled());
             QVERIFY(!apply->isEnabled());
             path->setText(QStringLiteral("unsaved"));
@@ -2083,8 +2417,9 @@ private slots:
         QCOMPARE(second.commandsFor("/api/v2/app/setPreferences"), 1);
         QCOMPARE(second.serverPreferences().value(QStringLiteral("file_log_path")).toString(), newPath);
 
-        tabs->setCurrentIndex(0);
-        QTRY_VERIFY(window.statusBar()->currentMessage().contains(QStringLiteral("Connected to Demo seedbox")));
+        // Leave the second server active and configure the first through its
+        // background tab. The active transfer view must not be replaced.
+        QCOMPARE(tabs->currentIndex(), 1);
         // Simulate an external WebUI edit before reopening Preferences.
         auto updated = first.serverPreferences();
         updated.insert(QStringLiteral("file_log_path"), QStringLiteral("/share/First/changed-externally"));
@@ -2097,6 +2432,10 @@ private slots:
             QVERIFY(path && size && backup && buttons);
             QTRY_VERIFY_WITH_TIMEOUT(path->isEnabled(), 6000);
             QCOMPARE(path->text(), QStringLiteral("/share/First/changed-externally"));
+            auto *target = dialog->findChild<QLabel *>(QStringLiteral("preferencesRemoteTarget"));
+            QVERIFY(target && target->isVisible());
+            QVERIFY(target->text().contains(QStringLiteral("Demo seedbox")));
+            QCOMPARE(tabs->currentIndex(), 1);
             QCOMPARE(size->value(), 65);
             QVERIFY(size->isEnabled());
             backup->setChecked(false);
@@ -2109,7 +2448,8 @@ private slots:
             QVERIFY(dialog->isVisible());
             QVERIFY(!buttons->isEnabled());
             QTRY_VERIFY_WITH_TIMEOUT(!dialog->isVisible(), 6000);
-        });
+        }, true);
+        QCOMPARE(tabs->currentIndex(), 1);
         QCOMPARE(first.commandsFor("/api/v2/app/setPreferences"), 1);
         QCOMPARE(changedBody(first), QJsonObject({{QStringLiteral("file_log_max_size"), 128}}));
         QCOMPARE(first.serverPreferences().value(QStringLiteral("file_log_max_size")).toInt(), 128);
@@ -3126,9 +3466,27 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(first.syncRequests() > priorFirst, 6000);
         QTRY_VERIFY_WITH_TIMEOUT(second.syncRequests() > priorSecond, 6000);
 
-        auto *disconnect = window.findChild<QAction *>(QStringLiteral("disconnectServer"));
-        QVERIFY(disconnect);
-        disconnect->trigger();
+        // Disconnect the background server through its own tab, without
+        // activating it or logging out of the currently selected server.
+        tabs->setCurrentIndex(0);
+        auto *bar = tabs->tabBar();
+        bool disconnectedFromMenu = false;
+        QTimer::singleShot(0, &window, [&]() {
+            auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+            if (!menu)
+                return;
+            for (auto *action : menu->actions())
+                if (action->objectName() == QLatin1String("serverTabDisconnect"))
+                {
+                    disconnectedFromMenu = true;
+                    action->trigger();
+                    break;
+                }
+            menu->close();
+        });
+        QVERIFY(QMetaObject::invokeMethod(bar, "customContextMenuRequested",
+            Qt::DirectConnection, Q_ARG(QPoint, bar->tabRect(1).center())));
+        QVERIFY(disconnectedFromMenu);
         QTRY_COMPARE(tabs->count(), 1);
         QVERIFY2(!tabs->tabBar()->isVisible(), "Returning to one server hides tabs.");
         QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(
@@ -3137,7 +3495,7 @@ private slots:
         QVERIFY(window.statusBar()->currentMessage().contains(first.reportedQbtVersion()));
         QVERIFY(!window.statusBar()->currentMessage().contains(second.reportedQbtVersion()));
         QTRY_COMPARE_WITH_TIMEOUT(second.logouts(), 1, 6000);
-
+        QCOMPARE(first.logouts(), 0);
         const int beforeLastPoll = first.syncRequests();
         QTRY_VERIFY_WITH_TIMEOUT(first.syncRequests() > beforeLastPoll, 6000);
     }

@@ -72,8 +72,10 @@ private:
     void updateTransferRates(const ServerPane *pane);
     QStringList selectedTorrentHashes() const;
     void openSelectedTorrentDestinations();
+    void removeRemoteTorrents(const std::shared_ptr<SessionContext> &server, const QStringList &hashes);
     void setSelectedTorrentLocation();
     void refreshContentPathMappings();
+    void openPreferences(const std::shared_ptr<SessionContext> &server);
 
     std::unique_ptr<Ui::MainWindow> m_ui;
     QSettings m_defaultSettings;

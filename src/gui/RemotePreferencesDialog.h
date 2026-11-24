@@ -16,6 +16,7 @@
 class QAction;
 class QComboBox;
 class QLineEdit;
+class QLabel;
 class QDialogButtonBox;
 class QPushButton;
 class QSettings;
@@ -101,6 +102,8 @@ private:
     const QString m_remoteProfileId;
     Remote::PathMappingStore m_mappingStore;
     std::unique_ptr<Ui::OptionsDialog> m_ui;
+    QLabel *m_remoteTargetLabel = nullptr;
+    QString m_remoteTargetName;
     QComboBox *m_serverSelector = nullptr;
     QTableWidget *m_mappings = nullptr;
     QPushButton *m_addMapping = nullptr;

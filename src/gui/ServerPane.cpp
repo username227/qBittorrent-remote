@@ -290,14 +290,28 @@ void ServerPane::applySync(const QJsonObject &payload)
     if (payload.value(QStringLiteral("full_update")).toBool())
     {
         m_categories.clear();
+        m_categoryDefinitions = {};
+        m_hasFullSync = true;
         m_tags.clear();
         m_trackers.clear();
     }
     const QJsonObject categories = payload.value(QStringLiteral("categories")).toObject();
     for (auto it = categories.constBegin(); it != categories.constEnd(); ++it)
+    {
         m_categories.insert(it.key());
+        if (!it.value().isObject())
+            continue;
+        QJsonObject definition = m_categoryDefinitions.value(it.key()).toObject();
+        const auto patch = it.value().toObject();
+        for (auto field = patch.constBegin(); field != patch.constEnd(); ++field)
+            definition.insert(field.key(), field.value());
+        m_categoryDefinitions.insert(it.key(), definition);
+    }
     for (const QJsonValue &value : payload.value(QStringLiteral("categories_removed")).toArray())
+    {
         m_categories.remove(value.toString());
+        m_categoryDefinitions.remove(value.toString());
+    }
     for (const QJsonValue &value : payload.value(QStringLiteral("tags")).toArray())
         m_tags.insert(value.toString());
     for (const QJsonValue &value : payload.value(QStringLiteral("tags_removed")).toArray())
@@ -314,6 +328,7 @@ void ServerPane::applySync(const QJsonObject &payload)
         m_trackers.remove(value.toString());
 
     m_model->applySync(payload);
+    m_sidebar->setGroupActionsEnabled(m_hasFullSync);
     m_sidebar->updateCounts(m_model->torrents(), m_categories, m_tags, m_trackers);
     static_cast<TorrentFilterProxyModel *>(m_proxy)->refresh();
     m_details->appendRates(

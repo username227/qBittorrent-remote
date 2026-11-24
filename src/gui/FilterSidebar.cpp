@@ -259,6 +259,16 @@ FilterSidebar::FilterSidebar(QWidget *parent)
     m_trackers = section(tr("Trackers"), QStringLiteral("trackerFilterList"));
     m_trackerStatuses = section(tr("Tracker status"),
                                 QStringLiteral("trackerStatusFilterList"));
+    const auto groupMenu = [this](QListWidget *list, Group group) {
+        list->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(list, &QListWidget::customContextMenuRequested, this,
+            [this, list, group](const QPoint &position) { showGroupOptions(list, group, position); });
+    };
+    groupMenu(m_status, Group::Status);
+    groupMenu(m_categories, Group::Categories);
+    groupMenu(m_tags, Group::Tags);
+    groupMenu(m_trackers, Group::Trackers);
+    groupMenu(m_trackerStatuses, Group::TrackerStatus);
     m_trackerStatusSection = qobject_cast<TransferListFiltersWidgetItem *>(
         m_trackerStatuses->parentWidget());
     if (m_trackerStatusSection)
@@ -686,8 +696,81 @@ void FilterSidebar::resizeDirectoryTree()
                                   + 2 * m_directories->frameWidth());
 }
 
+// Action names and order follow the upstream filter widgets. Like upstream,
+// the four transfer actions operate on the currently visible transfer list.
+void FilterSidebar::showGroupOptions(QListWidget *list, Group group, const QPoint &position)
+{
+    if (!m_groupActionsEnabled)
+        return;
+    if (auto *item = list->itemAt(position))
+        list->setCurrentItem(item);
+    const QString key = choice(list);
+    const bool category = group == Group::Categories;
+    const bool tag = group == Group::Tags;
+    const bool tracker = group == Group::Trackers;
+    const bool named = category ? key.startsWith(QLatin1String("category:"))
+        : tag ? key.startsWith(QLatin1String("tag:"))
+        : tracker && key.startsWith(QLatin1String("tracker:"));
+    QMenu menu(list);
+    menu.setObjectName(QStringLiteral("sidebarGroupContextMenu"));
+    const auto add = [&](const char *icon, const QString &label, const char *name, GroupAction action) {
+        auto *entry = menu.addAction(QIcon(QStringLiteral(":/icons/") + QString::fromLatin1(icon)
+            + QStringLiteral(".svg")), label);
+        entry->setObjectName(QString::fromLatin1(name));
+        connect(entry, &QAction::triggered, this, [this, group, key, action]() {
+            emit groupActionRequested(group, key, action);
+        });
+    };
+    if (category || tag)
+    {
+        add("list-add", category ? tr("Add category...") : tr("Add tag..."), "sidebarGroupAdd", GroupAction::Add);
+        if (named)
+        {
+            if (category)
+            {
+                add("list-add", tr("Add subcategory..."), "sidebarGroupAddSubcategory", GroupAction::AddSubcategory);
+                add("edit-rename", tr("Edit category..."), "sidebarGroupEdit", GroupAction::Edit);
+            }
+            add("edit-clear", category ? tr("Remove category") : tr("Remove tag"), "sidebarGroupRemove", GroupAction::Remove);
+        }
+        add("edit-clear", category ? tr("Remove unused categories") : tr("Remove unused tags"),
+            "sidebarGroupRemoveUnused", GroupAction::RemoveUnused);
+        menu.addSeparator();
+    }
+    else if (tracker && named)
+    {
+        add("edit-clear", tr("Remove tracker"), "sidebarGroupRemove", GroupAction::Remove);
+        menu.addSeparator();
+    }
+    appendTorrentActions(menu, group, key);
+    menu.exec(list->viewport()->mapToGlobal(position));
+}
+
+void FilterSidebar::appendTorrentActions(QMenu &menu, Group group, const QString &key)
+{
+    const auto add = [&](const char *icon, const QString &label, const char *name, GroupAction action) {
+        auto *entry = menu.addAction(QIcon(QStringLiteral(":/icons/") + QString::fromLatin1(icon)
+            + QStringLiteral(".svg")), label);
+        entry->setObjectName(QString::fromLatin1(name));
+        entry->setEnabled(m_groupActionsEnabled);
+        connect(entry, &QAction::triggered, this, [this, group, key, action]() {
+            emit groupActionRequested(group, key, action);
+        });
+    };
+    add("torrent-start", tr("Start torrents"), "sidebarGroupStart", GroupAction::Start);
+    add("torrent-start-forced", tr("Force start torrents"), "sidebarGroupForceStart", GroupAction::ForceStart);
+    add("torrent-stop", tr("Stop torrents"), "sidebarGroupStop", GroupAction::Stop);
+    add("list-remove", tr("Remove torrents"), "sidebarGroupRemoveTorrents", GroupAction::RemoveTorrents);
+}
+
 void FilterSidebar::showDirectoryOptions(const QPoint &position, QWidget *source)
 {
+    // A row context menu selects that directory; the section caption retains
+    // the current selection, including All. Match the other filter menus.
+    const bool onTree = source == m_directories;
+    if (onTree)
+        if (auto *item = m_directories->itemAt(position))
+            m_directories->setCurrentItem(item);
     QMenu menu(source);
     menu.setObjectName(QStringLiteral("directoryFilterOptions"));
     auto *toggle = menu.addAction(tr("Include subfolders"));
@@ -701,7 +784,9 @@ void FilterSidebar::showDirectoryOptions(const QPoint &position, QWidget *source
         updateDirectoryLabels();
         emit filtersChanged();
     });
-    menu.exec(source->mapToGlobal(position));
+    menu.addSeparator();
+    appendTorrentActions(menu, Group::Directories, m_selectedDirectory);
+    menu.exec((onTree ? m_directories->viewport() : source)->mapToGlobal(position));
 }
 
 void FilterSidebar::saveDirectoryState(QSettings &settings, const QString &layoutRoot) const
