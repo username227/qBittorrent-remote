@@ -57,6 +57,8 @@ private:
     void bindConnectionLimits();
     void refreshConnectionLimitControls();
     void bindI2PControls();
+    void bindProxyControls();
+    void refreshProxyControls();
     void refreshI2PControls();
     void readI2PBuildInfo();
     void bindDownloadsSavingControls();

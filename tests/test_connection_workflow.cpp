@@ -3971,6 +3971,243 @@ private slots:
         });
     }
 
+    void proxyConfigurationFollowsSelectedServer()
+    {
+        DemoQbittorrentServer legacy(true), modern(true);
+        modern.enableModernResponses();
+        const QJsonObject initialLegacy{
+            {QStringLiteral("proxy_type"), QStringLiteral("None")},
+            {QStringLiteral("proxy_ip"), QStringLiteral("proxy.old")},
+            {QStringLiteral("proxy_port"), 1080},
+            {QStringLiteral("proxy_auth_enabled"), false},
+            {QStringLiteral("proxy_username"), QStringLiteral("old-user")},
+            {QStringLiteral("proxy_password"), QStringLiteral("old-secret")},
+            {QStringLiteral("proxy_hostname_lookup"), false},
+            {QStringLiteral("proxy_bittorrent"), false},
+            {QStringLiteral("proxy_peer_connections"), false},
+            {QStringLiteral("proxy_rss"), false},
+            {QStringLiteral("proxy_misc"), false}
+        };
+        QJsonObject initialModern = initialLegacy;
+        initialModern.insert(QStringLiteral("proxy_type"), QStringLiteral("SOCKS4"));
+        initialModern.insert(QStringLiteral("proxy_ip"), QStringLiteral("proxy.modern"));
+        initialModern.insert(QStringLiteral("proxy_bittorrent"), true);
+        initialModern.insert(QStringLiteral("proxy_peer_connections"), true);
+        legacy.setServerPreferences(initialLegacy);
+        modern.setServerPreferences(initialModern);
+        QVERIFY(legacy.start() && modern.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("prefs.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, legacy.url());
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(QStringLiteral("v5.1.4")), 6000);
+        openConnectDialog(window, modern.url(), false, true, true, QStringLiteral("Modern seedbox"));
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(QStringLiteral("v5.3.0")), 6000);
+        auto *tabs = window.findChild<QTabWidget *>(QStringLiteral("serverTabs"));
+        auto *prefs = window.findChild<QAction *>(QStringLiteral("actionOptions"));
+        QVERIFY(tabs && prefs);
+
+        struct Controls
+        {
+            QComboBox *type;
+            QLineEdit *host;
+            QSpinBox *port;
+            QGroupBox *auth;
+            QLineEdit *user;
+            QLineEdit *password;
+            QCheckBox *lookup;
+            QGroupBox *bt;
+            QCheckBox *peer;
+            QCheckBox *rss;
+            QCheckBox *misc;
+            QLabel *unavailable;
+            QPushButton *apply;
+            QCheckBox *upnp;
+        };
+        const auto withProxy = [&](bool supported, auto exercise) {
+            bool finished = false;
+            QTimer::singleShot(0, &window, [&]() {
+                auto *dlg = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget());
+                QVERIFY(dlg);
+                const auto cleanup = qScopeGuard([dlg]() { if (dlg->isVisible()) dlg->reject(); });
+                auto *sections = dlg->findChild<QListWidget *>(QStringLiteral("preferencesSections"));
+                const Controls c{
+                    dlg->findChild<QComboBox *>(QStringLiteral("comboProxyType")),
+                    dlg->findChild<QLineEdit *>(QStringLiteral("textProxyIP")),
+                    dlg->findChild<QSpinBox *>(QStringLiteral("spinProxyPort")),
+                    dlg->findChild<QGroupBox *>(QStringLiteral("checkProxyAuth")),
+                    dlg->findChild<QLineEdit *>(QStringLiteral("textProxyUsername")),
+                    dlg->findChild<QLineEdit *>(QStringLiteral("textProxyPassword")),
+                    dlg->findChild<QCheckBox *>(QStringLiteral("checkProxyHostnameLookup")),
+                    dlg->findChild<QGroupBox *>(QStringLiteral("checkProxyBitTorrent")),
+                    dlg->findChild<QCheckBox *>(QStringLiteral("checkProxyPeerConnections")),
+                    dlg->findChild<QCheckBox *>(QStringLiteral("checkProxyRSS")),
+                    dlg->findChild<QCheckBox *>(QStringLiteral("checkProxyMisc")),
+                    dlg->findChild<QLabel *>(QStringLiteral("labelProxyTypeUnavailable")),
+                    dlg->findChild<QPushButton *>(QStringLiteral("preferencesApply")),
+                    dlg->findChild<QCheckBox *>(QStringLiteral("checkUPnP"))
+                };
+                QVERIFY(sections && c.type && c.host && c.port && c.auth && c.user && c.password
+                    && c.lookup && c.bt && c.peer && c.rss && c.misc && c.unavailable && c.apply && c.upnp);
+                sections->setCurrentRow(3);
+                if (supported)
+                    QTRY_VERIFY_WITH_TIMEOUT(c.type->isEnabled(), 6000);
+                else
+                    QTRY_VERIFY_WITH_TIMEOUT(c.upnp->isEnabled(), 6000);
+                QCOMPARE(c.type->count(), 4);
+                QCOMPARE(c.type->itemText(0), QStringLiteral("(None)"));
+                QCOMPARE(c.password->echoMode(), QLineEdit::Password);
+                exercise(c);
+                finished = true;
+            });
+            prefs->trigger();
+            QVERIFY(finished);
+        };
+        const auto delta = [](DemoQbittorrentServer &server) {
+            const QUrlQuery form(QString::fromUtf8(server.lastCommandBody("/api/v2/app/setPreferences")));
+            return QJsonDocument::fromJson(form.queryItemValue(
+                QStringLiteral("json"), QUrl::FullyDecoded).toUtf8()).object();
+        };
+
+        tabs->setCurrentIndex(0);
+        for (bool save : {false, true})
+        {
+            withProxy(true, [&](const Controls &c) {
+                QCOMPARE(c.type->currentIndex(), 0);
+                QVERIFY(!c.host->isEnabled() && !c.port->isEnabled() && !c.auth->isEnabled()
+                    && !c.lookup->isEnabled() && !c.bt->isEnabled() && !c.peer->isEnabled()
+                    && !c.rss->isEnabled() && !c.misc->isEnabled() && c.unavailable->isHidden());
+                QVERIFY(!c.apply->isEnabled());
+                c.type->setCurrentIndex(1);
+                QVERIFY(c.host->isEnabled() && c.port->isEnabled() && c.bt->isEnabled());
+                QVERIFY(!c.auth->isEnabled() && !c.lookup->isEnabled() && !c.rss->isEnabled()
+                    && !c.misc->isEnabled() && !c.peer->isEnabled() && !c.unavailable->isHidden());
+                c.type->setCurrentIndex(2);
+                QVERIFY(c.auth->isEnabled() && c.lookup->isEnabled() && c.rss->isEnabled()
+                    && c.misc->isEnabled() && c.unavailable->isHidden());
+                QVERIFY(!c.user->isEnabled() && !c.password->isEnabled());
+                c.type->setCurrentIndex(3);
+                QVERIFY(c.auth->isEnabled() && c.lookup->isEnabled() && c.rss->isEnabled()
+                    && c.misc->isEnabled());
+                c.type->setCurrentIndex(2);
+                c.host->setText(QStringLiteral("proxy.new"));
+                c.port->setValue(1081);
+                c.auth->setChecked(true);
+                QVERIFY(c.user->isEnabled() && c.password->isEnabled());
+                c.user->setText(QStringLiteral("new-user"));
+                c.password->setText(QStringLiteral("secret+&%"));
+                c.lookup->click();
+                c.bt->setChecked(true);
+                QVERIFY(c.peer->isEnabled());
+                c.peer->click();
+                c.rss->click();
+                c.misc->click();
+                QVERIFY(c.apply->isEnabled());
+                QCOMPARE(legacy.commandsFor("/api/v2/app/setPreferences"), 0);
+                if (save)
+                {
+                    c.apply->click();
+                    QTRY_VERIFY_WITH_TIMEOUT(c.type->isEnabled() && !c.apply->isEnabled(), 6000);
+                    QCOMPARE(c.host->text(), QStringLiteral("proxy.new"));
+                    QCOMPARE(c.port->value(), 1081);
+                    QVERIFY(c.auth->isChecked() && c.bt->isChecked() && c.peer->isChecked());
+                }
+            });
+            if (!save)
+                QCOMPARE(legacy.serverPreferences(), initialLegacy);
+        }
+        const QJsonObject expectedLegacy{
+            {QStringLiteral("proxy_type"), QStringLiteral("SOCKS5")},
+            {QStringLiteral("proxy_ip"), QStringLiteral("proxy.new")},
+            {QStringLiteral("proxy_port"), 1081},
+            {QStringLiteral("proxy_auth_enabled"), true},
+            {QStringLiteral("proxy_username"), QStringLiteral("new-user")},
+            {QStringLiteral("proxy_password"), QStringLiteral("secret+&%")},
+            {QStringLiteral("proxy_hostname_lookup"), true},
+            {QStringLiteral("proxy_bittorrent"), true},
+            {QStringLiteral("proxy_peer_connections"), true},
+            {QStringLiteral("proxy_rss"), true},
+            {QStringLiteral("proxy_misc"), true}
+        };
+        QCOMPARE(delta(legacy), expectedLegacy);
+        QCOMPARE(legacy.serverPreferences(), expectedLegacy);
+        QCOMPARE(modern.serverPreferences(), initialModern);
+
+        tabs->setCurrentIndex(1);
+        withProxy(true, [](const Controls &c) {
+            QCOMPARE(c.type->currentIndex(), 1);
+            QCOMPARE(c.host->text(), QStringLiteral("proxy.modern"));
+            QVERIFY(c.bt->isChecked() && c.peer->isEnabled() && c.peer->isChecked());
+            QVERIFY(!c.auth->isEnabled() && !c.lookup->isEnabled() && !c.rss->isEnabled()
+                && !c.misc->isEnabled() && !c.unavailable->isHidden());
+            c.bt->setChecked(false);
+            QVERIFY(!c.peer->isEnabled());
+            c.bt->setChecked(true);
+            QVERIFY(c.peer->isEnabled() && c.peer->isChecked());
+            QVERIFY(!c.apply->isEnabled());
+            c.type->setCurrentIndex(0);
+            QVERIFY(!c.host->isEnabled() && !c.peer->isEnabled());
+            c.apply->click();
+            QTRY_VERIFY_WITH_TIMEOUT(c.type->isEnabled() && !c.apply->isEnabled(), 6000);
+        });
+        const QJsonObject modernDelta{{QStringLiteral("proxy_type"), QStringLiteral("None")}};
+        QCOMPARE(delta(modern), modernDelta);
+        QJsonObject expectedModern = initialModern;
+        expectedModern.insert(QStringLiteral("proxy_type"), QStringLiteral("None"));
+        QCOMPARE(modern.serverPreferences(), expectedModern);
+        QCOMPARE(legacy.serverPreferences(), expectedLegacy);
+        settings.sync();
+        QFile settingsFile(temp.filePath(QStringLiteral("prefs.ini")));
+        QVERIFY(settingsFile.open(QIODevice::ReadOnly));
+        const QByteArray saved = settingsFile.readAll();
+        QVERIFY(!saved.contains("secret+&%") && !saved.contains("old-secret"));
+        settingsFile.close();
+
+        // An unknown type must not become None and must not enable dependent controls.
+        modern.setServerPreferences({
+            {QStringLiteral("proxy_type"), QStringLiteral("Other")},
+            {QStringLiteral("proxy_ip"), QStringLiteral("host")},
+            {QStringLiteral("proxy_port"), 1080},
+            {QStringLiteral("proxy_bittorrent"), true},
+            {QStringLiteral("upnp"), true}
+        });
+        withProxy(false, [](const Controls &c) {
+            QVERIFY(!c.type->isEnabled() && !c.host->isEnabled() && !c.port->isEnabled()
+                && !c.bt->isEnabled() && !c.auth->isEnabled() && !c.peer->isEnabled());
+            QVERIFY(!c.apply->isEnabled());
+        });
+        modern.setServerPreferences({
+            {QStringLiteral("proxy_type"), QStringLiteral("HTTP")},
+            {QStringLiteral("proxy_ip"), false},
+            {QStringLiteral("proxy_port"), 65536},
+            {QStringLiteral("proxy_auth_enabled"), true},
+            {QStringLiteral("proxy_username"), QStringLiteral("name")},
+            {QStringLiteral("proxy_peer_connections"), true}
+        });
+        withProxy(true, [](const Controls &c) {
+            QCOMPARE(c.type->currentIndex(), 3);
+            QVERIFY(!c.host->isEnabled() && !c.port->isEnabled() && c.auth->isEnabled());
+            QVERIFY(c.user->isEnabled() && !c.password->isEnabled());
+            QVERIFY(!c.bt->isEnabled() && !c.peer->isEnabled() && !c.lookup->isEnabled()
+                && !c.rss->isEnabled() && !c.misc->isEnabled());
+            QVERIFY(!c.apply->isEnabled());
+        });
+        QCOMPARE(modern.commandsFor("/api/v2/app/setPreferences"), 1);
+
+        tabs->setCurrentIndex(0);
+        withProxy(true, [](const Controls &c) {
+            QCOMPARE(c.type->currentIndex(), 2);
+            QCOMPARE(c.host->text(), QStringLiteral("proxy.new"));
+            QCOMPARE(c.port->value(), 1081);
+            QVERIFY(c.auth->isChecked() && c.lookup->isChecked() && c.bt->isChecked()
+                && c.peer->isChecked() && c.rss->isChecked() && c.misc->isChecked());
+            QVERIFY(!c.apply->isEnabled());
+        });
+    }
+
     void legacyBackupDestinationsUseNativeControls()
     {
         DemoQbittorrentServer legacy(true), modern(true);

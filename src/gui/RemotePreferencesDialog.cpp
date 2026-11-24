@@ -185,6 +185,7 @@ RemotePreferencesDialog::RemotePreferencesDialog(QSettings &settings,
     bindConnectionListeningControls();
     bindConnectionLimits();
     bindI2PControls();
+    bindProxyControls();
     populateAdvancedPlaceholders();
     buildRemotePathsPage(preferredProfileId);
 
@@ -710,6 +711,54 @@ void RemotePreferencesDialog::readI2PBuildInfo()
         dialog->refreshRemoteControls();
         dialog->updateButtons();
     });
+}
+
+void RemotePreferencesDialog::bindProxyControls()
+{
+    // Match the native enum order and labels, not the WebUI's numeric
+    // legacy representation. Both upstream versions expose string keys.
+    m_ui->comboProxyType->addItems({tr("(None)"), tr("SOCKS4"), tr("SOCKS5"), tr("HTTP")});
+    bindStringCombo("proxy_type", m_ui->comboProxyType,
+        {QStringLiteral("None"), QStringLiteral("SOCKS4"), QStringLiteral("SOCKS5"), QStringLiteral("HTTP")});
+    const auto active = [this]() {
+        return remoteFieldAvailable("proxy_type") && m_ui->comboProxyType->currentIndex() > 0;
+    };
+    const auto modern = [this, active]() {
+        return active() && m_ui->comboProxyType->currentIndex() >= 2;
+    };
+    const auto auth = [this, modern]() {
+        return modern() && remoteFieldAvailable("proxy_auth_enabled")
+            && m_ui->checkProxyAuth->isChecked();
+    };
+    bindRemoteControl("proxy_ip", m_ui->textProxyIP, active,
+        tr("Proxy host as seen by the connected server."));
+    bindRemoteControl("proxy_port", m_ui->spinProxyPort, active);
+    bindRemoteControl("proxy_hostname_lookup", m_ui->checkProxyHostnameLookup, modern,
+        tr("If checked, hostname lookups are done via the proxy."));
+    bindRemoteControl("proxy_auth_enabled", m_ui->checkProxyAuth, modern);
+    bindRemoteControl("proxy_username", m_ui->textProxyUsername, auth);
+    m_ui->textProxyPassword->setEchoMode(QLineEdit::Password);
+    bindRemoteControl("proxy_password", m_ui->textProxyPassword, auth);
+    bindRemoteControl("proxy_bittorrent", m_ui->checkProxyBitTorrent, active);
+    bindRemoteControl("proxy_peer_connections", m_ui->checkProxyPeerConnections,
+        [this, active]() {
+            return active() && remoteFieldAvailable("proxy_bittorrent")
+                && m_ui->checkProxyBitTorrent->isChecked();
+        }, tr("Otherwise, the proxy server is only used for tracker connections."));
+    bindRemoteControl("proxy_rss", m_ui->checkProxyRSS, modern,
+        tr("RSS feeds will use proxy."));
+    bindRemoteControl("proxy_misc", m_ui->checkProxyMisc, modern,
+        tr("Search engine, software updates or anything else on the server will use proxy."));
+}
+
+void RemotePreferencesDialog::refreshProxyControls()
+{
+    m_ui->labelProxyTypeUnavailable->setVisible(remoteFieldAvailable("proxy_type")
+        && m_ui->comboProxyType->currentIndex() == 1);
+    m_ui->lblProxyIP->setEnabled(m_ui->textProxyIP->isEnabled());
+    m_ui->lblProxyPort->setEnabled(m_ui->spinProxyPort->isEnabled());
+    m_ui->lblProxyUsername->setEnabled(m_ui->textProxyUsername->isEnabled());
+    m_ui->lblProxyPassword->setEnabled(m_ui->textProxyPassword->isEnabled());
 }
 
 void RemotePreferencesDialog::bindServerBehaviorControls()
@@ -1411,6 +1460,7 @@ void RemotePreferencesDialog::refreshRemoteControls()
     refreshBackupControls();
     refreshConnectionLimitControls();
     refreshI2PControls();
+    refreshProxyControls();
     const bool portAvailable = remoteFieldAvailable("listen_port");
     m_ui->randomButton->setEnabled(portAvailable);
     m_ui->randomButton->setToolTip(portAvailable
