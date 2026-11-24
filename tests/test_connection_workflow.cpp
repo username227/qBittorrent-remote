@@ -4298,13 +4298,16 @@ private slots:
         upload(duplicatePath, 1, 0); // Server permits merge; no prompt.
         QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor("/api/v2/torrents/addTrackers"), 2, 6000);
 
+        edit(false, true, false, true);
+        upload(duplicatePath, 0, 0); // Direct addition uses the server merge default.
+        QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor("/api/v2/torrents/addTrackers"), 3, 6000);
+
         edit(false, false, false, true);
         QVERIFY(!server.serverPreferences().value(QStringLiteral("merge_trackers")).toBool());
         upload(duplicatePath, 0, 0); // Neither options nor merge confirmation.
-        QTRY_VERIFY_WITH_TIMEOUT(server.preferenceReads() >= 1, 6000);
         upload(freshPath, 0, 0);
         QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor("/api/v2/torrents/add"), 1, 6000);
-        QCOMPARE(server.commandsFor("/api/v2/torrents/addTrackers"), 2);
+        QCOMPARE(server.commandsFor("/api/v2/torrents/addTrackers"), 3);
         // A skipped dialog must leave the NAS's chosen defaults intact,
         // not send the desktop's previously hard-coded values.
         const QByteArray body = server.lastCommandBody("/api/v2/torrents/add");
