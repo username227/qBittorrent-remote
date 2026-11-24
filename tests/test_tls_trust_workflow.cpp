@@ -8,6 +8,7 @@
 #include <QApplication>
 #include <QComboBox>
 #include <QCryptographicHash>
+#include <QDateTime>
 #include <QEvent>
 #include <QElapsedTimer>
 #include <QFile>
@@ -36,7 +37,8 @@
 class EphemeralCertificate final
 {
 public:
-    bool generate(const QString &dir, const QString &name, const QString &san)
+    bool generate(const QString &dir, const QString &name, const QString &san,
+                  bool expired = false)
     {
         const QString pemPath = dir + QLatin1Char('/') + name + QStringLiteral(".crt");
         const QString keyPath = dir + QLatin1Char('/') + name + QStringLiteral(".key");
@@ -61,7 +63,64 @@ public:
             || generator.exitCode() != 0)
             return false;
 
-        QFile certificateFile(pemPath);
+        // Use explicit historical validity dates, rather than -days 0
+        // (rejected by some OpenSSL versions and timing-dependent on others).
+        // openssl ca supports these dates on older and newer OpenSSL builds.
+        const QString finalPath = expired ? pemPath + QStringLiteral(".expired") : pemPath;
+        if (expired)
+        {
+            const auto write = [&dir](const QString &filename, const QByteArray &data) {
+                QFile file(dir + QLatin1Char('/') + filename);
+                return file.open(QIODevice::WriteOnly | QIODevice::Truncate)
+                    && file.write(data) == data.size() && file.flush();
+            };
+            const QByteArray config = QByteArrayLiteral(
+                "[ca]\n"
+                "default_ca=local\n"
+                "[local]\n"
+                "database=index.txt\n"
+                "serial=serial\n"
+                "new_certs_dir=.\n"
+                "default_md=sha256\n"
+                "policy=policy\n"
+                "[policy]\n"
+                "commonName=supplied\n"
+                "[server]\n"
+                "basicConstraints=critical,CA:FALSE\n"
+                "keyUsage=critical,digitalSignature,keyEncipherment\n"
+                "extendedKeyUsage=serverAuth\n")
+                + (san.isEmpty() ? QByteArray() : QByteArrayLiteral("subjectAltName=")
+                    + san.toUtf8() + '\n');
+            if (!write(QStringLiteral("ca.cnf"), config)
+                || !write(QStringLiteral("index.txt"), QByteArray())
+                || !write(QStringLiteral("serial"), QByteArrayLiteral("01\n")))
+                return false;
+            generator.setWorkingDirectory(dir);
+            const QString csr = name + QStringLiteral(".csr");
+            const auto run = [&generator](const QStringList &arguments) {
+                generator.start(QStringLiteral("openssl"), arguments);
+                const bool ok = generator.waitForFinished(15000)
+                    && generator.exitStatus() == QProcess::NormalExit
+                    && generator.exitCode() == 0;
+                if (!ok)
+                    qWarning().noquote() << generator.readAllStandardError();
+                return ok;
+            };
+            if (!run({QStringLiteral("x509"), QStringLiteral("-x509toreq"),
+                    QStringLiteral("-in"), name + QStringLiteral(".crt"),
+                    QStringLiteral("-signkey"), name + QStringLiteral(".key"),
+                    QStringLiteral("-out"), csr})
+                || !run({QStringLiteral("ca"), QStringLiteral("-selfsign"),
+                    QStringLiteral("-batch"), QStringLiteral("-config"), QStringLiteral("ca.cnf"),
+                    QStringLiteral("-keyfile"), name + QStringLiteral(".key"),
+                    QStringLiteral("-in"), csr,
+                    QStringLiteral("-out"), name + QStringLiteral(".crt.expired"),
+                    QStringLiteral("-notext"), QStringLiteral("-startdate"), QStringLiteral("20000101000000Z"),
+                    QStringLiteral("-enddate"), QStringLiteral("20010101000000Z"),
+                    QStringLiteral("-extensions"), QStringLiteral("server")}))
+                return false;
+        }
+        QFile certificateFile(finalPath);
         QFile keyFile(keyPath);
         if (!certificateFile.open(QIODevice::ReadOnly)
             || !keyFile.open(QIODevice::ReadOnly))
@@ -93,7 +152,7 @@ public:
                     continue;
                 auto input = std::make_shared<QByteArray>();
                 connect(socket, &QSslSocket::readyRead, this,
-                    [socket, input]() {
+                    [this, socket, input]() {
                         input->append(socket->readAll());
                         const int split = input->indexOf("\r\n\r\n");
                         if (split < 0)
@@ -115,6 +174,7 @@ public:
                         int status = 200;
                         if (path == "/api/v2/auth/login")
                         {
+                            ++m_loginRequests;
                             result = "Ok.";
                             additionalHeaders = "Set-Cookie: QBT_SID=local-test; Path=/; HttpOnly\r\n";
                         }
@@ -158,6 +218,7 @@ public:
         m_server.setSslConfiguration(config);
     }
 
+    int loginRequests() const noexcept { return m_loginRequests; }
     bool start() { return m_server.listen(QHostAddress::LocalHost, 0); }
     QString url() const
     {
@@ -166,6 +227,7 @@ public:
 
 private:
     QSslServer m_server;
+    int m_loginRequests = 0;
 };
 
 // Observes real modal dialogs as a GUI user would. It can approve or reject a
@@ -180,6 +242,7 @@ public:
 
     int prompts() const noexcept { return m_prompts; }
     bool sawChangedCertificate() const noexcept { return m_sawChanged; }
+    bool sawIdentityMismatch() const noexcept { return m_sawMismatch; }
     QString certificateText() const { return m_lastText; }
 
 protected:
@@ -196,6 +259,7 @@ protected:
         ++m_prompts;
         m_sawChanged |= dialog->windowTitle().contains(QStringLiteral("Changed"));
         m_lastText = dialog->informativeText();
+        m_sawMismatch |= m_lastText.contains(QStringLiteral("Certificate identity mismatch"));
         const Decision decision = m_decision;
         QTimer::singleShot(0, dialog, [dialog, decision]() {
             for (QAbstractButton *button : dialog->buttons())
@@ -216,6 +280,7 @@ private:
     Decision m_decision;
     int m_prompts = 0;
     bool m_sawChanged = false;
+    bool m_sawMismatch = false;
     QString m_lastText;
 };
 
@@ -224,14 +289,24 @@ class TlsTrustWorkflowTest final : public QObject
     Q_OBJECT
 
 private:
-    static void connectThroughMenu(MainWindow &window, const QString &url)
+    static void connectThroughMenu(MainWindow &window, const QString &url,
+                                   const QString &name = QStringLiteral("TLS test seedbox"),
+                                   bool newProfile = false)
     {
-        QTimer::singleShot(0, [url]() {
+        QTimer::singleShot(0, [url, name, newProfile]() {
             auto *dialog = qobject_cast<ConnectionDialog *>(QApplication::activeModalWidget());
             if (!dialog)
                 return;
-            dialog->findChild<QLineEdit *>(QStringLiteral("serverName"))->setText(
-                QStringLiteral("TLS test seedbox"));
+            if (newProfile)
+                dialog->findChild<QPushButton *>(QStringLiteral("newServer"))->click();
+            else
+            {
+                auto *profiles = dialog->findChild<QComboBox *>(QStringLiteral("savedServers"));
+                const int existing = profiles->findText(name);
+                if (existing >= 0)
+                    profiles->setCurrentIndex(existing);
+            }
+            dialog->findChild<QLineEdit *>(QStringLiteral("serverName"))->setText(name);
             dialog->findChild<QLineEdit *>(QStringLiteral("serverUrl"))->setText(url);
             dialog->findChild<QLineEdit *>(QStringLiteral("serverUsername"))->setText(
                 QStringLiteral("demo"));
@@ -416,16 +491,17 @@ private slots:
         qApp->removeEventFilter(&driver);
     }
 
-    void userCannotOverrideWrongHostname()
+    void mismatchedCertificateRequiresExplicitEndpointTrust()
     {
         QTemporaryDir temp;
         QVERIFY(temp.isValid());
-        EphemeralCertificate wrongHost;
+        EphemeralCertificate wrongHost, replacement;
         QVERIFY(wrongHost.generate(temp.path(), QStringLiteral("wrong-host"),
             QStringLiteral("DNS:not-localhost.example")));
-        // Deliberate trap: the legacy Common Name matches 127.0.0.1,
-        // but the SAN does NOT contain that IP. TLS trust must never allow
-        // the CN to override an unrelated Subject Alternative Name.
+        QVERIFY(replacement.generate(temp.path(), QStringLiteral("replacement-wrong-host"),
+            QStringLiteral("DNS:another-host.example")));
+        // The legacy CN matches the IP, but a conflicting SAN takes
+        // precedence. Only explicit fingerprint trust may waive this.
         QVERIFY(wrongHost.certificate.subjectInfo(QSslCertificate::CommonName)
             .contains(QStringLiteral("127.0.0.1")));
         QVERIFY(wrongHost.certificate.subjectAlternativeNames()
@@ -434,19 +510,127 @@ private slots:
         server.useCertificate(wrongHost);
         QVERIFY(server.start());
         QSettings settings(temp.filePath(QStringLiteral("profiles.ini")), QSettings::IniFormat);
+        Remote::ProfileStore store(settings);
 
-        MainWindow window(nullptr, &settings);
-        window.show();
-        CertificateDialogDriver driver(CertificateDialogDriver::Decision::Approve);
-        qApp->installEventFilter(&driver);
-        connectThroughMenu(window, server.url());
-        QVERIFY2(waitForStatus(window, QStringLiteral("TLS certificate rejected")),
+        {
+            MainWindow window(nullptr, &settings);
+            window.show();
+            CertificateDialogDriver driver(CertificateDialogDriver::Decision::Reject);
+            qApp->installEventFilter(&driver);
+            connectThroughMenu(window, server.url());
+            QVERIFY2(waitForStatus(window, QStringLiteral("trust declined")),
                 qPrintable(window.statusBar()->currentMessage()));
-        QCOMPARE(driver.prompts(), 0);
+            QCOMPARE(driver.prompts(), 1);
+            QVERIFY(driver.sawIdentityMismatch());
+            QCOMPARE(server.loginRequests(), 0);
+            QCOMPARE(store.profiles().size(), 1);
+            QVERIFY(store.trustedCertificateFingerprint(store.profiles().first()).isEmpty());
+        }
+        {
+            MainWindow window(nullptr, &settings);
+            window.show();
+            CertificateDialogDriver driver(CertificateDialogDriver::Decision::Approve);
+            qApp->installEventFilter(&driver);
+            connectThroughMenu(window, server.url());
+            QVERIFY2(waitForStatus(window, QStringLiteral("Connected to TLS test seedbox")),
+                qPrintable(window.statusBar()->currentMessage()));
+            QCOMPARE(driver.prompts(), 1);
+            QVERIFY(driver.sawIdentityMismatch());
+            QCOMPARE(server.loginRequests(), 1);
+        }
+        const auto profile = store.profiles().first();
+        const QString pin = QString::fromLatin1(wrongHost.certificate.digest(
+            QCryptographicHash::Sha256).toHex());
+        QCOMPARE(store.trustedCertificateFingerprint(profile), pin);
+        {
+            MainWindow window(nullptr, &settings);
+            window.show();
+            CertificateDialogDriver driver(CertificateDialogDriver::Decision::Reject);
+            qApp->installEventFilter(&driver);
+            connectThroughMenu(window, server.url());
+            QVERIFY2(waitForStatus(window, QStringLiteral("Connected to TLS test seedbox")),
+                qPrintable(window.statusBar()->currentMessage()));
+            QCOMPARE(driver.prompts(), 0);
+            QCOMPARE(server.loginRequests(), 2);
+        }
+        // A different endpoint must not inherit trust, even when presenting
+        // the same certificate (e.g. packages shipping a common default).
+        DemoHttpsServer other;
+        other.useCertificate(wrongHost);
+        QVERIFY(other.start());
+        {
+            MainWindow window(nullptr, &settings);
+            window.show();
+            CertificateDialogDriver driver(CertificateDialogDriver::Decision::Reject);
+            qApp->installEventFilter(&driver);
+            connectThroughMenu(window, other.url(), QStringLiteral("Other TLS seedbox"), true);
+            QVERIFY2(waitForStatus(window, QStringLiteral("trust declined")),
+                qPrintable(window.statusBar()->currentMessage()));
+            QCOMPARE(driver.prompts(), 1);
+            QVERIFY(driver.sawIdentityMismatch());
+            QCOMPARE(other.loginRequests(), 0);
+        }
+        QCOMPARE(store.profiles().size(), 2);
+        for (const auto &saved : store.profiles())
+            if (saved.id != profile.id)
+                QVERIFY(store.trustedCertificateFingerprint(saved).isEmpty());
+        QCOMPARE(store.trustedCertificateFingerprint(profile), pin);
+        server.useCertificate(replacement);
+        {
+            MainWindow window(nullptr, &settings);
+            window.show();
+            CertificateDialogDriver driver(CertificateDialogDriver::Decision::Reject);
+            qApp->installEventFilter(&driver);
+            connectThroughMenu(window, server.url());
+            QVERIFY2(waitForStatus(window, QStringLiteral("trust declined")),
+                qPrintable(window.statusBar()->currentMessage()));
+            QCOMPARE(driver.prompts(), 1);
+            QVERIFY(driver.sawChangedCertificate() && driver.sawIdentityMismatch());
+            QVERIFY(driver.certificateText().contains(pin.toUpper()));
+            QCOMPARE(server.loginRequests(), 2);
+        }
+        QCOMPARE(store.trustedCertificateFingerprint(profile), pin);
+    }
+
+    void expiredCertificateCannotBeApprovedEvenWithStoredPin()
+    {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        EphemeralCertificate expired;
+        QVERIFY(expired.generate(temp.path(), QStringLiteral("expired"),
+            QStringLiteral("DNS:not-localhost.example"), true));
+        QTRY_VERIFY_WITH_TIMEOUT(expired.certificate.expiryDate() < QDateTime::currentDateTimeUtc(), 3000);
+        DemoHttpsServer server;
+        server.useCertificate(expired);
+        QVERIFY(server.start());
+        QSettings settings(temp.filePath(QStringLiteral("profiles.ini")), QSettings::IniFormat);
+        {
+            MainWindow window(nullptr, &settings);
+            window.show();
+            CertificateDialogDriver driver(CertificateDialogDriver::Decision::Approve);
+            qApp->installEventFilter(&driver);
+            connectThroughMenu(window, server.url());
+            QVERIFY2(waitForStatus(window, QStringLiteral("expired")),
+                qPrintable(window.statusBar()->currentMessage()));
+            QCOMPARE(driver.prompts(), 0);
+            QCOMPARE(server.loginRequests(), 0);
+        }
         Remote::ProfileStore store(settings);
         QCOMPARE(store.profiles().size(), 1);
-        QVERIFY(store.trustedCertificateFingerprint(store.profiles().first()).isEmpty());
-        qApp->removeEventFilter(&driver);
+        const auto profile = store.profiles().first();
+        QVERIFY(store.trustCertificate(profile, QString::fromLatin1(
+            expired.certificate.digest(QCryptographicHash::Sha256).toHex())));
+        {
+            MainWindow window(nullptr, &settings);
+            window.show();
+            CertificateDialogDriver driver(CertificateDialogDriver::Decision::Approve);
+            qApp->installEventFilter(&driver);
+            connectThroughMenu(window, server.url());
+            QVERIFY2(waitForStatus(window, QStringLiteral("expired")),
+                qPrintable(window.statusBar()->currentMessage()));
+            QCOMPARE(driver.prompts(), 0);
+            QCOMPARE(server.loginRequests(), 0);
+        }
     }
 
     void userCanCancelAnUnresponsiveConnection()

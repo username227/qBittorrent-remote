@@ -31,6 +31,7 @@ struct CertificateChallenge
     QString presentedFingerprint;
     QString previousFingerprint;
     QStringList verificationErrors;
+    bool endpointIdentityMismatch = false;
 };
 
 // Each remote server owns an independent QNetworkAccessManager and cookie jar.
@@ -161,7 +162,8 @@ private:
     void armReply(QNetworkReply *reply);
     void handleSslErrors(QNetworkReply *reply, const QList<QSslError> &errors);
     void handleEncrypted(QNetworkReply *reply);
-    bool approveCertificate(const QSslCertificate &certificate, const QStringList &errors);
+    bool approveCertificate(const QSslCertificate &certificate, const QStringList &errors,
+                            bool endpointIdentityMismatch = false);
     void requestVersion();
     void requestApiVersion(const QString &version);
     void requestMainData();

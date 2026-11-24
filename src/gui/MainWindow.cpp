@@ -2667,12 +2667,19 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
             prompt.setObjectName(QStringLiteral("certificateTrustDialog"));
             prompt.setWindowTitle(changed
                 ? tr("Server Certificate Changed")
+                : challenge.endpointIdentityMismatch ? tr("Certificate Identity Mismatch")
                 : tr("Trust Server Certificate"));
             prompt.setIcon(QMessageBox::Warning);
             prompt.setTextFormat(Qt::PlainText);
-            prompt.setText(changed
+            QString summary = changed
                 ? tr("The saved server presents a different HTTPS certificate.")
-                : tr("This server's HTTPS certificate is not trusted by the system."));
+                : tr("This server's HTTPS certificate is not trusted by the system.");
+            if (challenge.endpointIdentityMismatch)
+                summary = (changed ? summary + QStringLiteral("\n\n") : QString())
+                    + tr("The certificate does not match the server address you entered. "
+                         "This can happen with a default NAS certificate, but can also "
+                         "indicate that you are connecting to the wrong server.");
+            prompt.setText(summary);
 
             const QSslCertificate &certificate = challenge.certificate;
             const QString subject = certificate.subjectInfo(
@@ -2703,7 +2710,8 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
 
             description += tr(
                 "\n\nOnly approve if you've verified this fingerprint "
-                "against the certificate installed on your server.");
+                "against the certificate installed on your server. "
+                "Trust applies only to this exact certificate and saved server address.");
             prompt.setInformativeText(description);
             prompt.setDetailedText(certificate.toText());
             auto *rejectButton = prompt.addButton(tr("Reject"), QMessageBox::RejectRole);

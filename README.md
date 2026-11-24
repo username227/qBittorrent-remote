@@ -106,13 +106,18 @@ inspect and trust the SHA-256 certificate fingerprint for that saved
 profile**. The trust prompt includes the address, subject, issuer, validity
 dates and verification errors. On a changed certificate, both the old and
 new fingerprints are displayed and approval is requested again. A modern
-certificate with a Subject Alternative Name (SAN) must identify the
-requested server address. For an IP-based connection, a legacy private
-certificate with **no SAN at all** may instead use an exact matching IP
-Common Name, with explicit fingerprint approval and pinning. A conflicting
-SAN never falls back to Common Name. Other hostname mismatches, certificate
-expiry and unrelated TLS errors cannot be overridden. Trust is invalidated
-on profile URL change or removal.
+certificate should identify the requested address in its Subject Alternative
+Name (SAN). For an IP-based connection, a legacy private certificate with
+**no SAN at all** may use an exact matching IP Common Name. A conflicting
+SAN never falls back to Common Name. If the server certificate does not
+match the address (as with some default NAS certificates), the dialog
+explicitly warns of the identity mismatch and offers an alternative:
+verify and pin that exact SHA-256 fingerprint for the saved endpoint.
+Reject is the default. Never approve an unverified fingerprint, including
+a generic certificate shared by multiple devices. Certificate expiry,
+revocation and unrelated reported TLS verification errors cannot be
+overridden, even with a stored pin. Trust is invalidated on profile URL
+change or removal.
 
 HTTP itself is not encrypted unless protected by a separate trusted tunnel
 (such as an existing VPN).
@@ -127,7 +132,7 @@ to exercise real login, server/version verification, authentication
 failure and disconnect without any live NAS or passwords.
 An additional CTest workflow spins up temporary HTTPS servers and exercises
 the actual certificate approval UI, remembered trust, certificate changes
-and hostname mismatch rejection. Test-only certificates are generated at
+and explicit hostname-mismatch approval/rejection, endpoint isolation and expired-certificate rejection. Test-only certificates are generated at
 runtime and **no TLS private key is committed**. The test needs the
 `openssl` command-line utility available on `PATH`.
 A credential-storage CTest workflow exercises remembering, reuse, opting
