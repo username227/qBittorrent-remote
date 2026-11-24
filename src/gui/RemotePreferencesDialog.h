@@ -56,6 +56,7 @@ private:
     void bindDownloadsSavingControls();
     void bindTorrentAdditionDefaults();
     void bindBackupAndWatchedFolders();
+    void refreshBackupControls();
     void bindExcludedFileNames();
     void bindNotificationAndProgramControls();
     void refreshNotificationControls();

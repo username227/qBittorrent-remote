@@ -284,6 +284,7 @@ if(BUILD_TESTING)
         downloadsExclusionsFollowSelectedServerCapabilities
         downloadsNotificationsAndProgramsFollowSelectedServer
         localOriginalTorrentDeletionRequiresConfirmedAddition
+        legacyBackupDestinationsUseNativeControls
     )
 
     # Check the registration against the actual QtTest-discovered functions.

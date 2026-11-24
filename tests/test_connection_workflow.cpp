@@ -361,7 +361,10 @@ public:
                                         if (m_preferences.contains(it.key()))
                                         {
                                             const bool directory = it.key() == QLatin1String("save_path")
-                                                || it.key() == QLatin1String("temp_path");
+                                                || it.key() == QLatin1String("temp_path")
+                                                || ((it.key() == QLatin1String("export_dir")
+                                                    || it.key() == QLatin1String("export_dir_fin"))
+                                                    && !it.value().toString().isEmpty());
                                             m_preferences.insert(it.key(), directory && it.value().isString()
                                                 ? QJsonValue(QDir::cleanPath(it.value().toString()))
                                                 : it.value());
@@ -3405,6 +3408,142 @@ private slots:
         QCOMPARE(delta, expectedDelta);
         QCOMPARE(modern.serverPreferences(), expectedModern);
         QCOMPARE(modern.commandsFor("/api/v2/app/setPreferences"), 2);
+    }
+
+    void legacyBackupDestinationsUseNativeControls()
+    {
+        DemoQbittorrentServer legacy(true), modern(true);
+        modern.enableModernResponses();
+        const QJsonObject initialLegacy{
+            {QStringLiteral("export_dir"), QStringLiteral("/share/old")},
+            {QStringLiteral("export_dir_fin"), QString()}
+        };
+        const QJsonObject initialModern{
+            {QStringLiteral("torrent_files_backup_enabled"), false},
+            {QStringLiteral("torrent_files_backup_dir"), QStringLiteral("/share/modern")},
+            {QStringLiteral("torrent_files_finished_backup_dir_enabled"), true},
+            {QStringLiteral("torrent_files_finished_backup_dir"), QStringLiteral("/share/completed")},
+            {QStringLiteral("remove_torrent_file_backup"), false},
+            // A transitional server exposing both families must use modern.
+            {QStringLiteral("export_dir"), QStringLiteral("/share/deprecated")},
+            {QStringLiteral("export_dir_fin"), QStringLiteral("/share/deprecated-finished")}
+        };
+        legacy.setServerPreferences(initialLegacy);
+        modern.setServerPreferences(initialModern);
+        QVERIFY(legacy.start() && modern.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("prefs.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, legacy.url());
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(QStringLiteral("v5.1.4")), 6000);
+        openConnectDialog(window, modern.url(), false, true, true, QStringLiteral("Modern seedbox"));
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(QStringLiteral("v5.3.0")), 6000);
+        auto *tabs = window.findChild<QTabWidget *>(QStringLiteral("serverTabs"));
+        auto *prefs = window.findChild<QAction *>(QStringLiteral("actionOptions"));
+        QVERIFY(tabs && prefs);
+        tabs->setCurrentIndex(0);
+
+        const auto editLegacy = [&](bool save) {
+            bool finished = false;
+            QTimer::singleShot(0, &window, [&]() {
+                auto *dlg = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget());
+                QVERIFY(dlg);
+                const auto cleanup = qScopeGuard([dlg]() { if (dlg->isVisible()) dlg->reject(); });
+                auto *sections = dlg->findChild<QListWidget *>(QStringLiteral("preferencesSections"));
+                auto *backup = dlg->findChild<QCheckBox *>(QStringLiteral("backupDirCheckBox"));
+                auto *path = dlg->findChild<QLineEdit *>(QStringLiteral("backupDirPathEdit"));
+                auto *complete = dlg->findChild<QCheckBox *>(QStringLiteral("finishedBackupDirCheckBox"));
+                auto *dest = dlg->findChild<QLineEdit *>(QStringLiteral("finishedBackupDirPathEdit"));
+                auto *remove = dlg->findChild<QCheckBox *>(QStringLiteral("removeBackupTorrentFileCheckBox"));
+                auto *apply = dlg->findChild<QPushButton *>(QStringLiteral("preferencesApply"));
+                QVERIFY(sections && backup && path && complete && dest && remove && apply);
+                sections->setCurrentRow(2);
+                QTRY_VERIFY_WITH_TIMEOUT(backup->isEnabled() && complete->isEnabled(), 6000);
+                QCOMPARE(backup->text(), QStringLiteral("Copy .torrent files to:"));
+                QCOMPARE(complete->text(), QStringLiteral("Copy .torrent files for finished downloads to:"));
+                QVERIFY(backup->isChecked() && path->isEnabled());
+                QCOMPARE(path->text(), QStringLiteral("/share/old"));
+                QVERIFY(!complete->isChecked() && !dest->isEnabled() && !remove->isEnabled());
+                backup->click();
+                QVERIFY(!path->isEnabled());
+                complete->click();
+                QVERIFY(dest->isEnabled() && apply->isEnabled());
+                if (save)
+                {
+                    // A checked but empty path must not silently disable.
+                    bool warned = false;
+                    QTimer::singleShot(0, dlg, [&]() {
+                        if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget()))
+                        {
+                            warned = box->windowTitle() == QStringLiteral("Invalid server directory");
+                            box->accept();
+                        }
+                    });
+                    apply->click();
+                    QVERIFY(warned);
+                    QCOMPARE(legacy.commandsFor("/api/v2/app/setPreferences"), 0);
+                }
+                dest->setText(QStringLiteral("/share/new-finished/"));
+                if (save)
+                {
+                    apply->click();
+                    QTRY_VERIFY_WITH_TIMEOUT(backup->isEnabled() && !apply->isEnabled(), 6000);
+                    QVERIFY(!backup->isChecked() && path->text().isEmpty());
+                    QCOMPARE(dest->text(), QStringLiteral("/share/new-finished"));
+                    QVERIFY(complete->isChecked() && !remove->isEnabled());
+                }
+                finished = true;
+            });
+            prefs->trigger();
+            QVERIFY(finished);
+        };
+        editLegacy(false);
+        QCOMPARE(legacy.serverPreferences(), initialLegacy);
+        QCOMPARE(legacy.commandsFor("/api/v2/app/setPreferences"), 0);
+        editLegacy(true);
+        const QJsonObject expectedLegacy{
+            {QStringLiteral("export_dir"), QString()},
+            {QStringLiteral("export_dir_fin"), QStringLiteral("/share/new-finished")}
+        };
+        QCOMPARE(legacy.serverPreferences(), expectedLegacy);
+        QCOMPARE(legacy.commandsFor("/api/v2/app/setPreferences"), 1);
+        QCOMPARE(modern.serverPreferences(), initialModern);
+
+        tabs->setCurrentIndex(1);
+        bool finished = false;
+        QTimer::singleShot(0, &window, [&]() {
+            auto *dlg = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget());
+            QVERIFY(dlg);
+            const auto cleanup = qScopeGuard([dlg]() { if (dlg->isVisible()) dlg->reject(); });
+            auto *sections = dlg->findChild<QListWidget *>(QStringLiteral("preferencesSections"));
+            auto *backup = dlg->findChild<QCheckBox *>(QStringLiteral("backupDirCheckBox"));
+            auto *path = dlg->findChild<QLineEdit *>(QStringLiteral("backupDirPathEdit"));
+            auto *remove = dlg->findChild<QCheckBox *>(QStringLiteral("removeBackupTorrentFileCheckBox"));
+            auto *apply = dlg->findChild<QPushButton *>(QStringLiteral("preferencesApply"));
+            QVERIFY(sections && backup && path && remove && apply);
+            sections->setCurrentRow(2);
+            QTRY_VERIFY_WITH_TIMEOUT(backup->isEnabled() && remove->isEnabled(), 6000);
+            QCOMPARE(backup->text(), QStringLiteral("Store backup in:"));
+            QVERIFY(!backup->isChecked() && !path->isEnabled());
+            QCOMPARE(path->text(), QStringLiteral("/share/modern"));
+            backup->click();
+            QVERIFY(path->isEnabled());
+            remove->click();
+            apply->click();
+            QTRY_VERIFY_WITH_TIMEOUT(backup->isEnabled() && !apply->isEnabled(), 6000);
+            finished = true;
+        });
+        prefs->trigger();
+        QVERIFY(finished);
+        QJsonObject expectedModern = initialModern;
+        expectedModern.insert(QStringLiteral("torrent_files_backup_enabled"), true);
+        expectedModern.insert(QStringLiteral("remove_torrent_file_backup"), true);
+        QCOMPARE(modern.serverPreferences(), expectedModern);
+        QCOMPARE(modern.commandsFor("/api/v2/app/setPreferences"), 1);
+        QCOMPARE(legacy.serverPreferences(), expectedLegacy);
     }
 
     void downloadsBackupsAndWatchedFoldersUseSelectedServer()
