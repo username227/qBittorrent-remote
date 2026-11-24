@@ -14,7 +14,7 @@ a live setting from the connected server**.
 | Native section | GUI included | Functionality in this PR | Follow-up |
 | --- | --- | --- | --- |
 | Behavior | Yes | Local desktop controls and live server log settings | Remaining unsupported controls |
-| Downloads | Yes | Disk options, Saving Management, addition defaults, duplicate behavior, backup settings and legacy watched folders | Exclusions, notifications, external programs and unsupported local-file deletion controls |
+| Downloads | Yes | Disk options, Saving Management, addition defaults, duplicate behavior, backup settings, legacy watched folders and file-name exclusions | Notifications, external programs and unsupported local-file deletion controls |
 | Connection | Yes | Unsupported controls disabled | Actual remote server preferences, never the local device's BitTorrent port |
 | Speed | Yes | Unsupported controls disabled | Server speed limits and scheduler |
 | BitTorrent | Yes | Unsupported controls disabled | DHT, PeX, encryption, queues and peer controls |
@@ -83,3 +83,7 @@ Display torrent content/options, request front activation and ask before merging
 ## Downloads checkpoint 5 — backup metadata and watched folders
 
 All five native .torrent backup controls bind to the upstream torrent_files_backup_enabled, torrent_files_backup_dir, torrent_files_finished_backup_dir_enabled, torrent_files_finished_backup_dir and remove_torrent_file_backup keys. Directory inputs are gated by their individual checkboxes and use the captured profile's mapped browse support. The legacy scan_dirs object supports watched-folder paths and destinations (0 = watched folder, 1 = default save path, string = custom server path). The existing native tree and Add/Options/Remove controls stage this map, not local file watchers. The richer native watched-folder options are not exposed; the deprecated upstream setter cannot reset an existing explicit path to default, so that transition is blocked. Changing the map requires confirmation because the NAS may immediately add torrents from monitored folders. A fresh read checks for intervening visible map changes before sending a replacement, followed by the normal readback; the legacy API offers no atomic compare-and-swap or visibility into hidden per-folder settings. No extra polling. Unsupported or unrepresentable keys remain disabled. Local metadata deletion is not part of server backup handling.
+
+## Downloads checkpoint 6 — excluded file names
+
+The native checkable group, multiline wildcard list and no-extension checkbox use `excluded_file_names_enabled`, `excluded_file_names` (newline-separated string) and `exclude_files_without_extension`. The latter is absent from the 5.1.4 API; each field is gated by the advertised type/value and the enabled parent group, not a hard-coded version cutoff. Disabling the group preserves the saved patterns and no-extension preference. No client-side filtering, file deletion, priority commands or extra polling: the selected server interprets and applies its exclusion rules. The existing Apply/Cancel and readback transaction verifies edits and never sends unsupported keys.
