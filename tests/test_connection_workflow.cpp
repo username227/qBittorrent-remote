@@ -2314,9 +2314,10 @@ private slots:
         QVERIFY(options);
         // Exercise the real menu and modal dialog rather than calling the
         // preference transport or the field binding helpers directly.
-        const auto withDialog = [&](const std::function<void(RemotePreferencesDialog *)> &drive) {
+        const auto withDialog = [&](const std::function<void(RemotePreferencesDialog *)> &drive,
+                                    bool background = false) {
             bool opened = false;
-            QTimer::singleShot(0, &window, [&]() {
+            const auto driveDialog = [&]() {
                 auto *dialog = qobject_cast<RemotePreferencesDialog *>(
                     QApplication::activeModalWidget());
                 if (!dialog)
@@ -2330,7 +2331,7 @@ private slots:
                 QVERIFY(navigation);
                 navigation->setCurrentRow(1);
                 drive(dialog);
-            });
+            };
             // Dismiss a dialog only on a test timeout, never pretend it passed.
             QTimer watchdog;
             bool timedOut = false;
@@ -2340,7 +2341,29 @@ private slots:
                     dialog->reject();
             });
             watchdog.start(12000);
-            options->trigger();
+            if (background)
+            {
+                auto *bar = tabs->tabBar();
+                QTimer::singleShot(0, &window, [&]() {
+                    auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+                    if (!menu) return;
+                    for (auto *action : menu->actions())
+                        if (action->objectName() == QLatin1String("serverTabPreferences") && action->isEnabled())
+                        {
+                            QTimer::singleShot(0, &window, driveDialog);
+                            action->trigger();
+                            break;
+                        }
+                    menu->close();
+                });
+                QVERIFY(QMetaObject::invokeMethod(bar, "customContextMenuRequested",
+                    Qt::DirectConnection, Q_ARG(QPoint, bar->tabRect(0).center())));
+            }
+            else
+            {
+                QTimer::singleShot(0, &window, driveDialog);
+                options->trigger();
+            }
             watchdog.stop();
             QVERIFY(opened);
             QVERIFY(!timedOut);
@@ -2362,6 +2385,9 @@ private slots:
             QVERIFY(!path->isEnabled()); // No fictitious editable values before GET.
             QTRY_VERIFY_WITH_TIMEOUT(path->isEnabled(), 6000);
             QCOMPARE(path->text(), QStringLiteral("/share/Second/log"));
+            auto *target = dialog->findChild<QLabel *>(QStringLiteral("preferencesRemoteTarget"));
+            QVERIFY(target && target->isVisible());
+            QVERIFY(target->text().contains(QStringLiteral("Second seedbox")));
             QVERIFY(!size->isEnabled() && !age->isEnabled() && !ageType->isEnabled());
             QVERIFY(!apply->isEnabled());
             path->setText(QStringLiteral("unsaved"));
@@ -2387,8 +2413,9 @@ private slots:
         QCOMPARE(second.commandsFor("/api/v2/app/setPreferences"), 1);
         QCOMPARE(second.serverPreferences().value(QStringLiteral("file_log_path")).toString(), newPath);
 
-        tabs->setCurrentIndex(0);
-        QTRY_VERIFY(window.statusBar()->currentMessage().contains(QStringLiteral("Connected to Demo seedbox")));
+        // Leave the second server active and configure the first through its
+        // background tab. The active transfer view must not be replaced.
+        QCOMPARE(tabs->currentIndex(), 1);
         // Simulate an external WebUI edit before reopening Preferences.
         auto updated = first.serverPreferences();
         updated.insert(QStringLiteral("file_log_path"), QStringLiteral("/share/First/changed-externally"));
@@ -2401,6 +2428,10 @@ private slots:
             QVERIFY(path && size && backup && buttons);
             QTRY_VERIFY_WITH_TIMEOUT(path->isEnabled(), 6000);
             QCOMPARE(path->text(), QStringLiteral("/share/First/changed-externally"));
+            auto *target = dialog->findChild<QLabel *>(QStringLiteral("preferencesRemoteTarget"));
+            QVERIFY(target && target->isVisible());
+            QVERIFY(target->text().contains(QStringLiteral("Demo seedbox")));
+            QCOMPARE(tabs->currentIndex(), 1);
             QCOMPARE(size->value(), 65);
             QVERIFY(size->isEnabled());
             backup->setChecked(false);
@@ -2413,7 +2444,8 @@ private slots:
             QVERIFY(dialog->isVisible());
             QVERIFY(!buttons->isEnabled());
             QTRY_VERIFY_WITH_TIMEOUT(!dialog->isVisible(), 6000);
-        });
+        }, true);
+        QCOMPARE(tabs->currentIndex(), 1);
         QCOMPARE(first.commandsFor("/api/v2/app/setPreferences"), 1);
         QCOMPARE(changedBody(first), QJsonObject({{QStringLiteral("file_log_max_size"), 128}}));
         QCOMPARE(first.serverPreferences().value(QStringLiteral("file_log_max_size")).toInt(), 128);

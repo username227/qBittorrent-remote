@@ -422,6 +422,14 @@ void MainWindow::setupMainArea()
             const auto connection = *it;
             QMenu menu(this);
             menu.setObjectName(QStringLiteral("serverTabContextMenu"));
+            auto *preferences = menu.addAction(upstreamIcon("configure"), tr("Preferences..."));
+            preferences->setObjectName(QStringLiteral("serverTabPreferences"));
+            preferences->setEnabled(connection->connected);
+            connect(preferences, &QAction::triggered, this, [this, connection]() {
+                if (containsConnection(connection) && connection->connected)
+                    openPreferences(connection);
+            });
+            menu.addSeparator();
             auto *disconnect = menu.addAction(upstreamIcon("disconnected"), tr("Disconnect"));
             disconnect->setObjectName(QStringLiteral("serverTabDisconnect"));
             connect(disconnect, &QAction::triggered, this, [this, connection]() {
@@ -599,16 +607,7 @@ void MainWindow::setupActions()
     // a currently connected server: local path mappings belong to saved
     // server profiles and never require an authenticated session.
     connect(m_ui->actionOptions, &QAction::triggered, this, [this]() {
-        const auto server = activeConnection();
-        const QString profileId = server ? server->profile.id : m_preferredServerId;
-        RemotePreferencesDialog dialog(*m_settings, profileId, this,
-                                      server && server->connected ? server->session : nullptr,
-                                      server && server->connected ? server->pane->model() : nullptr);
-        connect(&dialog, &RemotePreferencesDialog::localBehaviorApplied,
-                this, &MainWindow::applyLocalBehaviorPreferences);
-        trackDialogGeometry(dialog, QStringLiteral("Preferences"));
-        dialog.exec();
-        refreshContentPathMappings();
+        openPreferences(activeConnection());
     });
 
     m_ui->menuHelp->clear();
@@ -953,6 +952,21 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         }
     }
     return QMainWindow::eventFilter(watched, event);
+}
+
+void MainWindow::openPreferences(const std::shared_ptr<SessionContext> &server)
+{
+    if (server && !containsConnection(server))
+        return;
+    const QString profileId = server ? server->profile.id : m_preferredServerId;
+    RemotePreferencesDialog dialog(*m_settings, profileId, this,
+                                  server && server->connected ? server->session : nullptr,
+                                  server && server->connected ? server->pane->model() : nullptr);
+    connect(&dialog, &RemotePreferencesDialog::localBehaviorApplied,
+            this, &MainWindow::applyLocalBehaviorPreferences);
+    trackDialogGeometry(dialog, QStringLiteral("Preferences"));
+    dialog.exec();
+    refreshContentPathMappings();
 }
 
 void MainWindow::refreshContentPathMappings()

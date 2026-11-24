@@ -197,21 +197,34 @@ RemotePreferencesDialog::RemotePreferencesDialog(QSettings &settings,
     QObject::connect(m_ui->tabSelection, &QListWidget::currentRowChanged,
                      m_ui->tabOption, &QStackedWidget::setCurrentIndex);
 
-    // Preserve the upstream two-part dialog: settings and buttons only.
-    // Unsupported controls already carry the same explanatory tooltip;
-    // a permanent footer warning reduced the height available to settings.
+    // A single compact header identifies the fixed remote target on every
+    // page, independently of the saved-profile selector for local mappings.
     m_ui->tabSelection->setToolTip(tr(
         "Desktop preferences are local. Remote preferences load from the "
-        "server connected when this dialog opens. Unsupported controls remain disabled."));
+        "server selected when this dialog opens. Unsupported controls remain disabled."));
     if (m_remoteSession)
     {
         for (const auto &profile : Remote::ProfileStore(m_settings).profiles())
             if (profile.id == preferredProfileId)
             {
-                setWindowTitle(tr("Preferences — %1").arg(profile.name));
+                m_remoteTargetName = profile.name;
                 break;
             }
+        if (!m_remoteTargetName.isEmpty())
+            setWindowTitle(tr("Preferences — %1").arg(m_remoteTargetName));
     }
+    m_remoteTargetLabel = new QLabel(this);
+    m_remoteTargetLabel->setObjectName(QStringLiteral("preferencesRemoteTarget"));
+    m_remoteTargetLabel->setTextFormat(Qt::PlainText);
+    m_remoteTargetLabel->setWordWrap(true);
+    QFont targetFont = m_remoteTargetLabel->font();
+    targetFont.setBold(true);
+    m_remoteTargetLabel->setFont(targetFont);
+    m_remoteTargetLabel->setToolTip(tr("Remote settings apply only to this server. Desktop settings apply to the application. The local path-mapping selector does not change the remote target."));
+    m_remoteTargetLabel->setText(m_remoteSession
+        ? tr("Server settings: %1").arg(m_remoteTargetName.isEmpty() ? tr("Connected server") : m_remoteTargetName)
+        : tr("No connected server — local settings only"));
+    static_cast<QVBoxLayout *>(layout())->insertWidget(0, m_remoteTargetLabel);
 
     m_applyButton = m_ui->buttonBox->button(QDialogButtonBox::Apply);
     m_applyButton->setObjectName(QStringLiteral("preferencesApply"));
@@ -796,6 +809,8 @@ void RemotePreferencesDialog::setRemoteBusy(bool busy)
 
 void RemotePreferencesDialog::remoteDisconnected()
 {
+    m_remoteTargetLabel->setText(tr("Server settings: %1 (disconnected)")
+        .arg(m_remoteTargetName.isEmpty() ? tr("Server") : m_remoteTargetName));
     m_remotePreferencesLoaded = false;
     refreshRemoteControls();
     if (m_remoteBusy)
