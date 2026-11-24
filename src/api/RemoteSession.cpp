@@ -20,11 +20,10 @@
 
 namespace
 {
-// Approval of an exact certificate pin may waive *only* problems caused by
-// a private/self-signed certificate authority. Hostname mismatch, expiry,
-// revocation, invalid signatures, weak keys and other errors are fatal.
-bool isUntrustedIssuerOnly(const QList<QSslError> &errors,
-                           bool allowLegacyIpCommonName)
+// Only issuer trust and endpoint-name errors are eligible for explicit
+// endpoint-scoped certificate pinning. Expiry, revocation, invalid
+// signatures, weak keys and all other reported errors remain fatal.
+bool arePinnableVerificationErrors(const QList<QSslError> &errors)
 {
     if (errors.isEmpty())
         return false;
@@ -38,11 +37,8 @@ bool isUntrustedIssuerOnly(const QList<QSslError> &errors,
         case QSslError::UnableToGetIssuerCertificate:
         case QSslError::UnableToVerifyFirstCertificate:
         case QSslError::CertificateUntrusted:
-            break;
         case QSslError::HostNameMismatch:
-            if (allowLegacyIpCommonName)
-                break;
-            return false;
+            break;
         default:
             return false;
         }
@@ -105,7 +101,7 @@ bool matchesIpAddressSubjectAltName(const QSslCertificate &certificate,
     }
 
     // No SAN at all: permit an exact legacy CN as a hostname identity.
-    // Approval of an untrusted certificate is still required and pinned.
+    // A conflicting SAN is still a mismatch, not a matching CN.
     return matchesLegacyIpCommonName(certificate, hostname);
 }
 } // namespace
@@ -159,7 +155,8 @@ void RemoteSession::armReply(QNetworkReply *reply)
 }
 
 bool RemoteSession::approveCertificate(const QSslCertificate &certificate,
-                                       const QStringList &errors)
+                                       const QStringList &errors,
+                                       bool endpointIdentityMismatch)
 {
     if (!withinValidityPeriod(certificate) || !m_confirmation || !m_address)
         return false;
@@ -173,7 +170,8 @@ bool RemoteSession::approveCertificate(const QSslCertificate &certificate,
         m_address->baseUrl().toString(),
         presented,
         m_pinnedFingerprint,
-        errors
+        errors,
+        endpointIdentityMismatch
     };
 
     // Only the UI can authorize and persist a trust decision. A rejected or
@@ -199,34 +197,34 @@ void RemoteSession::handleSslErrors(QNetworkReply *reply,
         return;
     }
 
+    if (!arePinnableVerificationErrors(errors))
+    {
+        m_tlsFailure = tr("TLS certificate rejected: a verification error cannot be overridden.");
+        reply->abort();
+        return;
+    }
+
     const QString hostname = m_address->baseUrl().host();
-    if (!matchesIpAddressSubjectAltName(certificate, hostname))
-    {
-        m_tlsFailure = tr("TLS certificate rejected: the server IP address does "
-                          "not match an IP Subject Alternative Name or a legacy "
-                          "Common Name on a certificate without SAN.");
-        reply->abort();
-        return;
-    }
-
     const bool legacyIp = matchesLegacyIpCommonName(certificate, hostname);
-    if (!isUntrustedIssuerOnly(errors, legacyIp))
-    {
-        m_tlsFailure = tr("TLS certificate rejected: hostname mismatch, expiry, "
-                          "or another verification error that cannot be overridden.");
-        reply->abort();
-        return;
-    }
-
+    bool mismatch = !matchesIpAddressSubjectAltName(certificate, hostname);
     QStringList descriptions;
     for (const QSslError &error : errors)
+    {
         descriptions.append(error.errorString());
+        if (error.error() == QSslError::HostNameMismatch && !legacyIp)
+            mismatch = true;
+    }
     if (legacyIp)
         descriptions.append(tr("Legacy certificate without Subject Alternative Names; "
                                "the server IP matches its Common Name. "
                                "Regenerating with an IP SAN is recommended."));
+    if (mismatch)
+        descriptions.append(tr("Certificate identity mismatch: the certificate does not identify "
+                               "the requested server address."));
 
-    if (!approveCertificate(certificate, descriptions))
+    // Explicit approval of this exact leaf certificate for this endpoint is
+    // an alternative identity check, not a global hostname exception.
+    if (!approveCertificate(certificate, descriptions, mismatch))
     {
         m_tlsFailure = tr("Certificate trust declined or the certificate changed.");
         reply->abort();
@@ -250,15 +248,18 @@ void RemoteSession::handleEncrypted(QNetworkReply *reply)
         return;
     }
 
-    // Perform the endpoint identity check even for certificates that would
-    // otherwise be trusted by the system or a previously stored fingerprint.
-    // Legacy CN-only certificates are allowed when the exact IP matches.
+    // Qt's hostname check may accept a DNS SAN or CN for an IP literal
+    // on some backends. Keep our additional IP SAN check even when Qt
+    // reports no errors. Only the exact endpoint-bound pin can waive it.
     if (!matchesIpAddressSubjectAltName(certificate, m_address->baseUrl().host()))
     {
-        m_tlsFailure = tr("TLS certificate rejected: the server IP address does "
-                          "not match an IP Subject Alternative Name or a legacy "
-                          "Common Name on a certificate without SAN.");
-        reply->abort();
+        if (!approveCertificate(certificate, {tr(
+                "Certificate identity mismatch: the certificate does not identify "
+                "the requested server IP address.")}, true))
+        {
+            m_tlsFailure = tr("Certificate trust declined or the certificate changed.");
+            reply->abort();
+        }
         return;
     }
 
