@@ -55,6 +55,7 @@ private:
     void bindDownloadsSavingControls();
     void bindTorrentAdditionDefaults();
     void bindBackupAndWatchedFolders();
+    void bindExcludedFileNames();
     void displayWatchedFolders();
     void refreshWatchedFolderButtons();
     void editWatchedFolder(bool existing);

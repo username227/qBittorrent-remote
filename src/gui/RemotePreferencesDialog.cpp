@@ -163,6 +163,7 @@ RemotePreferencesDialog::RemotePreferencesDialog(QSettings &settings,
     bindDownloadsSavingControls();
     bindTorrentAdditionDefaults();
     bindBackupAndWatchedFolders();
+    bindExcludedFileNames();
     populateAdvancedPlaceholders();
     buildRemotePathsPage(preferredProfileId);
 
@@ -517,6 +518,13 @@ void RemotePreferencesDialog::bindRemoteControl(const char *key, QWidget *widget
         field.accepts = [](const QJsonValue &value) { return value.isString(); };
         connect(line, &QLineEdit::textChanged, this, changed);
     }
+    else if (auto *editor = qobject_cast<QPlainTextEdit *>(widget))
+    {
+        field.read = [editor]() { return QJsonValue(editor->toPlainText()); };
+        field.write = [editor](const QJsonValue &value) { editor->setPlainText(value.toString()); };
+        field.accepts = [](const QJsonValue &value) { return value.isString(); };
+        connect(editor, &QPlainTextEdit::textChanged, this, changed);
+    }
     else if (auto *spin = qobject_cast<QSpinBox *>(widget))
     {
         field.read = [spin]() { return QJsonValue(spin->value()); };
@@ -644,6 +652,25 @@ void RemotePreferencesDialog::bindTorrentAdditionDefaults()
         [this]() {
             return remoteFieldAvailable("add_stopped_enabled") && !m_ui->checkAddStopped->isChecked();
         });
+}
+
+void RemotePreferencesDialog::bindExcludedFileNames()
+{
+    bindRemoteControl("excluded_file_names_enabled", m_ui->groupExcludedFileNames);
+    const auto enabled = [this]() {
+        return remoteFieldAvailable("excluded_file_names_enabled")
+            && m_ui->groupExcludedFileNames->isChecked();
+    };
+    // The Web API uses a newline-separated string, not an array. Leave
+    // wildcard interpretation to the server, and preserve order and spelling.
+    bindRemoteControl("excluded_file_names", m_ui->textExcludedFileNames, enabled,
+        tr("Files matching any filter will have their priority automatically set to \"Do not download\".\n"
+           "Use newlines to separate entries. Wildcards: * (zero or more characters), "
+           "? (one character), [...] (character set).\n"
+           "Examples: *.exe, readme.txt, ?.txt, readme[0-9].txt."));
+    bindRemoteControl("exclude_files_without_extension", m_ui->checkExcludeFilesWithoutExtension, enabled,
+        tr("Files whose name has no extension (e.g. 'readme', 'setup.') will have "
+           "their priority automatically set to \"Do not download\"."));
 }
 
 void RemotePreferencesDialog::bindBackupAndWatchedFolders()

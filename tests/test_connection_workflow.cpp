@@ -2908,6 +2908,137 @@ private slots:
         QCOMPARE(first.commandsFor("/api/v2/app/setPreferences"), 2);
     }
 
+    void downloadsExclusionsFollowSelectedServerCapabilities()
+    {
+        DemoQbittorrentServer modern(true), legacy(true);
+        modern.enableModernResponses();
+        const QJsonObject initialModern{
+            {QStringLiteral("excluded_file_names_enabled"), false},
+            {QStringLiteral("excluded_file_names"), QStringLiteral("*.exe\nreadme.txt")},
+            {QStringLiteral("exclude_files_without_extension"), false}
+        };
+        const QJsonObject initialLegacy{
+            {QStringLiteral("excluded_file_names_enabled"), true},
+            {QStringLiteral("excluded_file_names"), QStringLiteral("*.nfo")}
+        };
+        modern.setServerPreferences(initialModern);
+        legacy.setServerPreferences(initialLegacy);
+        QVERIFY(modern.start() && legacy.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("prefs.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, modern.url());
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(
+            QStringLiteral("v5.3.0")), 6000);
+        openConnectDialog(window, legacy.url(), false, true, true, QStringLiteral("Legacy seedbox"));
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(
+            QStringLiteral("Connected to Legacy seedbox")), 6000);
+        auto *tabs = window.findChild<QTabWidget *>(QStringLiteral("serverTabs"));
+        auto *prefs = window.findChild<QAction *>(QStringLiteral("actionOptions"));
+        QVERIFY(tabs && prefs);
+        tabs->setCurrentIndex(0);
+
+        const QString patterns = QStringLiteral("*.exe\n?.txt\nreadme[0-9].txt");
+        const auto editModern = [&](bool save) {
+            bool finished = false;
+            QTimer::singleShot(0, &window, [&]() {
+                auto *dlg = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget());
+                QVERIFY(dlg);
+                const auto cleanup = qScopeGuard([dlg]() { if (dlg->isVisible()) dlg->reject(); });
+                auto *sections = dlg->findChild<QListWidget *>(QStringLiteral("preferencesSections"));
+                auto *group = dlg->findChild<QGroupBox *>(QStringLiteral("groupExcludedFileNames"));
+                auto *list = dlg->findChild<QPlainTextEdit *>(QStringLiteral("textExcludedFileNames"));
+                auto *extension = dlg->findChild<QCheckBox *>(QStringLiteral("checkExcludeFilesWithoutExtension"));
+                auto *apply = dlg->findChild<QPushButton *>(QStringLiteral("preferencesApply"));
+                QVERIFY(sections && group && list && extension && apply);
+                sections->setCurrentRow(2);
+                QTRY_VERIFY_WITH_TIMEOUT(group->isEnabled(), 6000);
+                QVERIFY(!group->isChecked());
+                QCOMPARE(list->toPlainText(), QStringLiteral("*.exe\nreadme.txt"));
+                QVERIFY(!list->isEnabled() && !extension->isEnabled());
+                group->setChecked(true);
+                QVERIFY(list->isEnabled() && extension->isEnabled());
+                list->setPlainText(patterns);
+                extension->click();
+                QVERIFY(apply->isEnabled());
+                if (save)
+                {
+                    apply->click();
+                    QTRY_VERIFY_WITH_TIMEOUT(group->isEnabled() && !apply->isEnabled(), 6000);
+                    QCOMPARE(list->toPlainText(), patterns);
+                    QVERIFY(extension->isChecked());
+                    // Disabling exclusions retains the user's rules for later reuse.
+                    group->setChecked(false);
+                    QVERIFY(!list->isEnabled() && !extension->isEnabled());
+                    apply->click();
+                    QTRY_VERIFY_WITH_TIMEOUT(group->isEnabled() && !apply->isEnabled(), 6000);
+                    QCOMPARE(list->toPlainText(), patterns);
+                    QVERIFY(extension->isChecked());
+                }
+                finished = true;
+            });
+            prefs->trigger();
+            QVERIFY(finished);
+        };
+        editModern(false);
+        QCOMPARE(modern.serverPreferences(), initialModern);
+        QCOMPARE(modern.commandsFor("/api/v2/app/setPreferences"), 0);
+        editModern(true);
+        const QJsonObject expectedModern{
+            {QStringLiteral("excluded_file_names_enabled"), false},
+            {QStringLiteral("excluded_file_names"), patterns},
+            {QStringLiteral("exclude_files_without_extension"), true}
+        };
+        QCOMPARE(modern.serverPreferences(), expectedModern);
+        QCOMPARE(modern.commandsFor("/api/v2/app/setPreferences"), 2);
+        QCOMPARE(legacy.serverPreferences(), initialLegacy);
+
+        tabs->setCurrentIndex(1);
+        bool finished = false;
+        QTimer::singleShot(0, &window, [&]() {
+            auto *dlg = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget());
+            QVERIFY(dlg);
+            const auto cleanup = qScopeGuard([dlg]() { if (dlg->isVisible()) dlg->reject(); });
+            auto *sections = dlg->findChild<QListWidget *>(QStringLiteral("preferencesSections"));
+            auto *group = dlg->findChild<QGroupBox *>(QStringLiteral("groupExcludedFileNames"));
+            auto *list = dlg->findChild<QPlainTextEdit *>(QStringLiteral("textExcludedFileNames"));
+            auto *extension = dlg->findChild<QCheckBox *>(QStringLiteral("checkExcludeFilesWithoutExtension"));
+            auto *apply = dlg->findChild<QPushButton *>(QStringLiteral("preferencesApply"));
+            QVERIFY(sections && group && list && extension && apply);
+            sections->setCurrentRow(2);
+            QTRY_VERIFY_WITH_TIMEOUT(list->isEnabled(), 6000);
+            QVERIFY(group->isChecked());
+            QCOMPARE(list->toPlainText(), QStringLiteral("*.nfo"));
+            QVERIFY(!extension->isEnabled());
+            group->setChecked(false);
+            group->setChecked(true);
+            QVERIFY(list->isEnabled() && !extension->isEnabled());
+            // An empty list is a valid server preference, not an absent value.
+            list->clear();
+            QVERIFY(apply->isEnabled());
+            apply->click();
+            QTRY_VERIFY_WITH_TIMEOUT(list->isEnabled() && !apply->isEnabled(), 6000);
+            QVERIFY(!extension->isEnabled());
+            finished = true;
+        });
+        prefs->trigger();
+        QVERIFY(finished);
+        QJsonObject expectedLegacy = initialLegacy;
+        expectedLegacy.insert(QStringLiteral("excluded_file_names"), QString());
+        QCOMPARE(legacy.serverPreferences(), expectedLegacy);
+        QCOMPARE(legacy.commandsFor("/api/v2/app/setPreferences"), 1);
+        const QUrlQuery form(QString::fromUtf8(legacy.lastCommandBody("/api/v2/app/setPreferences")));
+        const QJsonObject delta = QJsonDocument::fromJson(
+            form.queryItemValue(QStringLiteral("json"), QUrl::FullyDecoded).toUtf8()).object();
+        const QJsonObject expectedDelta{{QStringLiteral("excluded_file_names"), QString()}};
+        QCOMPARE(delta, expectedDelta);
+        QCOMPARE(modern.serverPreferences(), expectedModern);
+        QCOMPARE(modern.commandsFor("/api/v2/app/setPreferences"), 2);
+    }
+
     void downloadsBackupsAndWatchedFoldersUseSelectedServer()
     {
         DemoQbittorrentServer first(true), second(true);
