@@ -42,6 +42,7 @@ public:
     ~RemoteAddTorrentDialog() override;
 
     Remote::AddTorrentOptions options() const;
+    QJsonValue mergeTrackersDefault() const { return m_mergeTrackersDefault; }
     QString selectedServerId() const { return m_server.id; }
     QString links() const;
     QString fileName() const { return m_fileName; }
@@ -54,6 +55,7 @@ public:
 
 protected:
     void accept() override;
+    void showEvent(QShowEvent *event) override;
 
 private:
     void setupServerSelector();
@@ -89,4 +91,5 @@ private:
     quint64 m_defaultsGeneration = 0;
     bool m_defaultsLoading = false;
     bool m_stopConditionSupported = false;
+    QJsonValue m_mergeTrackersDefault = QJsonValue(QJsonValue::Undefined);
 };

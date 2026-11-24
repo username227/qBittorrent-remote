@@ -1197,6 +1197,9 @@ namespace
 {
 void appendAddOptions(QUrlQuery &form, const AddTorrentOptions &options)
 {
+    // When the desktop options dialog is skipped, omit every override.
+    if (options.useServerDefaults)
+        return;
     // Explicit remote paths only. Empty means let the server choose.
     form.addQueryItem(QStringLiteral("autoTMM"), options.autoTMM
         ? QStringLiteral("true") : QStringLiteral("false"));

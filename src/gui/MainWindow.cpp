@@ -670,7 +670,8 @@ void MainWindow::setupActions()
     // server's synchronized model. Never mistake an arbitrary Web API failure
     // for a duplicate, and never route tracker changes to another server.
     const auto offerTrackerMerge = [this](const std::shared_ptr<SessionContext> &server,
-                                          const TorrentIdentity &identity) {
+                                          const TorrentIdentity &identity,
+                                          bool confirm, const QJsonValue &mergeDefault) {
         if (!server || !server->connected) return false;
         const QString hash = existingHash(*server->pane->model(), identity.hashes);
         if (hash.isEmpty()) return false;
@@ -706,6 +707,39 @@ void MainWindow::setupActions()
             return true;
         }
 
+        // Automatic merging is allowed only by a known true server default.
+        // Recheck the selected connection and privacy after any modal prompt
+        // or asynchronous preference read.
+        const QPointer<MainWindow> owner(this);
+        const auto merge = [owner, server, hash, identity]() {
+            if (!owner || !owner->containsConnection(server) || !server->connected)
+                return;
+            const auto record = server->pane->model()->torrents().value(hash);
+            const auto privacy = record.value(QStringLiteral("private"));
+            const auto legacy = record.value(QStringLiteral("is_private"));
+            if (identity.isPrivate || privacy.toBool() || legacy.toBool()
+                || (!privacy.isBool() && !legacy.isBool()))
+                return;
+            server->session->addTorrentTrackers(hash, identity.trackers);
+        };
+        if (!confirm)
+        {
+            if (mergeDefault.isBool())
+            {
+                if (mergeDefault.toBool()) merge();
+            }
+            else
+            {
+                // Direct additions have no options dialog to read defaults.
+                server->session->requestPreferences(
+                    [merge](const QJsonObject &values) {
+                        const auto setting = values.value(QStringLiteral("merge_trackers"));
+                        if (setting.isBool() && setting.toBool()) merge();
+                    }, [](const QString &) {});
+            }
+            return true;
+        }
+
         QMessageBox prompt(QMessageBox::Question, tr("Torrent already exists"),
             tr("This torrent is already present on %1. "
                "Do you want to merge its trackers?").arg(server->profile.name),
@@ -714,10 +748,10 @@ void MainWindow::setupActions()
         prompt.setInformativeText(tr(
             "Tracker URLs from the new torrent will be added to the existing "
             "torrent on this server. The torrent will not be added again."));
-        prompt.setDefaultButton(QMessageBox::No);
-        if (prompt.exec() == QMessageBox::Yes && containsConnection(server)
-            && server->connected)
-            server->session->addTorrentTrackers(hash, identity.trackers);
+        prompt.setDefaultButton(mergeDefault.isBool() && mergeDefault.toBool()
+            ? QMessageBox::Yes : QMessageBox::No);
+        if (prompt.exec() == QMessageBox::Yes)
+            merge();
         return true; // Duplicate was handled even when the user declined.
     };
 
@@ -727,6 +761,34 @@ void MainWindow::setupActions()
         const auto server = activeConnection();
         if (!server || !server->connected)
             return;
+        const bool showOptions = m_settings->value(
+            QStringLiteral("Preferences/Downloads/ShowAdditionDialog"), true).toBool();
+        if (!showOptions)
+        {
+            QString links = initialLinks;
+            if (links.trimmed().isEmpty())
+            {
+                bool accepted = false;
+                links = QInputDialog::getMultiLineText(this, tr("Download from URLs — %1").arg(server->profile.name),
+                    tr("Torrent links (one per line):"), {}, &accepted);
+                if (!accepted || links.trimmed().isEmpty()) return;
+            }
+            if (!containsConnection(server) || !server->connected) return;
+            // Filter known magnet duplicates individually even in direct
+            // multi-link additions; unknown URL metadata stays server-side.
+            QStringList pending;
+            for (const auto &source : links.split(QLatin1Char('\n'), Qt::SkipEmptyParts))
+                if (!source.trimmed().isEmpty()
+                    && !offerTrackerMerge(server, magnetIdentity(source.trimmed()), false, {}))
+                    pending.append(source.trimmed());
+            if (!pending.isEmpty() && containsConnection(server) && server->connected)
+            {
+                Remote::AddTorrentOptions defaults;
+                defaults.useServerDefaults = true;
+                server->session->addTorrentUrls(pending.join(QLatin1Char('\n')), defaults);
+            }
+            return;
+        }
         RemoteAddTorrentDialog dialog(*m_settings, server->profile,
             RemoteAddTorrentDialog::Source::Links, initialLinks, {}, {}, this,
             connectedServerProfiles(),
@@ -746,9 +808,16 @@ void MainWindow::setupActions()
                                     "could be submitted. Nothing was added."));
             return;
         }
-        if (offerTrackerMerge(target, magnetIdentity(dialog.links())))
-            return;
-        target->session->addTorrentUrls(dialog.links(), dialog.options());
+        const bool confirm = m_settings->value(
+            QStringLiteral("Preferences/Downloads/ConfirmMergeTrackers"), true).toBool();
+        QStringList pending;
+        for (const auto &source : dialog.links().split(QLatin1Char('\n'), Qt::SkipEmptyParts))
+            if (!source.trimmed().isEmpty()
+                && !offerTrackerMerge(target, magnetIdentity(source.trimmed()), confirm,
+                                      dialog.mergeTrackersDefault()))
+                pending.append(source.trimmed());
+        if (!pending.isEmpty() && containsConnection(target) && target->connected)
+            target->session->addTorrentUrls(pending.join(QLatin1Char('\n')), dialog.options());
     };
     connect(m_ui->actionDownloadFromURL, &QAction::triggered,
             this, [this]() { m_addLinks({}); });
@@ -797,52 +866,60 @@ void MainWindow::setupActions()
             return;
         }
 
-        const auto available = connectedServerProfiles();
-        if (available.isEmpty())
-            return;
-        const auto initial = connectedById(server->profile.id);
+        if (!containsConnection(server) || !server->connected) return;
         const bool batch = uploads.size() > 1;
-        RemoteAddTorrentDialog dialog(*m_settings,
-            initial ? initial->profile : available.first(),
-            batch ? RemoteAddTorrentDialog::Source::TorrentFiles
-                  : RemoteAddTorrentDialog::Source::TorrentFile,
-            {}, batch ? QString() : uploads.first().filename,
-            batch ? QByteArray() : uploads.first().contents,
-            this, available,
-            [this](const QString &id) { return static_cast<bool>(connectedById(id)); },
-            batch ? uploads : QList<Remote::TorrentUpload>{},
-            [this](const QString &id) -> Remote::RemoteSession * {
-                const auto target = connectedById(id);
-                return target ? target->session : nullptr;
-            });
-        trackDialogGeometry(dialog, QStringLiteral("AddTorrent"));
-        if (dialog.exec() != QDialog::Accepted)
-            return;
-        const auto target = connectedById(dialog.selectedServerId());
-        if (!target)
+        const bool showOptions = m_settings->value(
+            QStringLiteral("Preferences/Downloads/ShowAdditionDialog"), true).toBool();
+        const bool confirm = showOptions && m_settings->value(
+            QStringLiteral("Preferences/Downloads/ConfirmMergeTrackers"), true).toBool();
+        auto target = server;
+        Remote::AddTorrentOptions options;
+        QJsonValue mergeDefault(QJsonValue::Undefined);
+        if (showOptions)
         {
-            QMessageBox::warning(this, tr("Server disconnected"),
-                tr("The selected server disconnected before the torrents could be submitted. "
-                   "Nothing was added."));
-            return;
+            RemoteAddTorrentDialog dialog(*m_settings, server->profile,
+                batch ? RemoteAddTorrentDialog::Source::TorrentFiles
+                      : RemoteAddTorrentDialog::Source::TorrentFile,
+                {}, batch ? QString() : uploads.first().filename,
+                batch ? QByteArray() : uploads.first().contents,
+                this, connectedServerProfiles(),
+                [this](const QString &id) { return static_cast<bool>(connectedById(id)); },
+                batch ? uploads : QList<Remote::TorrentUpload>{},
+                [this](const QString &id) -> Remote::RemoteSession * {
+                    const auto target = connectedById(id);
+                    return target ? target->session : nullptr;
+                });
+            trackDialogGeometry(dialog, QStringLiteral("AddTorrent"));
+            if (dialog.exec() != QDialog::Accepted)
+                return;
+            target = connectedById(dialog.selectedServerId());
+            if (!target)
+            {
+                QMessageBox::warning(this, tr("Server disconnected"),
+                    tr("The selected server disconnected before the torrents could be submitted. Nothing was added."));
+                return;
+            }
+            options = dialog.options();
+            mergeDefault = dialog.mergeTrackersDefault();
         }
+        else
+            options.useServerDefaults = true;
 
-        const Remote::AddTorrentOptions options = dialog.options();
         if (!batch)
         {
             // Preserve the single-file duplicate tracker-merge workflow.
             Remote::TorrentMetadata metadata;
-            if (Remote::TorrentMetadataReader::read(dialog.fileContents(), metadata))
+            if (Remote::TorrentMetadataReader::read(uploads.first().contents, metadata))
             {
                 TorrentIdentity identity;
                 if (!metadata.infoHashV1.isEmpty()) identity.hashes.append(metadata.infoHashV1);
                 if (!metadata.infoHashV2.isEmpty()) identity.hashes.append(metadata.infoHashV2);
                 identity.trackers = metadata.trackers;
                 identity.isPrivate = metadata.isPrivate;
-                if (offerTrackerMerge(target, identity))
+                if (offerTrackerMerge(target, identity, confirm, mergeDefault))
                     return;
             }
-            target->session->addTorrentFile(dialog.fileName(), dialog.fileContents(), options);
+            target->session->addTorrentFile(uploads.first().filename, uploads.first().contents, options);
             return;
         }
 
@@ -853,7 +930,7 @@ void MainWindow::setupActions()
         QList<Remote::TorrentUpload> toUpload;
         QSet<QString> hashesSeen;
         QStringList skipped;
-        for (const Remote::TorrentUpload &upload : dialog.batchFiles())
+        for (const Remote::TorrentUpload &upload : uploads)
         {
             Remote::TorrentMetadata metadata;
             QString error;

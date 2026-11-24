@@ -4180,6 +4180,144 @@ private slots:
         QCOMPARE(merged.queryItemValue(QStringLiteral("urls")), QString::fromLatin1(tracker));
     }
 
+    void downloadsDialogBehaviorAndDuplicateDefaults()
+    {
+        DemoQbittorrentServer server(true);
+        server.setServerPreferences({
+            {QStringLiteral("merge_trackers"), false},
+            {QStringLiteral("add_stopped_enabled"), true}
+        });
+        const QByteArray tracker("https://tracker.duplicate.example/announce");
+        const auto makeMetadata = [&tracker](const QByteArray &name) {
+            return QByteArrayLiteral("d8:announce") + QByteArray::number(tracker.size()) + ':'
+                + tracker + QByteArrayLiteral("4:infod6:lengthi123e4:name")
+                + QByteArray::number(name.size()) + ':' + name + QByteArrayLiteral("ee");
+        };
+        const QByteArray duplicate = makeMetadata("example");
+        const QByteArray fresh = makeMetadata("new-example");
+        Remote::TorrentMetadata parsed;
+        QVERIFY(Remote::TorrentMetadataReader::read(duplicate, parsed));
+        server.setExistingTorrentHash(parsed.infoHashV1);
+        QVERIFY(server.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        const QString duplicatePath = temp.filePath(QStringLiteral("duplicate.torrent"));
+        const QString freshPath = temp.filePath(QStringLiteral("fresh.torrent"));
+        for (const auto &fileData : QList<QPair<QString, QByteArray>>{
+                 {duplicatePath, duplicate}, {freshPath, fresh}})
+        {
+            QFile file(fileData.first);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write(fileData.second), qint64(fileData.second.size()));
+        }
+        QSettings settings(temp.filePath(QStringLiteral("prefs.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, server.url());
+        auto *table = window.findChild<QTableView *>(QStringLiteral("torrentList"));
+        QVERIFY(table);
+        QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 1, 6000);
+        auto *prefs = window.findChild<QAction *>(QStringLiteral("actionOptions"));
+        auto *add = window.findChild<QAction *>(QStringLiteral("actionOpen"));
+        QVERIFY(prefs && add);
+
+        // Drive the visible controls, including their dependency on showing
+        // the options dialog. Cancel must not persist either local or remote edits.
+        const auto edit = [&](bool show, bool merge, bool ask, bool save) {
+            bool finished = false;
+            QTimer::singleShot(0, &window, [&]() {
+                auto *dialog = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget());
+                QVERIFY(dialog);
+                const auto cleanup = qScopeGuard([dialog]() {
+                    if (dialog->isVisible()) dialog->reject();
+                });
+                auto *sections = dialog->findChild<QListWidget *>(QStringLiteral("preferencesSections"));
+                auto *display = dialog->findChild<QGroupBox *>(QStringLiteral("checkAdditionDialog"));
+                auto *front = dialog->findChild<QCheckBox *>(QStringLiteral("checkAdditionDialogFront"));
+                auto *mergeBox = dialog->findChild<QCheckBox *>(QStringLiteral("checkMergeTrackers"));
+                auto *confirm = dialog->findChild<QCheckBox *>(QStringLiteral("checkConfirmMergeTrackers"));
+                auto *apply = dialog->findChild<QPushButton *>(QStringLiteral("preferencesApply"));
+                QVERIFY(sections && display && front && mergeBox && confirm && apply);
+                sections->setCurrentRow(2);
+                QTRY_VERIFY_WITH_TIMEOUT(mergeBox->isEnabled(), 6000);
+                QCOMPARE(mergeBox->isChecked(), server.serverPreferences()
+                    .value(QStringLiteral("merge_trackers")).toBool());
+                display->setChecked(true);
+                QVERIFY(front->isEnabled() && confirm->isEnabled());
+                confirm->setChecked(ask);
+                front->setChecked(false);
+                mergeBox->setChecked(merge);
+                display->setChecked(show);
+                QCOMPARE(front->isEnabled(), show);
+                QCOMPARE(confirm->isEnabled(), show);
+                if (save)
+                {
+                    QVERIFY(apply->isEnabled());
+                    apply->click();
+                    QTRY_VERIFY_WITH_TIMEOUT(mergeBox->isEnabled() && !apply->isEnabled(), 6000);
+                }
+                finished = true;
+            });
+            prefs->trigger();
+            QVERIFY(finished);
+        };
+        const bool originalNative = QApplication::testAttribute(Qt::AA_DontUseNativeDialogs);
+        QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, true);
+        const auto restoreNative = qScopeGuard([originalNative]() {
+            QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, originalNative);
+        });
+        const auto upload = [&](const QString &filename, int dialogs, int prompts) {
+            MergeDuplicateTorrentUi interaction(filename);
+            QApplication::instance()->installEventFilter(&interaction);
+            const auto removeFilter = qScopeGuard([&]() {
+                QApplication::instance()->removeEventFilter(&interaction);
+            });
+            QTimer watchdog;
+            watchdog.setSingleShot(true);
+            connect(&watchdog, &QTimer::timeout, &window, []() {
+                for (QWidget *widget : QApplication::topLevelWidgets())
+                    if (auto *modal = qobject_cast<QDialog *>(widget); modal && modal->isVisible())
+                        modal->reject();
+            });
+            watchdog.start(10000);
+            add->trigger();
+            watchdog.stop();
+            QCOMPARE(interaction.chosenFiles, 1);
+            QCOMPARE(interaction.addDialogs, dialogs);
+            QCOMPARE(interaction.mergePrompts, prompts);
+        };
+
+        edit(false, true, false, false);
+        QCOMPARE(server.commandsFor("/api/v2/app/setPreferences"), 0);
+        upload(duplicatePath, 1, 1); // Cancel kept the confirmation.
+        QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor("/api/v2/torrents/addTrackers"), 1, 6000);
+
+        edit(true, true, false, true);
+        QVERIFY(server.serverPreferences().value(QStringLiteral("merge_trackers")).toBool());
+        upload(duplicatePath, 1, 0); // Server permits merge; no prompt.
+        QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor("/api/v2/torrents/addTrackers"), 2, 6000);
+
+        edit(false, true, false, true);
+        upload(duplicatePath, 0, 0); // Direct addition uses the server merge default.
+        QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor("/api/v2/torrents/addTrackers"), 3, 6000);
+
+        edit(false, false, false, true);
+        QVERIFY(!server.serverPreferences().value(QStringLiteral("merge_trackers")).toBool());
+        upload(duplicatePath, 0, 0); // Neither options nor merge confirmation.
+        upload(freshPath, 0, 0);
+        QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor("/api/v2/torrents/add"), 1, 6000);
+        QCOMPARE(server.commandsFor("/api/v2/torrents/addTrackers"), 3);
+        // A skipped dialog must leave the NAS's chosen defaults intact,
+        // not send the desktop's previously hard-coded values.
+        const QByteArray body = server.lastCommandBody("/api/v2/torrents/add");
+        QVERIFY(body.contains(fresh));
+        for (const QByteArray &field : {QByteArray("stopped"), QByteArray("autoTMM"),
+             QByteArray("contentLayout"), QByteArray("addToTopOfQueue"), QByteArray("stopCondition"),
+             QByteArray("savepath")})
+            QVERIFY(!body.contains("name=\"" + field + "\""));
+    }
+
     void privateTorrentsNeverOfferOrSendTrackerMerge()
     {
         // Block merging both when the *server's existing torrent* is private
