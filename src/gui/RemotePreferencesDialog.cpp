@@ -50,6 +50,21 @@
 
 namespace
 {
+// Both supported upstream generations normalize nonpositive connection
+// and upload-slot limits to -1. Normalize only integral JSON numbers,
+// never missing, fractional, out-of-range or nonnumeric values.
+QJsonValue normalizedConnectionLimit(const QString &key, QJsonValue value)
+{
+    if ((key == QLatin1String("max_connec")
+            || key == QLatin1String("max_connec_per_torrent")
+            || key == QLatin1String("max_uploads")
+            || key == QLatin1String("max_uploads_per_torrent"))
+        && value.isDouble() && value.toDouble() == value.toInt()
+        && value.toInt() <= 0)
+        return QJsonValue(-1);
+    return value;
+}
+
 QIcon icon(const char *name)
 {
     return QIcon(QStringLiteral(":/icons/")
@@ -167,6 +182,7 @@ RemotePreferencesDialog::RemotePreferencesDialog(QSettings &settings,
     bindExcludedFileNames();
     bindNotificationAndProgramControls();
     bindConnectionListeningControls();
+    bindConnectionLimits();
     populateAdvancedPlaceholders();
     buildRemotePathsPage(preferredProfileId);
 
@@ -566,6 +582,54 @@ void RemotePreferencesDialog::bindConnectionListeningControls()
     });
     // random_port is a deprecated alias for listen_port == 0. Never
     // write both keys, or a stale alias could override an explicit port.
+}
+
+void RemotePreferencesDialog::bindConnectionLimits()
+{
+    const auto bind = [this](const char *key, QCheckBox *check, QSpinBox *spin) {
+        // Upstream setters interpret 0 as unlimited, not zero slots.
+        // Avoid a checked-but-unlimited value in the native upload controls.
+        spin->setMinimum(qMax(1, spin->minimum()));
+        bindRemoteField(RemoteField{
+            QString::fromLatin1(key), check,
+            [check, spin]() { return QJsonValue(check->isChecked() ? spin->value() : -1); },
+            [check, spin](const QJsonValue &value) {
+                const int limit = value.toInt();
+                check->setChecked(limit > 0);
+                // Retain the last in-dialog numeric value when unchecked,
+                // just like native qBittorrent; never persist it locally.
+                if (limit > 0)
+                    spin->setValue(limit);
+            },
+            [spin](const QJsonValue &value) {
+                return value.isDouble() && value.toDouble() == value.toInt()
+                    && (value.toInt() == -1
+                        || (value.toInt() >= spin->minimum() && value.toInt() <= spin->maximum()));
+            },
+            {}, tr("Limit on the selected server. Uncheck for unlimited.")
+        });
+        connect(check, &QCheckBox::toggled, this, [this]() { remoteFieldChanged(); });
+        connect(spin, QOverload<int>::of(&QSpinBox::valueChanged),
+                this, [this]() { remoteFieldChanged(); });
+    };
+    bind("max_connec", m_ui->checkMaxConnections, m_ui->spinMaxConnec);
+    bind("max_connec_per_torrent", m_ui->checkMaxConnectionsPerTorrent, m_ui->spinMaxConnecPerTorrent);
+    bind("max_uploads", m_ui->checkMaxUploads, m_ui->spinMaxUploads);
+    bind("max_uploads_per_torrent", m_ui->checkMaxUploadsPerTorrent, m_ui->spinMaxUploadsPerTorrent);
+}
+
+void RemotePreferencesDialog::refreshConnectionLimitControls()
+{
+    const auto refresh = [this](const char *key, QCheckBox *check, QSpinBox *spin) {
+        const bool supported = remoteFieldAvailable(key);
+        spin->setEnabled(supported && check->isChecked());
+        spin->setToolTip(supported ? check->toolTip() : tr(
+            "This setting is unavailable from the connected server. Displayed values are not live."));
+    };
+    refresh("max_connec", m_ui->checkMaxConnections, m_ui->spinMaxConnec);
+    refresh("max_connec_per_torrent", m_ui->checkMaxConnectionsPerTorrent, m_ui->spinMaxConnecPerTorrent);
+    refresh("max_uploads", m_ui->checkMaxUploads, m_ui->spinMaxUploads);
+    refresh("max_uploads_per_torrent", m_ui->checkMaxUploadsPerTorrent, m_ui->spinMaxUploadsPerTorrent);
 }
 
 void RemotePreferencesDialog::bindServerBehaviorControls()
@@ -1265,6 +1329,7 @@ void RemotePreferencesDialog::refreshRemoteControls()
     refreshWatchedFolderButtons();
     refreshNotificationControls();
     refreshBackupControls();
+    refreshConnectionLimitControls();
     const bool portAvailable = remoteFieldAvailable("listen_port");
     m_ui->randomButton->setEnabled(portAvailable);
     m_ui->randomButton->setToolTip(portAvailable
@@ -1279,7 +1344,7 @@ void RemotePreferencesDialog::populateRemoteFields(const QJsonObject &values,
     m_remotePreferencesLoaded = true;
     for (auto &field : m_remoteFields)
     {
-        QJsonValue value = values.value(field.key);
+        QJsonValue value = normalizedConnectionLimit(field.key, values.value(field.key));
         // Prefer modern keys if the server advertises them, even on a
         // transitional server exposing deprecated export aliases as well.
         if ((field.key == QLatin1String("export_dir")
@@ -1412,7 +1477,7 @@ void RemotePreferencesDialog::verifyRemoteChanges(const QJsonObject &changes)
             QJsonObject unapplied;
             for (auto it = changes.constBegin(); it != changes.constEnd(); ++it)
             {
-                const QJsonValue returned = values.value(it.key());
+                const QJsonValue returned = normalizedConnectionLimit(it.key(), values.value(it.key()));
                 // qBittorrent can canonicalize directory spelling (for
                 // example, remove a trailing slash). Accept equivalent POSIX
                 // paths without claiming that the remote filesystem exists.

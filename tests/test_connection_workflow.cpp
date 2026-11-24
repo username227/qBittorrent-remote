@@ -3582,6 +3582,178 @@ private slots:
         QCOMPARE(modern.commandsFor("/api/v2/app/setPreferences"), 1);
     }
 
+    void connectionLimitsFollowSelectedServer()
+    {
+        DemoQbittorrentServer legacy(true), modern(true);
+        modern.enableModernResponses();
+        const QJsonObject initialLegacy{
+            {QStringLiteral("max_connec"), 500},
+            {QStringLiteral("max_connec_per_torrent"), -1},
+            {QStringLiteral("max_uploads"), 8},
+            {QStringLiteral("max_uploads_per_torrent"), 4}
+        };
+        const QJsonObject initialModern{
+            {QStringLiteral("max_connec"), 0},
+            {QStringLiteral("max_connec_per_torrent"), 75},
+            {QStringLiteral("max_uploads"), -1},
+            {QStringLiteral("max_uploads_per_torrent"), 3}
+        };
+        legacy.setServerPreferences(initialLegacy);
+        modern.setServerPreferences(initialModern);
+        QVERIFY(legacy.start() && modern.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("prefs.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, legacy.url());
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(QStringLiteral("v5.1.4")), 6000);
+        openConnectDialog(window, modern.url(), false, true, true, QStringLiteral("Modern seedbox"));
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(QStringLiteral("v5.3.0")), 6000);
+        auto *tabs = window.findChild<QTabWidget *>(QStringLiteral("serverTabs"));
+        auto *prefs = window.findChild<QAction *>(QStringLiteral("actionOptions"));
+        QVERIFY(tabs && prefs);
+
+        const auto withLimits = [&](auto exercise) {
+            bool finished = false;
+            QTimer::singleShot(0, &window, [&]() {
+                auto *dlg = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget());
+                QVERIFY(dlg);
+                const auto cleanup = qScopeGuard([dlg]() { if (dlg->isVisible()) dlg->reject(); });
+                auto *sections = dlg->findChild<QListWidget *>(QStringLiteral("preferencesSections"));
+                auto *apply = dlg->findChild<QPushButton *>(QStringLiteral("preferencesApply"));
+                QCheckBox *checks[] = {
+                    dlg->findChild<QCheckBox *>(QStringLiteral("checkMaxConnections")),
+                    dlg->findChild<QCheckBox *>(QStringLiteral("checkMaxConnectionsPerTorrent")),
+                    dlg->findChild<QCheckBox *>(QStringLiteral("checkMaxUploads")),
+                    dlg->findChild<QCheckBox *>(QStringLiteral("checkMaxUploadsPerTorrent"))
+                };
+                QSpinBox *spins[] = {
+                    dlg->findChild<QSpinBox *>(QStringLiteral("spinMaxConnec")),
+                    dlg->findChild<QSpinBox *>(QStringLiteral("spinMaxConnecPerTorrent")),
+                    dlg->findChild<QSpinBox *>(QStringLiteral("spinMaxUploads")),
+                    dlg->findChild<QSpinBox *>(QStringLiteral("spinMaxUploadsPerTorrent"))
+                };
+                QVERIFY(sections && apply);
+                for (int i = 0; i < 4; ++i)
+                    QVERIFY(checks[i] && spins[i]);
+                sections->setCurrentRow(3);
+                // The last field is deliberately valid in every fixture,
+                // giving a deterministic signal that the read completed.
+                QTRY_VERIFY_WITH_TIMEOUT(checks[3]->isEnabled(), 6000);
+                exercise(checks, spins, apply);
+                finished = true;
+            });
+            prefs->trigger();
+            QVERIFY(finished);
+        };
+        const auto delta = [](DemoQbittorrentServer &server) {
+            const QUrlQuery form(QString::fromUtf8(server.lastCommandBody("/api/v2/app/setPreferences")));
+            return QJsonDocument::fromJson(form.queryItemValue(
+                QStringLiteral("json"), QUrl::FullyDecoded).toUtf8()).object();
+        };
+
+        tabs->setCurrentIndex(0);
+        for (bool save : {false, true})
+        {
+            withLimits([&](QCheckBox **checks, QSpinBox **spins, QPushButton *apply) {
+                for (int i = 0; i < 4; ++i)
+                    QVERIFY(checks[i]->isEnabled());
+                QVERIFY(checks[0]->isChecked() && spins[0]->isEnabled());
+                QCOMPARE(spins[0]->value(), 500);
+                QVERIFY(!checks[1]->isChecked() && !spins[1]->isEnabled());
+                QVERIFY(checks[2]->isChecked() && spins[2]->isEnabled());
+                QCOMPARE(spins[2]->value(), 8);
+                QVERIFY(checks[3]->isChecked() && spins[3]->isEnabled());
+                QCOMPARE(spins[3]->value(), 4);
+                QVERIFY(!apply->isEnabled());
+                checks[0]->click();
+                QVERIFY(!spins[0]->isEnabled());
+                checks[0]->click();
+                QCOMPARE(spins[0]->value(), 500);
+                QVERIFY(!apply->isEnabled());
+                checks[0]->click();
+                checks[1]->click();
+                QVERIFY(spins[1]->isEnabled());
+                spins[1]->setValue(120);
+                spins[2]->setValue(12);
+                checks[3]->click();
+                QVERIFY(!spins[3]->isEnabled());
+                QVERIFY(apply->isEnabled());
+                QCOMPARE(legacy.commandsFor("/api/v2/app/setPreferences"), 0);
+                if (save)
+                {
+                    apply->click();
+                    QTRY_VERIFY_WITH_TIMEOUT(checks[0]->isEnabled() && !apply->isEnabled(), 6000);
+                    QVERIFY(!checks[0]->isChecked() && !spins[0]->isEnabled());
+                    QCOMPARE(spins[1]->value(), 120);
+                    QCOMPARE(spins[2]->value(), 12);
+                    QVERIFY(!checks[3]->isChecked() && !spins[3]->isEnabled());
+                }
+            });
+            if (!save)
+                QCOMPARE(legacy.serverPreferences(), initialLegacy);
+        }
+        const QJsonObject expectedLegacy{
+            {QStringLiteral("max_connec"), -1},
+            {QStringLiteral("max_connec_per_torrent"), 120},
+            {QStringLiteral("max_uploads"), 12},
+            {QStringLiteral("max_uploads_per_torrent"), -1}
+        };
+        QCOMPARE(legacy.serverPreferences(), expectedLegacy);
+        QCOMPARE(delta(legacy), expectedLegacy);
+        QCOMPARE(legacy.commandsFor("/api/v2/app/setPreferences"), 1);
+        QCOMPARE(modern.serverPreferences(), initialModern);
+
+        tabs->setCurrentIndex(1);
+        withLimits([](QCheckBox **checks, QSpinBox **spins, QPushButton *apply) {
+            QVERIFY(checks[0]->isEnabled() && !checks[0]->isChecked() && !spins[0]->isEnabled());
+            QVERIFY(checks[1]->isChecked() && spins[1]->isEnabled());
+            QCOMPARE(spins[1]->value(), 75);
+            QVERIFY(checks[2]->isEnabled() && !checks[2]->isChecked() && !spins[2]->isEnabled());
+            QVERIFY(checks[3]->isChecked());
+            QCOMPARE(spins[3]->value(), 3);
+            QVERIFY(!apply->isEnabled()); // 0 is semantically unlimited, not a pending edit.
+            spins[1]->setValue(80);
+            apply->click();
+            QTRY_VERIFY_WITH_TIMEOUT(checks[1]->isEnabled() && !apply->isEnabled(), 6000);
+            QCOMPARE(spins[1]->value(), 80);
+        });
+        QJsonObject expectedModern = initialModern;
+        expectedModern.insert(QStringLiteral("max_connec_per_torrent"), 80);
+        QCOMPARE(modern.serverPreferences(), expectedModern);
+        const QJsonObject expectedModernDelta{{QStringLiteral("max_connec_per_torrent"), 80}};
+        QCOMPARE(delta(modern), expectedModernDelta);
+        QCOMPARE(modern.commandsFor("/api/v2/app/setPreferences"), 1);
+        QCOMPARE(legacy.serverPreferences(), expectedLegacy);
+
+        // A positive value below the native minimum is not silently clamped.
+        // Missing and malformed fields must not become fabricated limits.
+        modern.setServerPreferences({
+            {QStringLiteral("max_connec"), 1},
+            {QStringLiteral("max_connec_per_torrent"), 2.5},
+            {QStringLiteral("max_uploads_per_torrent"), 6}
+        });
+        withLimits([](QCheckBox **checks, QSpinBox **spins, QPushButton *apply) {
+            for (int i = 0; i < 3; ++i)
+                QVERIFY(!checks[i]->isEnabled() && !spins[i]->isEnabled());
+            QVERIFY(checks[3]->isChecked() && spins[3]->isEnabled());
+            QCOMPARE(spins[3]->value(), 6);
+            QVERIFY(!apply->isEnabled());
+        });
+        QCOMPARE(modern.commandsFor("/api/v2/app/setPreferences"), 1);
+
+        tabs->setCurrentIndex(0);
+        withLimits([](QCheckBox **checks, QSpinBox **spins, QPushButton *apply) {
+            QVERIFY(!checks[0]->isChecked() && !spins[0]->isEnabled());
+            QCOMPARE(spins[1]->value(), 120);
+            QCOMPARE(spins[2]->value(), 12);
+            QVERIFY(!checks[3]->isChecked() && !spins[3]->isEnabled());
+            QVERIFY(!apply->isEnabled());
+        });
+    }
+
     void legacyBackupDestinationsUseNativeControls()
     {
         DemoQbittorrentServer legacy(true), modern(true);
