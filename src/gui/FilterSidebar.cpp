@@ -742,15 +742,35 @@ void FilterSidebar::showGroupOptions(QListWidget *list, Group group, const QPoin
         add("edit-clear", tr("Remove tracker"), "sidebarGroupRemove", GroupAction::Remove);
         menu.addSeparator();
     }
+    appendTorrentActions(menu, group, key);
+    menu.exec(list->viewport()->mapToGlobal(position));
+}
+
+void FilterSidebar::appendTorrentActions(QMenu &menu, Group group, const QString &key)
+{
+    const auto add = [&](const char *icon, const QString &label, const char *name, GroupAction action) {
+        auto *entry = menu.addAction(QIcon(QStringLiteral(":/icons/") + QString::fromLatin1(icon)
+            + QStringLiteral(".svg")), label);
+        entry->setObjectName(QString::fromLatin1(name));
+        entry->setEnabled(m_groupActionsEnabled);
+        connect(entry, &QAction::triggered, this, [this, group, key, action]() {
+            emit groupActionRequested(group, key, action);
+        });
+    };
     add("torrent-start", tr("Start torrents"), "sidebarGroupStart", GroupAction::Start);
     add("torrent-start-forced", tr("Force start torrents"), "sidebarGroupForceStart", GroupAction::ForceStart);
     add("torrent-stop", tr("Stop torrents"), "sidebarGroupStop", GroupAction::Stop);
     add("list-remove", tr("Remove torrents"), "sidebarGroupRemoveTorrents", GroupAction::RemoveTorrents);
-    menu.exec(list->viewport()->mapToGlobal(position));
 }
 
 void FilterSidebar::showDirectoryOptions(const QPoint &position, QWidget *source)
 {
+    // A row context menu selects that directory; the section caption retains
+    // the current selection, including All. Match the other filter menus.
+    const bool onTree = source == m_directories;
+    if (onTree)
+        if (auto *item = m_directories->itemAt(position))
+            m_directories->setCurrentItem(item);
     QMenu menu(source);
     menu.setObjectName(QStringLiteral("directoryFilterOptions"));
     auto *toggle = menu.addAction(tr("Include subfolders"));
@@ -764,7 +784,9 @@ void FilterSidebar::showDirectoryOptions(const QPoint &position, QWidget *source
         updateDirectoryLabels();
         emit filtersChanged();
     });
-    menu.exec(source->mapToGlobal(position));
+    menu.addSeparator();
+    appendTorrentActions(menu, Group::Directories, m_selectedDirectory);
+    menu.exec((onTree ? m_directories->viewport() : source)->mapToGlobal(position));
 }
 
 void FilterSidebar::saveDirectoryState(QSettings &settings, const QString &layoutRoot) const
