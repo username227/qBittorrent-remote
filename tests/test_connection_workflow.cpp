@@ -135,7 +135,10 @@ public:
                                         == QStringLiteral("demo-password")
                                     || (m_acceptBlank && data.queryItemValue(
                                         QStringLiteral("password")).isEmpty()));
-                            response = good ? QByteArrayLiteral("Ok.") : QByteArrayLiteral("Fails.");
+                            if (m_modernResponses)
+                                code = good ? 204 : 401;
+                            else
+                                response = good ? QByteArrayLiteral("Ok.") : QByteArrayLiteral("Fails.");
                             if (good)
                                 cookieHeader = "Set-Cookie: QBT_SID=demo-session; Path=/; HttpOnly\r\n";
                         }
@@ -679,8 +682,15 @@ public:
                             response = "Forbidden";
                         }
 
+                        if (m_modernResponses && code == 200 && fields.value(0) == "POST"
+                            && response == "Ok.")
+                        {
+                            code = 204;
+                            response.clear();
+                        }
                         QByteArray result = "HTTP/1.1 " + QByteArray::number(code) +
-                            (code == 200 ? " OK\r\n" : " Forbidden\r\n");
+                            (code == 200 ? " OK\r\n" : code == 204 ? " No Content\r\n"
+                                : code == 401 ? " Unauthorized\r\n" : " Forbidden\r\n");
                         result += "Content-Type: text/plain\r\n";
                         result += "Content-Length: " + QByteArray::number(response.size()) + "\r\n";
                         result += cookieHeader;
@@ -742,6 +752,11 @@ public:
     bool trayAlternative() const { return m_trayAltMode; }
     void setTrayConnectionStatus(const QString &status) { m_trayConnectionStatus = status; }
     QJsonObject trayLimits() const { return m_traySpeedLimits; }
+    void enableModernResponses()
+    {
+        m_modernResponses = true;
+        setReportedVersions(QStringLiteral("v5.3.0"), QStringLiteral("2.16.0"));
+    }
     void setReportedVersions(const QString &qbtVersion, const QString &apiVersion)
     {
         m_reportedQbtVersion = qbtVersion.toUtf8();
@@ -869,6 +884,7 @@ private:
     QTcpServer m_server;
     bool m_acceptPassword;
     bool m_acceptBlank;
+    bool m_modernResponses = false;
     QByteArray m_reportedQbtVersion = QByteArrayLiteral("v5.1.4");
     QByteArray m_reportedApiVersion = QByteArrayLiteral("2.11.3");
     int m_logouts = 0;
@@ -5206,6 +5222,51 @@ private slots:
     void privateTrackerAdditionPolicyThroughEditor();
     void nativeManageContentAndTorrentOptionsChangeServerState();
     void remoteTorrentExportReturnsActualMetadata();
+
+    void modernServerLoginAndPreferencesAcceptNoContent()
+    {
+        DemoQbittorrentServer server(true);
+        server.enableModernResponses();
+        server.enableTorrentSyncDemo();
+        server.setServerPreferences({{QStringLiteral("add_stopped_enabled"), false}});
+        QVERIFY(server.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("profiles.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, server.url());
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(
+            QStringLiteral("v5.3.0")), 6000);
+        QVERIFY(window.statusBar()->currentMessage().contains(QStringLiteral("2.16.0")));
+        auto *table = window.findChild<QTableView *>(QStringLiteral("torrentList"));
+        QVERIFY(table);
+        QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 1, 6000);
+        auto *prefs = window.findChild<QAction *>(QStringLiteral("actionOptions"));
+        QVERIFY(prefs);
+        bool saved = false;
+        QTimer::singleShot(0, &window, [&]() {
+            auto *dialog = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget());
+            QVERIFY(dialog);
+            const auto cleanup = qScopeGuard([dialog]() { if (dialog->isVisible()) dialog->reject(); });
+            auto *sections = dialog->findChild<QListWidget *>(QStringLiteral("preferencesSections"));
+            auto *stopped = dialog->findChild<QCheckBox *>(QStringLiteral("checkAddStopped"));
+            auto *apply = dialog->findChild<QPushButton *>(QStringLiteral("preferencesApply"));
+            QVERIFY(sections && stopped && apply);
+            sections->setCurrentRow(2);
+            QTRY_VERIFY_WITH_TIMEOUT(stopped->isEnabled(), 6000);
+            QVERIFY(!stopped->isChecked());
+            stopped->click();
+            QVERIFY(apply->isEnabled());
+            apply->click();
+            QTRY_VERIFY_WITH_TIMEOUT(stopped->isEnabled() && !apply->isEnabled(), 6000);
+            saved = true;
+        });
+        prefs->trigger();
+        QVERIFY(saved);
+        QCOMPARE(server.serverPreferences().value(QStringLiteral("add_stopped_enabled")), QJsonValue(true));
+    }
 
     void userSeesAuthenticationFailure()
     {
