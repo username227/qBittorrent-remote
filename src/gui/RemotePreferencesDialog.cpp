@@ -30,6 +30,7 @@
 #include <QSystemTrayIcon>
 #include <QGuiApplication>
 #include <QPushButton>
+#include <QRandomGenerator>
 #include <limits>
 #include <QScrollArea>
 #include <QSignalBlocker>
@@ -165,6 +166,7 @@ RemotePreferencesDialog::RemotePreferencesDialog(QSettings &settings,
     bindBackupAndWatchedFolders();
     bindExcludedFileNames();
     bindNotificationAndProgramControls();
+    bindConnectionListeningControls();
     populateAdvancedPlaceholders();
     buildRemotePathsPage(preferredProfileId);
 
@@ -544,6 +546,26 @@ void RemotePreferencesDialog::bindRemoteControl(const char *key, QWidget *widget
     else
         return;
     bindRemoteField(std::move(field));
+}
+
+void RemotePreferencesDialog::bindConnectionListeningControls()
+{
+    // Both upstream API generations use the same BTProtocol enumeration:
+    // Both=0, TCP=1, UTP=2. The native combo follows that exact order.
+    bindRemoteControl("bittorrent_protocol", m_ui->comboProtocol, {},
+        tr("Peer connection protocol used by the connected server."));
+    bindRemoteControl("listen_port", m_ui->spinPort, {},
+        tr("Incoming BitTorrent port on the connected server, not its Web API port. "
+           "Set to 0 (Any) to let the server select an unused port."));
+    bindRemoteControl("upnp", m_ui->checkUPnP, {},
+        tr("Request UPnP / NAT-PMP forwarding for the connected server's BitTorrent port."));
+    connect(m_ui->randomButton, &QPushButton::clicked, this, [this]() {
+        if (!m_remoteBusy && remoteFieldAvailable("listen_port")
+            && m_ui->spinPort->isEnabled())
+            m_ui->spinPort->setValue(QRandomGenerator::global()->bounded(1024, 65536));
+    });
+    // random_port is a deprecated alias for listen_port == 0. Never
+    // write both keys, or a stale alias could override an explicit port.
 }
 
 void RemotePreferencesDialog::bindServerBehaviorControls()
@@ -1243,6 +1265,11 @@ void RemotePreferencesDialog::refreshRemoteControls()
     refreshWatchedFolderButtons();
     refreshNotificationControls();
     refreshBackupControls();
+    const bool portAvailable = remoteFieldAvailable("listen_port");
+    m_ui->randomButton->setEnabled(portAvailable);
+    m_ui->randomButton->setToolTip(portAvailable
+        ? tr("Choose a random port between 1024 and 65535. Apply to change the server.")
+        : tr("The connected server does not expose a supported listening port."));
 }
 
 void RemotePreferencesDialog::populateRemoteFields(const QJsonObject &values,

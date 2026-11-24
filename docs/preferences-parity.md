@@ -15,7 +15,7 @@ a live setting from the connected server**.
 | --- | --- | --- | --- |
 | Behavior | Yes | Local desktop controls and live server log settings | Remaining unsupported controls |
 | Downloads | Yes | Disk options, Saving Management, addition defaults, duplicate behavior, backup settings, legacy watched folders, file-name exclusions, completion email, external program hooks and local original .torrent deletion | Unsupported recursive downloading and console controls |
-| Connection | Yes | Unsupported controls disabled | Actual remote server preferences, never the local device's BitTorrent port |
+| Connection | Yes | Peer protocol, incoming port, Random, UPnP/NAT-PMP | Connection limits, I2P, proxy, IP filtering |
 | Speed | Yes | Unsupported controls disabled | Server speed limits and scheduler |
 | BitTorrent | Yes | Unsupported controls disabled | DHT, PeX, encryption, queues and peer controls |
 | Search | Yes | Unsupported controls disabled | Separate remote-search capability decision |
@@ -104,6 +104,11 @@ The server does not expose an atomic per-file upload receipt; matching newly vis
 ## Legacy backup compatibility — qBittorrent 5.1.x export destinations
 
 Older servers advertise `export_dir` and `export_dir_fin` strings rather than the five modern backup preferences. Each nonempty string enables the corresponding copy destination; disabling and applying writes an empty string, clearing the destination because the legacy API has no separate enable flag. Use the native legacy labels (copy .torrent files, and copy for finished downloads), not the modern move-backup semantics. Both share the existing mapped directory browse support. Removal of backups when removing a torrent is unsupported on these servers. Prefer modern keys when both families are advertised; never write legacy aliases alongside modern settings. The existing typed transaction verifies the actual legacy strings and rejects enabled empty/relative paths; Cancel does not clear anything. No desktop persistence of remote export paths.
+
+
+## Connection checkpoint 1 — peer protocol and listening port
+
+Native `comboProtocol` binds `bittorrent_protocol` (Both=0, TCP=1, UTP=2), `spinPort` binds `listen_port` (0=Any, up to 65535), and `checkUPnP` binds `upnp`. These are server settings, supported by both 5.1.4 and 5.3.0. Random stages a locally generated integer in the upstream inclusive 1024–65535 range; only Apply/OK writes it to the server. This does not probe port availability or claim that the port is reachable. A zero port requests OS selection on the server. The deprecated `random_port` alias is never written, and `web_ui_port` and profile endpoints are untouched. Unsupported or unrepresentable fields, including the Random button if the port field is unavailable, are disabled. The same typed delta transaction verifies read-back, with no desktop persistence. Functional two-server coverage exercises real native controls, Cancel, Random, explicit port, Any, protocol selection, forwarding, exact delta payloads, legacy/modern HTTP responses, and capability gating.
 
 
 ## Independent transfer text and progress colors
