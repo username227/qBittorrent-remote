@@ -16,7 +16,10 @@ include(CTest)
 # SVG icons from the bundled qBittorrent UI require the QtSvg icon-engine
 # plugin on every platform. Make the dependency explicit so missing SVG
 # support fails at configure time rather than silently hiding all icons.
-find_package(Qt6 6.6 REQUIRED COMPONENTS Core Widgets Network Svg)
+find_package(Qt6 6.6 REQUIRED COMPONENTS Core Widgets Network Svg Multimedia)
+if(UNIX AND NOT APPLE)
+    find_package(Qt6 6.6 REQUIRED COMPONENTS DBus)
+endif()
 
 # Optional cross-platform OS credential vault: libsecret/Secret Service,
 # Windows Credential Manager or macOS Keychain. Never allow plaintext fallback.
@@ -71,6 +74,9 @@ endif()
 add_library(qbittorrent_remote_gui STATIC
     src/gui/MainWindow.cpp
     src/gui/MainWindow.h
+    src/gui/CompletionNotifier.cpp
+    src/gui/CompletionNotifier.h
+    src/gui/completion_sounds.qrc
     src/gui/ConnectionDialog.cpp
     src/gui/ConnectionDialog.h
     src/gui/RemotePreferencesDialog.cpp
@@ -131,7 +137,11 @@ target_include_directories(qbittorrent_remote_gui PUBLIC
 set_target_properties(qbittorrent_remote_gui PROPERTIES
     AUTOUIC_SEARCH_PATHS "${PROJECT_SOURCE_DIR}/src/gui/upstream;${PROJECT_SOURCE_DIR}/src/gui/upstream/layouts"
 )
-target_link_libraries(qbittorrent_remote_gui PUBLIC qbittorrent_remote_core Qt6::Widgets Qt6::Svg)
+target_link_libraries(qbittorrent_remote_gui PUBLIC qbittorrent_remote_core Qt6::Widgets Qt6::Svg Qt6::Multimedia)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(qbittorrent_remote_gui PRIVATE Qt6::DBus)
+    target_compile_definitions(qbittorrent_remote_gui PRIVATE QBT_REMOTE_WITH_DBUS=1)
+endif()
 
 qt_add_executable(qbittorrent-remote
     src/main.cpp
@@ -224,6 +234,10 @@ if(BUILD_TESTING)
         toolbarAndStatusbarRemainEnabledAfterHiddenWindowExit
         corruptedOldToolbarSettingsRecoverOnce
         statusBarFieldsStayFixedDuringAuthenticatedRateUpdates
+    )
+
+    add_remote_workflow_group(remote_completion_notification_workflow 90
+        completionNotificationsFollowLiveServerTransitionsAndLocalPreferences
     )
 
     add_remote_workflow_group(remote_transfer_presentation_workflow 60

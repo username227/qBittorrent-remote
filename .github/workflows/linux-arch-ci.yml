@@ -21,7 +21,7 @@ jobs:
     steps:
       - name: Install Arch development dependencies
         run: |
-          pacman -Syu --noconfirm --needed git cmake ninja gcc pkgconf qt6-base qt6-svg openssl
+          pacman -Syu --noconfirm --needed git cmake ninja gcc pkgconf qt6-base qt6-svg qt6-multimedia openssl
       - name: Checkout repository
         uses: actions/checkout@v4
       - name: Configure and compile native Linux app

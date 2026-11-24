@@ -1,0 +1,5 @@
+<RCC>
+    <qresource prefix="/sounds">
+        <file alias="completion.wav">sounds/completion.wav</file>
+    </qresource>
+</RCC>

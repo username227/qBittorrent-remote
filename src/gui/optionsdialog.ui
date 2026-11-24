@@ -642,6 +642,32 @@
                 </widget>
                </item>
                <item>
+                <widget class="QGroupBox" name="groupCompletionNotifications">
+                 <property name="title">
+                  <string>Notifications</string>
+                 </property>
+                 <layout class="QVBoxLayout" name="completionNotificationLayout">
+                  <item>
+                   <widget class="QCheckBox" name="checkNotifyTorrentCompletion">
+                    <property name="text">
+                     <string>Show notification upon torrent completion</string>
+                    </property>
+                    <property name="checked">
+                     <bool>true</bool>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <widget class="QCheckBox" name="checkSoundTorrentCompletion">
+                    <property name="text">
+                     <string>Play sound upon torrent completion</string>
+                    </property>
+                   </widget>
+                  </item>
+                 </layout>
+                </widget>
+               </item>
+               <item>
                 <widget class="QGroupBox" name="groupFileAssociation">
                  <property name="title">
                   <string>File association</string>

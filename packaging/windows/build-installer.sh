@@ -75,6 +75,7 @@ for essential in \
   "$deploy/Qt6Widgets.dll" \
   "$deploy/Qt6Network.dll" \
   "$deploy/Qt6Svg.dll" \
+  "$deploy/Qt6Multimedia.dll" \
   "$deploy/iconengines/qsvgicon.dll" \
   "$deploy/imageformats/qsvg.dll" \
   "$deploy/libqt6keychain.dll" \
@@ -88,7 +89,7 @@ done
 
 # MSYS2's license text files, if provided by the package.
 mkdir -p -- "$deploy/licenses"
-for directory in /ucrt64/share/licenses/qt6-base /ucrt64/share/licenses/qt6-svg /ucrt64/share/licenses/qtkeychain; do
+for directory in /ucrt64/share/licenses/qt6-base /ucrt64/share/licenses/qt6-svg /ucrt64/share/licenses/qt6-multimedia /ucrt64/share/licenses/qtkeychain; do
   if [[ -d "$directory" ]]; then
     cp -R -- "$directory" "$deploy/licenses/"
   fi

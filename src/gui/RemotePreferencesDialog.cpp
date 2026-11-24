@@ -374,6 +374,12 @@ void RemotePreferencesDialog::loadLocalBehaviorControls()
     unlock(m_ui->checkMinimizeToSysTray);
     unlock(m_ui->checkCloseToSystray);
     unlock(m_ui->comboTrayIcon);
+    unlock(m_ui->checkNotifyTorrentCompletion);
+    unlock(m_ui->checkSoundTorrentCompletion);
+    m_ui->checkNotifyTorrentCompletion->setChecked(m_settings.value(
+        QStringLiteral("Preferences/Behavior/NotifyTorrentCompletion"), true).toBool());
+    m_ui->checkSoundTorrentCompletion->setChecked(m_settings.value(
+        QStringLiteral("Preferences/Behavior/SoundTorrentCompletion"), false).toBool());
 
     m_ui->checkStartup->setText(tr("Start qBittorrent Remote when system starts"));
     m_ui->checkStartup->setToolTip(tr(
@@ -475,6 +481,8 @@ void RemotePreferencesDialog::loadLocalBehaviorControls()
             [updateTrayInputs, dirty](bool) { updateTrayInputs(); dirty(); });
     connect(m_ui->checkMinimizeToSysTray, &QCheckBox::toggled, this, dirty);
     connect(m_ui->checkCloseToSystray, &QCheckBox::toggled, this, dirty);
+    connect(m_ui->checkNotifyTorrentCompletion, &QCheckBox::toggled, this, dirty);
+    connect(m_ui->checkSoundTorrentCompletion, &QCheckBox::toggled, this, dirty);
     connect(m_ui->comboTrayIcon, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [dirty](int) { dirty(); });
     connect(m_ui->confirmDeletion, &QCheckBox::toggled, this, dirty);
@@ -2173,6 +2181,10 @@ bool RemotePreferencesDialog::applyLocalChanges()
             m_ui->checkMinimizeToSysTray->isChecked());
         m_settings.setValue(QStringLiteral("Preferences/Behavior/CloseToTray"),
             m_ui->checkCloseToSystray->isChecked());
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/NotifyTorrentCompletion"),
+            m_ui->checkNotifyTorrentCompletion->isChecked());
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/SoundTorrentCompletion"),
+            m_ui->checkSoundTorrentCompletion->isChecked());
         m_settings.setValue(QStringLiteral("Preferences/Behavior/TrayIconStyle"),
             m_ui->comboTrayIcon->currentIndex());
         m_settings.setValue(QStringLiteral("Preferences/Behavior/ConfirmTorrentDeletion"),

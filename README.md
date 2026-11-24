@@ -16,7 +16,8 @@ There are no alternate build scripts or independent test commands.
 Requirements:
 - CMake 3.21 or newer
 - C++17 compiler
-- Qt 6.6 or newer (Core, Widgets, Network, Svg and Test when tests are enabled)
+- Qt 6.6 or newer (Core, Widgets, Network, Svg, Multimedia, DBus on Linux and Test when tests are enabled)
+- Arch Linux: `qt6-base`, `qt6-svg`, `qt6-multimedia` (with a working audio backend)
 - Ninja (for the checked-in presets)
 
 ```sh
