@@ -38,6 +38,23 @@ ctest --preset release
 Or configure manually with any supported CMake generator. Standard
 `BUILD_TESTING=OFF` disables test targets; tests default to enabled.
 
+### Linux desktop integration
+
+`cmake --install` installs the application's own
+`qbittorrent-remote.desktop` in the standard applications directory and its
+teal SVG icon in the hicolor scalable apps directory, respecting GNUInstallDirs
+and DESTDIR for packaging. Packages should not synthesize another desktop
+entry or icon. The desktop entry declares `application/x-bittorrent` and
+`x-scheme-handler/magnet` so file managers can discover it. Registration does
+not set or override defaults; external file/magnet activation and the
+Preferences association controls remain a separate milestone. Until external
+activation is implemented, choosing this application as the default will
+launch it but not add the passed torrent or magnet.
+
+The Linux CTest installation workflow validates a staged installation and,
+when desktop-file-utils and GIO are available, checks handler discovery in
+an isolated XDG environment. Linux CI installs those utilities.
+
 ### Testing policy
 
 **CTest checks real application functionality and user-visible workflows.**

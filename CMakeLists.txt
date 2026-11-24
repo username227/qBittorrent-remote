@@ -160,6 +160,16 @@ install(TARGETS qbittorrent-remote
     RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
 )
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # A single application identity for launchers, MIME handlers and icon themes.
+    # The existing teal artwork is also the application's in-window icon.
+    install(FILES packaging/linux/qbittorrent-remote.desktop
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/applications")
+    install(FILES src/gui/icons/qbittorrent-tray.svg
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps"
+        RENAME qbittorrent-remote.svg)
+endif()
+
 if(BUILD_TESTING)
     find_package(Qt6 6.6 REQUIRED COMPONENTS Test)
 
@@ -330,6 +340,15 @@ if(BUILD_TESTING)
     set_tests_properties(certificate_trust_workflow PROPERTIES TIMEOUT 90)
 
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_test(NAME linux_desktop_installation
+            COMMAND ${CMAKE_COMMAND}
+                "-DBUILD_DIR=${PROJECT_BINARY_DIR}"
+                "-DBUILD_CONFIG=$<CONFIG>"
+                "-DINSTALL_DATADIR=${CMAKE_INSTALL_FULL_DATADIR}"
+                "-DINSTALL_BINDIR=${CMAKE_INSTALL_FULL_BINDIR}"
+                -P "${PROJECT_SOURCE_DIR}/tests/check_linux_desktop_installation.cmake")
+        set_tests_properties(linux_desktop_installation PROPERTIES
+            TIMEOUT 30 LABELS "packaging;functional")
         set_tests_properties(window_open_and_quit server_profile_management native_preferences_and_remote_paths native_add_torrent_and_path_mapping combined_sidebar_filter_workflow detail_tables_sorting_workflow torrent_context_menu_workflow certificate_trust_workflow PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         )
