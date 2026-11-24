@@ -54,6 +54,8 @@ private:
     void loadLocalAdditionControls();
     void bindServerBehaviorControls();
     void bindConnectionListeningControls();
+    void bindConnectionLimits();
+    void refreshConnectionLimitControls();
     void bindDownloadsSavingControls();
     void bindTorrentAdditionDefaults();
     void bindBackupAndWatchedFolders();

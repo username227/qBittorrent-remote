@@ -15,7 +15,7 @@ a live setting from the connected server**.
 | --- | --- | --- | --- |
 | Behavior | Yes | Local desktop controls and live server log settings | Remaining unsupported controls |
 | Downloads | Yes | Disk options, Saving Management, addition defaults, duplicate behavior, backup settings, legacy watched folders, file-name exclusions, completion email, external program hooks and local original .torrent deletion | Unsupported recursive downloading and console controls |
-| Connection | Yes | Peer protocol, incoming port, Random, UPnP/NAT-PMP | Connection limits, I2P, proxy, IP filtering |
+| Connection | Yes | Peer protocol, incoming port, Random, UPnP/NAT-PMP, connection and upload-slot limits | I2P, proxy, IP filtering |
 | Speed | Yes | Unsupported controls disabled | Server speed limits and scheduler |
 | BitTorrent | Yes | Unsupported controls disabled | DHT, PeX, encryption, queues and peer controls |
 | Search | Yes | Unsupported controls disabled | Separate remote-search capability decision |
@@ -114,3 +114,8 @@ Native `comboProtocol` binds `bittorrent_protocol` (Both=0, TCP=1, UTP=2), `spin
 ## Independent transfer text and progress colors
 
 The desktop Behavior options for torrent-state text colors and progress-bar colors are independent. Both use the same upstream-derived light/dark palette. With text colors disabled, ordinary text follows the desktop palette and bars may still use the state palette. With progress colors disabled, the original native progress palette is used. Existing `StateColors` and `ProgressFollowsState` settings and defaults are retained; a previously checked progress-color option now takes effect even when text colors are disabled. No remote preferences are sent. The live transfer presentation test exercises the actual Preferences dialog, native delegate rendering, all four combinations, and Cancel.
+
+
+## Connection checkpoint 2 — connection limits
+
+Both qBittorrent 5.1.4 and 5.3.0 expose `max_connec`, `max_connec_per_torrent`, `max_uploads`, and `max_uploads_per_torrent`. The native checkbox/spinbox pairs represent each integer limit as one typed field: unchecking stages `-1` (unlimited); positive values enable the spinbox. Nonpositive integral values from the server are semantically unlimited as in both upstream setters, and are normalized for comparison without rewriting unchanged values. In-dialog uncheck/recheck retains the numeric value; nothing is stored locally. Connections retain the native minimum of 2; upload slots use minimum 1 rather than offering a checked value of 0 that the engine treats as unlimited. Missing, malformed or unrepresentable values disable both controls. The existing changed-key/read-back transaction handles Apply/OK/Cancel. A two-server native GUI test exercises both API response styles, every field, cancellation, exact changed keys, read-back, isolation, noncanonical unlimited and malformed/absent values.
