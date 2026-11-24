@@ -328,6 +328,7 @@ void ServerPane::applySync(const QJsonObject &payload)
         m_trackers.remove(value.toString());
 
     m_model->applySync(payload);
+    m_sidebar->setGroupActionsEnabled(m_hasFullSync);
     m_sidebar->updateCounts(m_model->torrents(), m_categories, m_tags, m_trackers);
     static_cast<TorrentFilterProxyModel *>(m_proxy)->refresh();
     m_details->appendRates(
