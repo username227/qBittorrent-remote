@@ -11,6 +11,7 @@
 #include <QSet>
 #include <QString>
 #include <memory>
+#include <functional>
 
 class QComboBox;
 class QDialogButtonBox;
@@ -21,9 +22,8 @@ namespace Ui { class OptionsDialog; }
 namespace Remote { class RemoteSession; }
 
 // The complete native qBittorrent Preferences layout is retained for
-// visual parity, with unsupported controls explicitly disabled. Client-side
-// server/path mappings are the only editable page until other settings are
-// backed by the selected remote server's authenticated API.
+// visual parity. Local preferences stay local; remote controls are enabled
+// only from the authenticated session's actual, representable values.
 class RemotePreferencesDialog final : public QDialog
 {
     Q_OBJECT
@@ -43,14 +43,42 @@ private:
     void populateAdvancedPlaceholders();
     void disableUnimplementedControls();
     void loadLocalBehaviorControls();
-    void loadServerBehaviorControls();
+    void bindServerBehaviorControls();
+    // Register typed controls, including custom enum/compound bindings for
+    // later tabs. A field is available only after a valid server value.
+    struct RemoteField
+    {
+        QString key;
+        QWidget *widget;
+        std::function<QJsonValue()> read;
+        std::function<void(const QJsonValue &)> write;
+        std::function<bool(const QJsonValue &)> accepts;
+        std::function<bool()> dependency;
+        QString tooltip;
+        QJsonValue baseline = QJsonValue(QJsonValue::Undefined);
+    };
+    void bindRemoteField(RemoteField field);
+    void bindRemoteControl(const char *key, QWidget *widget,
+                           std::function<bool()> dependency = {}, QString tooltip = {});
+    bool remoteFieldAvailable(const char *key) const;
+    void loadRemotePreferences();
+    void populateRemoteFields(const QJsonObject &values, const QJsonObject &staged = {});
+    void refreshRemoteControls();
+    QJsonObject remoteChanges() const;
+    void setRemoteBusy(bool busy);
+    void remoteDisconnected();
+    void remoteSaveFailed(const QString &reason);
+    void verifyRemoteChanges(const QJsonObject &changes);
     void populateServerSelector(const QString &preferredProfileId);
     void showServerMappings();
     void stageCurrentMappings();
     void editMapping(bool existing);
     void removeMapping();
     void checkLocalMount();
-    bool applyChanges();
+    void applyChanges(bool closeAfter);
+    bool validateLocalChanges();
+    bool applyLocalChanges();
+    void finishApply();
     void updateButtons();
     QString currentProfileId() const;
     QList<Remote::PathMapping> tableMappings() const;
@@ -70,9 +98,10 @@ private:
     QHash<QString, QList<Remote::PathMapping>> m_staged;
     QSet<QString> m_changedProfiles;
     bool m_behaviorDirty = false;
-    bool m_serverBehaviorDirty = false;
+    QList<RemoteField> m_remoteFields;
     bool m_remotePreferencesLoaded = false;
     bool m_loadingRemotePreferences = false;
-    QJsonObject m_remotePreferences;
+    bool m_remoteBusy = false;
+    bool m_closeAfterApply = false;
     QPointer<Remote::RemoteSession> m_remoteSession;
 };

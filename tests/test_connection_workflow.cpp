@@ -48,6 +48,7 @@
 #include <QMenu>
 #include <QPushButton>
 #include <QSettings>
+#include <QScopeGuard>
 #include <QShortcut>
 #include <QStatusBar>
 #include <QTabWidget>
@@ -301,6 +302,36 @@ public:
                                 response = "Unknown torrent";
                             }
                         }
+                        else if (m_preferencesDemo && hasCookie
+                                 && path == "/api/v2/app/preferences")
+                        {
+                            ++m_preferenceReads;
+                            response = QJsonDocument(m_preferences).toJson(QJsonDocument::Compact);
+                        }
+                        else if (m_preferencesDemo && hasCookie
+                                 && path == "/api/v2/app/setPreferences")
+                        {
+                            m_commands.append({path, body});
+                            const QUrlQuery form(QString::fromUtf8(body));
+                            const QJsonDocument parsed = QJsonDocument::fromJson(
+                                form.queryItemValue(QStringLiteral("json"), QUrl::FullyDecoded).toUtf8());
+                            if (!parsed.isObject() || m_rejectPreferences)
+                            {
+                                code = 400;
+                                response = "Rejected";
+                            }
+                            else
+                            {
+                                if (!m_ignorePreferences)
+                                {
+                                    const auto updates = parsed.object();
+                                    for (auto it = updates.constBegin(); it != updates.constEnd(); ++it)
+                                        if (m_preferences.contains(it.key()))
+                                            m_preferences.insert(it.key(), it.value());
+                                }
+                                response = "Ok.";
+                            }
+                        }
                         else if (m_trayDemo && hasCookie
                                  && path == "/api/v2/app/preferences")
                         {
@@ -313,7 +344,7 @@ public:
                             m_commands.append({path, body});
                             const QUrlQuery form(QString::fromUtf8(body));
                             const QJsonDocument parsed = QJsonDocument::fromJson(
-                                form.queryItemValue(QStringLiteral("json")).toUtf8());
+                                form.queryItemValue(QStringLiteral("json"), QUrl::FullyDecoded).toUtf8());
                             if (!parsed.isObject() || m_rejectCommands)
                             {
                                 code = 400;
@@ -552,8 +583,21 @@ public:
                         result += cookieHeader;
                         result += "Connection: close\r\n\r\n";
                         result += response;
-                        socket->write(result);
-                        socket->disconnectFromHost();
+                        if (m_preferencesDemo && (path == "/api/v2/app/preferences"
+                                || path == "/api/v2/app/setPreferences"))
+                        {
+                            // A delayed response lets GUI tests observe the
+                            // in-flight state rather than optimistic success.
+                            QTimer::singleShot(150, socket, [socket, result]() {
+                                socket->write(result);
+                                socket->disconnectFromHost();
+                            });
+                        }
+                        else
+                        {
+                            socket->write(result);
+                            socket->disconnectFromHost();
+                        }
                     });
                 connect(socket, &QTcpSocket::disconnected, socket, &QTcpSocket::deleteLater);
             }
@@ -581,6 +625,15 @@ public:
             {QStringLiteral("alt_dl_limit"), 30 * 1024}
         };
     }
+    void setServerPreferences(const QJsonObject &values)
+    {
+        m_preferencesDemo = true;
+        m_preferences = values;
+    }
+    QJsonObject serverPreferences() const { return m_preferences; }
+    int preferenceReads() const { return m_preferenceReads; }
+    void rejectPreferenceWrites(bool reject) { m_rejectPreferences = reject; }
+    void ignorePreferenceWrites(bool ignore) { m_ignorePreferences = ignore; }
     bool trayAlternative() const { return m_trayAltMode; }
     QJsonObject trayLimits() const { return m_traySpeedLimits; }
     void setReportedVersions(const QString &qbtVersion, const QString &apiVersion)
@@ -718,6 +771,11 @@ private:
     bool m_trayDemo = false;
     bool m_trayAltMode = false;
     QJsonObject m_traySpeedLimits;
+    bool m_preferencesDemo = false;
+    bool m_rejectPreferences = false;
+    bool m_ignorePreferences = false;
+    int m_preferenceReads = 0;
+    QJsonObject m_preferences;
     bool m_queueingEnabled = false;
     bool m_mappedFolderDemo = false;
     QString m_existingTorrentHash;
@@ -1226,7 +1284,7 @@ private slots:
         const QUrlQuery changed(QString::fromUtf8(server.lastCommandBody(
             "/api/v2/app/setPreferences")));
         const QJsonObject changes = QJsonDocument::fromJson(changed.queryItemValue(
-            QStringLiteral("json")).toUtf8()).object();
+            QStringLiteral("json"), QUrl::FullyDecoded).toUtf8()).object();
         QCOMPARE(changes.size(), 1);
         QCOMPARE(changes.value(QStringLiteral("up_limit")).toInt(), 57 * 1024);
         // Open the real tray submenu while the main window is hidden.
@@ -1878,6 +1936,257 @@ private slots:
             .contains(server.reportedQbtVersion()), 1500);
         QVERIFY(window.statusBar()->currentMessage().contains(server.reportedApiVersion()));
         QVERIFY(window.statusBar()->currentMessage().contains(QStringLiteral("Demo seedbox")));
+    }
+
+    void remotePreferencesReadApplyVerifyAndCancelOnSelectedServer()
+    {
+        DemoQbittorrentServer first(true);
+        DemoQbittorrentServer second(true);
+        first.setServerPreferences({
+            {QStringLiteral("file_log_enabled"), true},
+            {QStringLiteral("file_log_path"), QStringLiteral("/share/First/log")},
+            {QStringLiteral("file_log_backup_enabled"), true},
+            {QStringLiteral("file_log_max_size"), 65},
+            {QStringLiteral("file_log_delete_old"), true},
+            {QStringLiteral("file_log_age"), 10},
+            {QStringLiteral("file_log_age_type"), 0},
+            {QStringLiteral("performance_warning"), true},
+            {QStringLiteral("mail_notification_password"), QStringLiteral("server-only-secret")}
+        });
+        // An older/different server can lack fields or return values this
+        // client cannot represent. None of those may be sent as defaults.
+        second.setServerPreferences({
+            {QStringLiteral("file_log_enabled"), true},
+            {QStringLiteral("file_log_path"), QStringLiteral("/share/Second/log")},
+            {QStringLiteral("file_log_backup_enabled"), true},
+            {QStringLiteral("file_log_max_size"), QStringLiteral("unsupported")},
+            {QStringLiteral("file_log_delete_old"), true},
+            {QStringLiteral("file_log_age_type"), 99},
+            {QStringLiteral("performance_warning"), false}
+        });
+        QVERIFY(first.start() && second.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("prefs.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        QTRY_VERIFY(window.isVisible());
+        openConnectDialog(window, first.url());
+        auto *tabs = window.findChild<QTabWidget *>(QStringLiteral("serverTabs"));
+        QVERIFY(tabs);
+        QTRY_COMPARE_WITH_TIMEOUT(tabs->count(), 1, 6000);
+        openConnectDialog(window, second.url(), false, true, true, QStringLiteral("Second seedbox"));
+        QTRY_COMPARE_WITH_TIMEOUT(tabs->count(), 2, 6000);
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(
+            QStringLiteral("Connected to Second seedbox")), 6000);
+
+        auto *options = window.findChild<QAction *>(QStringLiteral("actionOptions"));
+        QVERIFY(options);
+        // Exercise the real menu and modal dialog rather than calling the
+        // preference transport or the field binding helpers directly.
+        const auto withDialog = [&](const std::function<void(RemotePreferencesDialog *)> &drive) {
+            bool opened = false;
+            QTimer::singleShot(0, &window, [&]() {
+                auto *dialog = qobject_cast<RemotePreferencesDialog *>(
+                    QApplication::activeModalWidget());
+                if (!dialog)
+                    return;
+                opened = true;
+                const auto cleanup = qScopeGuard([dialog]() {
+                    if (dialog->isVisible())
+                        dialog->reject();
+                });
+                auto *navigation = dialog->findChild<QListWidget *>(QStringLiteral("preferencesSections"));
+                QVERIFY(navigation);
+                navigation->setCurrentRow(1);
+                drive(dialog);
+            });
+            // Dismiss a dialog only on a test timeout, never pretend it passed.
+            QTimer watchdog;
+            bool timedOut = false;
+            connect(&watchdog, &QTimer::timeout, &window, [&]() {
+                timedOut = true;
+                if (auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget()))
+                    dialog->reject();
+            });
+            watchdog.start(12000);
+            options->trigger();
+            watchdog.stop();
+            QVERIFY(opened);
+            QVERIFY(!timedOut);
+        };
+        const QString newPath = QStringLiteral("/share/Second/Logs + & 100% ü");
+        const auto changedBody = [](const DemoQbittorrentServer &server) {
+            const QUrlQuery form(QString::fromUtf8(server.lastCommandBody("/api/v2/app/setPreferences")));
+            return QJsonDocument::fromJson(form.queryItemValue(
+                QStringLiteral("json"), QUrl::FullyDecoded).toUtf8()).object();
+        };
+        withDialog([&](RemotePreferencesDialog *dialog) {
+            auto *path = dialog->findChild<QLineEdit *>(QStringLiteral("textFileLogPath"));
+            auto *size = dialog->findChild<QSpinBox *>(QStringLiteral("spinFileLogSize"));
+            auto *age = dialog->findChild<QSpinBox *>(QStringLiteral("spinFileLogAge"));
+            auto *ageType = dialog->findChild<QComboBox *>(QStringLiteral("comboFileLogAgeType"));
+            auto *buttons = dialog->findChild<QDialogButtonBox *>(QStringLiteral("buttonBox"));
+            QVERIFY(path && size && age && ageType && buttons);
+            auto *apply = buttons->button(QDialogButtonBox::Apply);
+            QVERIFY(!path->isEnabled()); // No fictitious editable values before GET.
+            QTRY_VERIFY_WITH_TIMEOUT(path->isEnabled(), 6000);
+            QCOMPARE(path->text(), QStringLiteral("/share/Second/log"));
+            QVERIFY(!size->isEnabled() && !age->isEnabled() && !ageType->isEnabled());
+            QVERIFY(!apply->isEnabled());
+            path->setText(QStringLiteral("unsaved"));
+            QVERIFY(apply->isEnabled());
+            path->setText(QStringLiteral("/share/Second/log"));
+            QVERIFY(!apply->isEnabled());
+            path->setText(newPath);
+            const int reads = second.preferenceReads();
+            apply->click();
+            QVERIFY(!buttons->isEnabled()); // Wait for POST plus authoritative GET.
+            QVERIFY(dialog->isVisible());
+            QTRY_VERIFY_WITH_TIMEOUT(buttons->isEnabled(), 6000);
+            QVERIFY(!apply->isEnabled());
+            QCOMPARE(second.preferenceReads(), reads + 1);
+            QCOMPARE(second.commandsFor("/api/v2/app/setPreferences"), 1);
+            QCOMPARE(changedBody(second), QJsonObject({{QStringLiteral("file_log_path"), newPath}}));
+            QCOMPARE(second.serverPreferences().value(QStringLiteral("file_log_path")).toString(), newPath);
+            QCOMPARE(first.commandsFor("/api/v2/app/setPreferences"), 0);
+            // Cancel discards only the new unapplied edit, not the applied one.
+            path->setText(QStringLiteral("/share/Second/discard"));
+            buttons->button(QDialogButtonBox::Cancel)->click();
+        });
+        QCOMPARE(second.commandsFor("/api/v2/app/setPreferences"), 1);
+        QCOMPARE(second.serverPreferences().value(QStringLiteral("file_log_path")).toString(), newPath);
+
+        tabs->setCurrentIndex(0);
+        QTRY_VERIFY(window.statusBar()->currentMessage().contains(QStringLiteral("Connected to Demo seedbox")));
+        // Simulate an external WebUI edit before reopening Preferences.
+        auto updated = first.serverPreferences();
+        updated.insert(QStringLiteral("file_log_path"), QStringLiteral("/share/First/changed-externally"));
+        first.setServerPreferences(updated);
+        withDialog([&](RemotePreferencesDialog *dialog) {
+            auto *path = dialog->findChild<QLineEdit *>(QStringLiteral("textFileLogPath"));
+            auto *size = dialog->findChild<QSpinBox *>(QStringLiteral("spinFileLogSize"));
+            auto *backup = dialog->findChild<QCheckBox *>(QStringLiteral("checkFileLogBackup"));
+            auto *buttons = dialog->findChild<QDialogButtonBox *>(QStringLiteral("buttonBox"));
+            QVERIFY(path && size && backup && buttons);
+            QTRY_VERIFY_WITH_TIMEOUT(path->isEnabled(), 6000);
+            QCOMPARE(path->text(), QStringLiteral("/share/First/changed-externally"));
+            QCOMPARE(size->value(), 65);
+            QVERIFY(size->isEnabled());
+            backup->setChecked(false);
+            QVERIFY(!size->isEnabled());
+            backup->setChecked(true);
+            QVERIFY(size->isEnabled());
+            QVERIFY(!buttons->button(QDialogButtonBox::Apply)->isEnabled());
+            size->setValue(128);
+            buttons->button(QDialogButtonBox::Ok)->click();
+            QVERIFY(dialog->isVisible());
+            QVERIFY(!buttons->isEnabled());
+            QTRY_VERIFY_WITH_TIMEOUT(!dialog->isVisible(), 6000);
+        });
+        QCOMPARE(first.commandsFor("/api/v2/app/setPreferences"), 1);
+        QCOMPARE(changedBody(first), QJsonObject({{QStringLiteral("file_log_max_size"), 128}}));
+        QCOMPARE(first.serverPreferences().value(QStringLiteral("file_log_max_size")).toInt(), 128);
+        QCOMPARE(second.commandsFor("/api/v2/app/setPreferences"), 1);
+        settings.sync();
+        QFile saved(settings.fileName());
+        QVERIFY(saved.open(QIODevice::ReadOnly));
+        const QByteArray stored = saved.readAll();
+        QVERIFY(!stored.contains("server-only-secret"));
+        QVERIFY(!stored.contains("file_log_path"));
+        QVERIFY(!stored.contains("file_log_max_size"));
+    }
+
+    void rejectedAndIgnoredRemotePreferenceWritesKeepEditsStaged()
+    {
+        DemoQbittorrentServer server(true);
+        server.setServerPreferences({
+            {QStringLiteral("file_log_enabled"), true},
+            {QStringLiteral("file_log_path"), QStringLiteral("/share/log")},
+            {QStringLiteral("performance_warning"), false}
+        });
+        QVERIFY(server.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("prefs.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, server.url());
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(
+            QStringLiteral("Connected to Demo seedbox")), 6000);
+        auto *options = window.findChild<QAction *>(QStringLiteral("actionOptions"));
+        QVERIFY(options);
+        int warnings = 0;
+        QTimer dismissWarning;
+        connect(&dismissWarning, &QTimer::timeout, &window, [&]() {
+            auto *warning = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+            if (!warning || warning->windowTitle() != QStringLiteral("Cannot confirm server preferences"))
+                return;
+            ++warnings;
+            warning->accept();
+        });
+        dismissWarning.start(20);
+        bool opened = false;
+        QTimer::singleShot(0, &window, [&]() {
+            auto *dialog = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget());
+            if (!dialog) return;
+            opened = true;
+            const auto cleanup = qScopeGuard([dialog]() {
+                if (dialog->isVisible())
+                    dialog->reject();
+            });
+            auto *nav = dialog->findChild<QListWidget *>(QStringLiteral("preferencesSections"));
+            auto *path = dialog->findChild<QLineEdit *>(QStringLiteral("textFileLogPath"));
+            auto *buttons = dialog->findChild<QDialogButtonBox *>(QStringLiteral("buttonBox"));
+            QVERIFY(nav && path && buttons);
+            nav->setCurrentRow(1);
+            QTRY_VERIFY_WITH_TIMEOUT(path->isEnabled(), 6000);
+            QCOMPARE(path->text(), QStringLiteral("/share/log"));
+            path->setText(QStringLiteral("/share/new"));
+            server.rejectPreferenceWrites(true);
+            const int reads = server.preferenceReads();
+            buttons->button(QDialogButtonBox::Ok)->click();
+            QTRY_COMPARE_WITH_TIMEOUT(warnings, 1, 6000);
+            QVERIFY(dialog->isVisible() && buttons->isEnabled());
+            QVERIFY(buttons->button(QDialogButtonBox::Apply)->isEnabled());
+            QCOMPARE(path->text(), QStringLiteral("/share/new"));
+            QCOMPARE(server.preferenceReads(), reads);
+            QCOMPARE(server.serverPreferences().value(QStringLiteral("file_log_path")).toString(),
+                     QStringLiteral("/share/log"));
+
+            server.rejectPreferenceWrites(false);
+            server.ignorePreferenceWrites(true);
+            buttons->button(QDialogButtonBox::Ok)->click();
+            QTRY_COMPARE_WITH_TIMEOUT(warnings, 2, 6000);
+            QVERIFY(dialog->isVisible() && buttons->isEnabled());
+            QVERIFY(buttons->button(QDialogButtonBox::Apply)->isEnabled());
+            QCOMPARE(path->text(), QStringLiteral("/share/new"));
+            QCOMPARE(server.preferenceReads(), reads + 1);
+            QCOMPARE(server.serverPreferences().value(QStringLiteral("file_log_path")).toString(),
+                     QStringLiteral("/share/log"));
+
+            server.ignorePreferenceWrites(false);
+            buttons->button(QDialogButtonBox::Ok)->click();
+            QTRY_VERIFY_WITH_TIMEOUT(!dialog->isVisible(), 6000);
+        });
+        QTimer watchdog;
+        bool timedOut = false;
+        connect(&watchdog, &QTimer::timeout, &window, [&]() {
+            timedOut = true;
+            if (auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget()))
+                dialog->reject();
+        });
+        watchdog.start(15000);
+        options->trigger();
+        watchdog.stop();
+        dismissWarning.stop();
+        QVERIFY(opened && !timedOut);
+        QCOMPARE(warnings, 2);
+        QCOMPARE(server.commandsFor("/api/v2/app/setPreferences"), 3);
+        QCOMPARE(server.serverPreferences().value(QStringLiteral("file_log_path")).toString(),
+                 QStringLiteral("/share/new"));
     }
 
     void statusBarFieldsStayFixedDuringAuthenticatedRateUpdates()

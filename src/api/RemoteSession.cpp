@@ -475,12 +475,14 @@ void RemoteSession::queueOperation(const QString &endpoint, const QByteArray &bo
                                    const QByteArray &contentType,
                                    const QString &description, bool checkAccepted,
                                    std::function<void()> onAccepted,
-                                   std::function<void(const QString &)> onRejected)
+                                   std::function<void(const QString &)> onRejected,
+                                   bool reportOperation)
 {
     if (!m_connected || !m_address)
     {
         const QString reason = tr("Server is not connected.");
-        emit operationFailed(description, reason);
+        if (reportOperation)
+            emit operationFailed(description, reason);
         if (onRejected)
             onRejected(reason);
         return;
@@ -488,6 +490,7 @@ void RemoteSession::queueOperation(const QString &endpoint, const QByteArray &bo
     QueuedOperation operation{endpoint, body, contentType, description, checkAccepted};
     operation.onAccepted = std::move(onAccepted);
     operation.onRejected = std::move(onRejected);
+    operation.reportOperation = reportOperation;
     m_operations.enqueue(std::move(operation));
     pumpOperations();
 }
@@ -504,32 +507,47 @@ void RemoteSession::setAlternativeSpeedLimitsEnabled(bool enabled)
                    tr("Set alternative speed mode"), true);
 }
 
-void RemoteSession::requestPreferences()
+void RemoteSession::requestPreferences(PreferencesResult received, PreferencesError rejected)
 {
     if (!m_connected || !m_address)
     {
-        emit preferencesFailed(tr("The selected server is not connected."));
+        const QString reason = tr("The selected server is not connected.");
+        if (rejected)
+            rejected(reason);
+        else if (!received)
+            emit preferencesFailed(reason);
         return;
     }
     QueuedOperation request;
     request.endpoint = QStringLiteral("api/v2/app/preferences");
     request.description = tr("Read server preferences");
     request.preferencesRequest = true;
+    request.reportOperation = !received && !rejected;
+    request.onPreferences = std::move(received);
+    request.onRejected = std::move(rejected);
     m_operations.enqueue(std::move(request));
     pumpOperations();
 }
 
-void RemoteSession::setPreferences(const QJsonObject &changes)
+void RemoteSession::setPreferences(const QJsonObject &changes,
+                                   std::function<void()> accepted, PreferencesError rejected)
 {
     if (changes.isEmpty())
+    {
+        if (accepted)
+            accepted();
         return;
-    QUrlQuery form;
-    form.addQueryItem(QStringLiteral("json"),
+    }
+    // Form encoding must preserve literal '+', '&', '%' and Unicode
+    // (especially future SMTP/proxy credentials), not interpret '+' as space.
+    const QByteArray body = QByteArrayLiteral("json=") + QUrl::toPercentEncoding(
         QString::fromUtf8(QJsonDocument(changes).toJson(QJsonDocument::Compact)));
+    const bool reportOperation = !accepted && !rejected;
     queueOperation(QStringLiteral("api/v2/app/setPreferences"),
-        form.toString(QUrl::FullyEncoded).toUtf8(),
+        body,
         QByteArrayLiteral("application/x-www-form-urlencoded"),
-        tr("Update server preferences"), true);
+        tr("Update server preferences"), true, std::move(accepted),
+        std::move(rejected), reportOperation);
 }
 
 void RemoteSession::pumpOperations()
@@ -568,8 +586,16 @@ void RemoteSession::pumpOperations()
                 QJsonParseError error;
                 const QJsonDocument json = QJsonDocument::fromJson(response, &error);
                 if (error.error != QJsonParseError::NoError || !json.isObject())
-                    emit preferencesFailed(tr("Invalid preferences returned by the server."));
-                else
+                {
+                    const QString reason = tr("Invalid preferences returned by the server.");
+                    if (operation.onRejected)
+                        operation.onRejected(reason);
+                    else if (operation.reportOperation)
+                        emit preferencesFailed(reason);
+                }
+                else if (operation.onPreferences)
+                    operation.onPreferences(json.object());
+                else if (operation.reportOperation)
                     emit preferencesReceived(json.object());
             }
             else if (operation.detailsRequest)
@@ -592,13 +618,15 @@ void RemoteSession::pumpOperations()
             else if (operation.checkAccepted && response.trimmed() == QByteArrayLiteral("Fails."))
             {
                 const QString reason = tr("The server rejected the request.");
-                emit operationFailed(operation.description, reason);
+                if (operation.reportOperation)
+                    emit operationFailed(operation.description, reason);
                 if (operation.onRejected)
                     operation.onRejected(reason);
             }
             else
             {
-                emit operationSucceeded(operation.description);
+                if (operation.reportOperation)
+                    emit operationSucceeded(operation.description);
                 if (operation.onAccepted)
                     operation.onAccepted();
             }
@@ -606,10 +634,16 @@ void RemoteSession::pumpOperations()
             if (operation.detailsRequest)
                 emit torrentDetailsFailed(operation.detailHash, operation.detailTab, reason);
             else if (operation.preferencesRequest)
-                emit preferencesFailed(reason);
+            {
+                if (operation.onRejected)
+                    operation.onRejected(reason);
+                else if (operation.reportOperation)
+                    emit preferencesFailed(reason);
+            }
             else
             {
-                emit operationFailed(operation.description, reason);
+                if (operation.reportOperation)
+                    emit operationFailed(operation.description, reason);
                 if (operation.exportRequest)
                     emit torrentExportFailed(operation.exportHash, reason);
                 if (operation.onRejected)
@@ -1595,6 +1629,7 @@ void RemoteSession::disconnectFromServer()
         return;
     }
     m_connected = false;
+    emit disconnected();
     QNetworkReply *reply = m_network.post(
         requestFor(QStringLiteral("api/v2/auth/logout")), QByteArray());
     armReply(reply);

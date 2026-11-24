@@ -98,10 +98,14 @@ public:
     void setTorrentRateLimit(const QStringList &hashes, bool upload, qint64 bytesPerSec);
     void setTorrentShareLimits(const QString &hash, const QJsonObject &shareLimits);
     void requestTorrentExport(const QString &hash);
-    void requestPreferences();
+    // Scoped callbacks isolate a dialog's requests from other consumers.
+    using PreferencesResult = std::function<void(const QJsonObject &)>;
+    using PreferencesError = std::function<void(const QString &)>;
+    void requestPreferences(PreferencesResult received = {}, PreferencesError failed = {});
     // Session-wide operations affect only this authenticated NAS connection.
     void setAlternativeSpeedLimitsEnabled(bool enabled);
-    void setPreferences(const QJsonObject &changes);
+    void setPreferences(const QJsonObject &changes,
+                        std::function<void()> accepted = {}, PreferencesError rejected = {});
     void renameTorrentContent(const QString &hash, const QString &oldPath,
                               const QString &newPath);
     void addTorrentUrls(const QString &urls);
@@ -127,6 +131,7 @@ public:
 signals:
     void connected(const QString &version, const QString &apiVersion);
     void failed(const QString &reason);
+    void disconnected();
     void mainDataUpdated(const QJsonObject &data);
     void preferencesReceived(const QJsonObject &preferences);
     void preferencesFailed(const QString &reason);
@@ -157,7 +162,8 @@ private:
                         const QByteArray &contentType,
                         const QString &description, bool checkAccepted = false,
                         std::function<void()> onAccepted = {},
-                        std::function<void(const QString &)> onRejected = {});
+                        std::function<void(const QString &)> onRejected = {},
+                        bool reportOperation = true);
     void checkReply(QNetworkReply *reply,
                     const std::function<void(const QByteArray &)> &onSuccess,
                     const std::function<void(const QString &)> &onFailure = {});
@@ -180,6 +186,8 @@ private:
         // category/tag creation must never enqueue an invalid assignment.
         std::function<void()> onAccepted;
         std::function<void(const QString &)> onRejected;
+        PreferencesResult onPreferences;
+        bool reportOperation = true;
     };
 
     QNetworkAccessManager m_network;
