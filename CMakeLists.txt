@@ -291,6 +291,7 @@ if(BUILD_TESTING)
         connectionProtocolAndListeningPortFollowSelectedServer
         connectionLimitsFollowSelectedServer
         i2pConfigurationFollowsSelectedServerAndBuild
+        proxyConfigurationFollowsSelectedServer
     )
 
     # Check the registration against the actual QtTest-discovered functions.
