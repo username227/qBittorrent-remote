@@ -28,6 +28,7 @@
  */
 
 #include "gui/upstream/transferlistdelegate.h"
+#include "gui/TorrentModel.h"
 
 #include <QModelIndex>
 #include <QtMath>
@@ -74,8 +75,8 @@ void TransferListDelegate::paint(QPainter *painter, const QStyleOptionViewItem &
 
     QStyleOptionViewItem customOption {option};
     customOption.state.setFlag(QStyle::State_Enabled, enabled);
-    const QColor stateColor = m_progressFollowsTextColor
-        ? index.data(Qt::ForegroundRole).value<QColor>() : QColor();
+    const QColor stateColor = m_progressFollowsStateColor
+        ? index.data(TorrentModel::StateColorRole).value<QColor>() : QColor();
     m_progressBarPainter.paint(painter, customOption,
                                index.data().toString(), progress, stateColor);
 }

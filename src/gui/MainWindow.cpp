@@ -1521,7 +1521,7 @@ void MainWindow::applyLocalBehaviorPreferences()
         pane->model()->setHideZeroValues(hideZero, mode);
         pane->sidebar()->setHideZeroStatusFilters(hideZeroStatus);
         pane->model()->setUseStateColors(stateColors);
-        pane->setProgressFollowsStateColors(progressColor && stateColors);
+        pane->setProgressFollowsStateColors(progressColor);
         pane->setContentDragEnabled(contentDrag);
         pane->setSeparateTrackerStatusFilter(separateTracker);
     };
@@ -1998,8 +1998,7 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
     connection->pane->model()->setUseStateColors(m_settings->value(
         QStringLiteral("Preferences/Behavior/StateColors"), true).toBool());
     connection->pane->setProgressFollowsStateColors(m_settings->value(
-        QStringLiteral("Preferences/Behavior/ProgressFollowsState"), false).toBool()
-        && m_settings->value(QStringLiteral("Preferences/Behavior/StateColors"), true).toBool());
+        QStringLiteral("Preferences/Behavior/ProgressFollowsState"), false).toBool());
     connection->pane->setSeparateTrackerStatusFilter(m_settings->value(
         QStringLiteral("Preferences/Behavior/SeparateTrackerStatus"), false).toBool());
     connection->session = new Remote::RemoteSession(this);
