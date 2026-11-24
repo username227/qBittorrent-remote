@@ -526,9 +526,28 @@ void RemoteSession::requestPreferences(PreferencesResult received, PreferencesEr
     QueuedOperation request;
     request.endpoint = QStringLiteral("api/v2/app/preferences");
     request.description = tr("Read server preferences");
-    request.preferencesRequest = true;
+    request.jsonObjectRequest = true;
     request.reportOperation = !received && !rejected;
-    request.onPreferences = std::move(received);
+    request.onJsonObject = std::move(received);
+    request.onRejected = std::move(rejected);
+    m_operations.enqueue(std::move(request));
+    pumpOperations();
+}
+
+void RemoteSession::requestBuildInfo(PreferencesResult received, PreferencesError rejected)
+{
+    if (!m_connected || !m_address)
+    {
+        if (rejected)
+            rejected(tr("The selected server is not connected."));
+        return;
+    }
+    QueuedOperation request;
+    request.endpoint = QStringLiteral("api/v2/app/buildInfo");
+    request.description = tr("Read server build information");
+    request.jsonObjectRequest = true;
+    request.reportOperation = false;
+    request.onJsonObject = std::move(received);
     request.onRejected = std::move(rejected);
     m_operations.enqueue(std::move(request));
     pumpOperations();
@@ -573,11 +592,11 @@ void RemoteSession::pumpOperations()
     const QueuedOperation operation = m_operations.dequeue();
     QNetworkRequest request = requestFor(operation.endpoint);
     if (!operation.detailsRequest && !operation.exportRequest
-        && !operation.preferencesRequest)
+        && !operation.jsonObjectRequest)
         request.setHeader(QNetworkRequest::ContentTypeHeader,
                           QString::fromLatin1(operation.contentType));
     QNetworkReply *reply = (operation.detailsRequest || operation.exportRequest
-                            || operation.preferencesRequest)
+                            || operation.jsonObjectRequest)
         ? m_network.get(request) : m_network.post(request, operation.body);
     armReply(reply);
     connect(reply, &QNetworkReply::finished, this, [this, reply, operation]() {
@@ -593,20 +612,22 @@ void RemoteSession::pumpOperations()
                 else
                     emit torrentExportReceived(operation.exportHash, response);
             }
-            else if (operation.preferencesRequest)
+            else if (operation.jsonObjectRequest)
             {
                 QJsonParseError error;
                 const QJsonDocument json = QJsonDocument::fromJson(response, &error);
                 if (error.error != QJsonParseError::NoError || !json.isObject())
                 {
-                    const QString reason = tr("Invalid preferences returned by the server.");
+                    const QString reason = operation.endpoint == QLatin1String("api/v2/app/buildInfo")
+                        ? tr("Invalid build information returned by the server.")
+                        : tr("Invalid preferences returned by the server.");
                     if (operation.onRejected)
                         operation.onRejected(reason);
                     else if (operation.reportOperation)
                         emit preferencesFailed(reason);
                 }
-                else if (operation.onPreferences)
-                    operation.onPreferences(json.object());
+                else if (operation.onJsonObject)
+                    operation.onJsonObject(json.object());
                 else if (operation.reportOperation)
                     emit preferencesReceived(json.object());
             }
@@ -645,7 +666,7 @@ void RemoteSession::pumpOperations()
         }, [this, operation](const QString &reason) {
             if (operation.detailsRequest)
                 emit torrentDetailsFailed(operation.detailHash, operation.detailTab, reason);
-            else if (operation.preferencesRequest)
+            else if (operation.jsonObjectRequest)
             {
                 if (operation.onRejected)
                     operation.onRejected(reason);
@@ -661,7 +682,7 @@ void RemoteSession::pumpOperations()
                 if (operation.onRejected)
                     operation.onRejected(reason);
             }
-        }, !operation.detailsRequest && !operation.exportRequest && !operation.preferencesRequest);
+        }, !operation.detailsRequest && !operation.exportRequest && !operation.jsonObjectRequest);
         // Continue the queue even when an individual command was rejected.
         if (m_connected && !m_pendingReply)
             QTimer::singleShot(0, this, &RemoteSession::pumpOperations);

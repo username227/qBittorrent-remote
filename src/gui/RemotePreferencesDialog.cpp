@@ -46,6 +46,7 @@
 #include <QTextEdit>
 #include <QPlainTextEdit>
 #include <QVBoxLayout>
+#include <QVersionNumber>
 #include <QHBoxLayout>
 
 namespace
@@ -183,6 +184,7 @@ RemotePreferencesDialog::RemotePreferencesDialog(QSettings &settings,
     bindNotificationAndProgramControls();
     bindConnectionListeningControls();
     bindConnectionLimits();
+    bindI2PControls();
     populateAdvancedPlaceholders();
     buildRemotePathsPage(preferredProfileId);
 
@@ -630,6 +632,84 @@ void RemotePreferencesDialog::refreshConnectionLimitControls()
     refresh("max_connec_per_torrent", m_ui->checkMaxConnectionsPerTorrent, m_ui->spinMaxConnecPerTorrent);
     refresh("max_uploads", m_ui->checkMaxUploads, m_ui->spinMaxUploads);
     refresh("max_uploads_per_torrent", m_ui->checkMaxUploadsPerTorrent, m_ui->spinMaxUploadsPerTorrent);
+}
+
+void RemotePreferencesDialog::bindI2PControls()
+{
+    // Upstream app/preferences advertises these fields even when the
+    // engine was compiled without TORRENT_USE_I2P. buildInfo can rule
+    // out incompatible versions, but cannot establish the compile flag.
+    bindRemoteControl("i2p_enabled", m_ui->groupI2P, [this]() {
+        return m_i2pVersionSupportsConfig;
+    });
+    const auto enabled = [this]() {
+        return m_i2pVersionSupportsConfig && remoteFieldAvailable("i2p_enabled")
+            && m_ui->groupI2P->isChecked();
+    };
+    bindRemoteControl("i2p_address", m_ui->textI2PHost, enabled,
+        tr("SAM bridge host as seen by the connected server, not this desktop."));
+    bindRemoteControl("i2p_port", m_ui->spinI2PPort, enabled,
+        tr("SAM bridge port on the connected server's network."));
+    bindRemoteControl("i2p_mixed_mode", m_ui->checkI2PMixed, enabled,
+        tr("Mixed mode allows I2P torrents to discover and connect to regular IP peers. "
+           "This does not provide anonymization."));
+    bindRemoteControl("i2p_pex_enabled", m_ui->checkI2PPeX, [this, enabled]() {
+        return enabled() && m_i2pVersionSupportsPeX;
+    }, tr("Enable I2P peer exchange on the server. Requires libtorrent 2.1 or later "
+          "and a server restart; changing this preference does not restart the server."));
+}
+
+void RemotePreferencesDialog::refreshI2PControls()
+{
+    m_ui->labelI2PHost->setEnabled(m_ui->textI2PHost->isEnabled());
+    m_ui->labelI2PPort->setEnabled(m_ui->spinI2PPort->isEnabled());
+    // Keep the native layout. Explain unavailable controls only on hover.
+    if (remoteFieldAvailable("i2p_enabled"))
+    {
+        if (!m_i2pBuildInfoFinished)
+            m_ui->groupI2P->setToolTip(tr("Checking server libtorrent version..."));
+        else if (!m_i2pVersionSupportsConfig)
+            m_ui->groupI2P->setToolTip(m_i2pLibtorrentVersion.isEmpty()
+                ? tr("Server libtorrent version could not be verified.")
+                : tr("Unavailable for server libtorrent %1.").arg(m_i2pLibtorrentVersion));
+    }
+    if (!m_i2pVersionSupportsPeX && remoteFieldAvailable("i2p_pex_enabled"))
+        m_ui->checkI2PPeX->setToolTip(tr("I2P PeX requires server libtorrent 2.1 or later."));
+}
+
+void RemotePreferencesDialog::readI2PBuildInfo()
+{
+    if (!m_remoteSession || !m_remoteSession->isConnected()
+        || !remoteFieldAvailable("i2p_enabled"))
+        return;
+
+    const QPointer<RemotePreferencesDialog> dialog(this);
+    m_remoteSession->requestBuildInfo([dialog](const QJsonObject &info) {
+        if (!dialog || !dialog->m_remotePreferencesLoaded || !dialog->m_remoteSession
+            || !dialog->m_remoteSession->isConnected())
+            return;
+        const QString reported = info.value(QStringLiteral("libtorrent")).toString();
+        // Parse the numeric version prefix (upstream lt::version() can
+        // include a build suffix). Require at least major and minor.
+        const QVersionNumber version = QVersionNumber::fromString(reported);
+        if (version.segmentCount() >= 2)
+        {
+            dialog->m_i2pLibtorrentVersion = version.toString();
+            dialog->m_i2pVersionSupportsConfig = version.majorVersion() == 2;
+            dialog->m_i2pVersionSupportsPeX = version.majorVersion() == 2
+                && version.minorVersion() >= 1;
+        }
+        dialog->m_i2pBuildInfoFinished = true;
+        dialog->refreshRemoteControls();
+        dialog->updateButtons();
+    }, [dialog](const QString &) {
+        if (!dialog || !dialog->m_remotePreferencesLoaded)
+            return;
+        // Optional build information must never prevent unrelated settings.
+        dialog->m_i2pBuildInfoFinished = true;
+        dialog->refreshRemoteControls();
+        dialog->updateButtons();
+    });
 }
 
 void RemotePreferencesDialog::bindServerBehaviorControls()
@@ -1330,6 +1410,7 @@ void RemotePreferencesDialog::refreshRemoteControls()
     refreshNotificationControls();
     refreshBackupControls();
     refreshConnectionLimitControls();
+    refreshI2PControls();
     const bool portAvailable = remoteFieldAvailable("listen_port");
     m_ui->randomButton->setEnabled(portAvailable);
     m_ui->randomButton->setToolTip(portAvailable
@@ -1416,7 +1497,10 @@ void RemotePreferencesDialog::loadRemotePreferences()
     m_remoteSession->requestPreferences(
         [dialog](const QJsonObject &values) {
             if (dialog)
+            {
                 dialog->populateRemoteFields(values);
+                dialog->readI2PBuildInfo();
+            }
         },
         [dialog](const QString &reason) {
             if (!dialog)

@@ -153,6 +153,16 @@ public:
                         {
                             response = m_reportedApiVersion;
                         }
+                        else if (path == "/api/v2/app/buildInfo" && hasCookie)
+                        {
+                            if (m_buildInfo.isEmpty())
+                            {
+                                code = 404;
+                                response = "Unavailable";
+                            }
+                            else
+                                response = QJsonDocument(m_buildInfo).toJson(QJsonDocument::Compact);
+                        }
                         else if (path.startsWith("/api/v2/sync/maindata?rid=") && hasCookie)
                         {
                             ++m_syncRequests;
@@ -767,6 +777,7 @@ public:
         m_preferences = values;
     }
     QJsonObject serverPreferences() const { return m_preferences; }
+    void setBuildInfo(const QJsonObject &info) { m_buildInfo = info; }
     int preferenceReads() const { return m_preferenceReads; }
     void rejectPreferenceWrites(bool reject) { m_rejectPreferences = reject; }
     void ignorePreferenceWrites(bool ignore) { m_ignorePreferences = ignore; }
@@ -922,6 +933,7 @@ private:
     bool m_ignorePreferences = false;
     int m_preferenceReads = 0;
     QJsonObject m_preferences;
+    QJsonObject m_buildInfo;
     bool m_queueingEnabled = false;
     bool m_mappedFolderDemo = false;
     QJsonValue m_savingManagementTorrent;
@@ -3750,6 +3762,211 @@ private slots:
             QCOMPARE(spins[1]->value(), 120);
             QCOMPARE(spins[2]->value(), 12);
             QVERIFY(!checks[3]->isChecked() && !spins[3]->isEnabled());
+            QVERIFY(!apply->isEnabled());
+        });
+    }
+
+    void i2pConfigurationFollowsSelectedServerAndBuild()
+    {
+        DemoQbittorrentServer legacy(true), modern(true), incompatible(true);
+        modern.enableModernResponses();
+        incompatible.enableModernResponses();
+        const QJsonObject initialLegacy{
+            {QStringLiteral("i2p_enabled"), false},
+            {QStringLiteral("i2p_address"), QStringLiteral("127.0.0.1")},
+            {QStringLiteral("i2p_port"), 7656},
+            {QStringLiteral("i2p_mixed_mode"), false},
+            {QStringLiteral("i2p_inbound_quantity"), 3},
+            {QStringLiteral("upnp"), false}
+        };
+        const QJsonObject initialModern{
+            {QStringLiteral("i2p_enabled"), true},
+            {QStringLiteral("i2p_address"), QStringLiteral("router.internal")},
+            {QStringLiteral("i2p_port"), 7657},
+            {QStringLiteral("i2p_mixed_mode"), false},
+            {QStringLiteral("i2p_pex_enabled"), false},
+            {QStringLiteral("i2p_inbound_length_variance"), 0},
+            {QStringLiteral("upnp"), true}
+        };
+        legacy.setServerPreferences(initialLegacy);
+        modern.setServerPreferences(initialModern);
+        incompatible.setServerPreferences(initialModern);
+        legacy.setBuildInfo({{QStringLiteral("libtorrent"), QStringLiteral("2.0.11.0")}});
+        modern.setBuildInfo({{QStringLiteral("libtorrent"), QStringLiteral("2.1.0.0")}});
+        incompatible.setBuildInfo({{QStringLiteral("libtorrent"), QStringLiteral("1.2.20.0")}});
+        QVERIFY(legacy.start() && modern.start() && incompatible.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("prefs.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, legacy.url());
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(QStringLiteral("v5.1.4")), 6000);
+        openConnectDialog(window, modern.url(), false, true, true, QStringLiteral("Modern seedbox"));
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(QStringLiteral("v5.3.0")), 6000);
+        openConnectDialog(window, incompatible.url(), false, true, true, QStringLiteral("Incompatible seedbox"));
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(QStringLiteral("v5.3.0")), 6000);
+        auto *tabs = window.findChild<QTabWidget *>(QStringLiteral("serverTabs"));
+        auto *prefs = window.findChild<QAction *>(QStringLiteral("actionOptions"));
+        QVERIFY(tabs && prefs);
+        QTRY_COMPARE(tabs->count(), 3);
+
+        const auto withI2P = [&](const QString &ready, auto exercise) {
+            bool finished = false;
+            QTimer::singleShot(0, &window, [&]() {
+                auto *dlg = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget());
+                QVERIFY(dlg);
+                const auto cleanup = qScopeGuard([dlg]() { if (dlg->isVisible()) dlg->reject(); });
+                auto *sections = dlg->findChild<QListWidget *>(QStringLiteral("preferencesSections"));
+                auto *group = dlg->findChild<QGroupBox *>(QStringLiteral("groupI2P"));
+                auto *host = dlg->findChild<QLineEdit *>(QStringLiteral("textI2PHost"));
+                auto *port = dlg->findChild<QSpinBox *>(QStringLiteral("spinI2PPort"));
+                auto *mixed = dlg->findChild<QCheckBox *>(QStringLiteral("checkI2PMixed"));
+                auto *pex = dlg->findChild<QCheckBox *>(QStringLiteral("checkI2PPeX"));
+                auto *apply = dlg->findChild<QPushButton *>(QStringLiteral("preferencesApply"));
+                auto *upnp = dlg->findChild<QCheckBox *>(QStringLiteral("checkUPnP"));
+                QVERIFY(sections && group && host && port && mixed && pex && apply && upnp);
+                sections->setCurrentRow(3);
+                QCOMPARE(group->title(), QStringLiteral("I2P (experimental)"));
+                QVERIFY(!dlg->findChild<QLabel *>(QStringLiteral("labelI2PBuildSupport")));
+                // A supported group becomes enabled only after the build-info
+                // read; disabled cases expose their specific reason on hover.
+                if (ready.isEmpty())
+                    QTRY_VERIFY_WITH_TIMEOUT(group->isEnabled(), 6000);
+                else
+                    QTRY_VERIFY_WITH_TIMEOUT(group->toolTip().contains(ready), 6000);
+                QVERIFY(upnp->isEnabled());
+                exercise(group, host, port, mixed, pex, apply);
+                finished = true;
+            });
+            prefs->trigger();
+            QVERIFY(finished);
+        };
+        const auto delta = [](DemoQbittorrentServer &server) {
+            const QUrlQuery form(QString::fromUtf8(server.lastCommandBody("/api/v2/app/setPreferences")));
+            return QJsonDocument::fromJson(form.queryItemValue(
+                QStringLiteral("json"), QUrl::FullyDecoded).toUtf8()).object();
+        };
+
+        tabs->setCurrentIndex(0);
+        for (bool save : {false, true})
+        {
+            withI2P(QString(), [&](QGroupBox *group, QLineEdit *host,
+                QSpinBox *port, QCheckBox *mixed, QCheckBox *pex, QPushButton *apply) {
+                QVERIFY(group->isEnabled() && !group->isChecked());
+                QVERIFY(!host->isEnabled() && !port->isEnabled() && !mixed->isEnabled() && !pex->isEnabled());
+                QVERIFY(!apply->isEnabled());
+                group->setChecked(true);
+                QVERIFY(host->isEnabled() && port->isEnabled() && mixed->isEnabled() && !pex->isEnabled());
+                QCOMPARE(host->text(), QStringLiteral("127.0.0.1"));
+                QCOMPARE(port->value(), 7656);
+                host->setText(QStringLiteral("sam.internal"));
+                port->setValue(7660);
+                mixed->click();
+                QVERIFY(mixed->toolTip().contains(QStringLiteral("regular IP")));
+                QVERIFY(apply->isEnabled());
+                QCOMPARE(legacy.commandsFor("/api/v2/app/setPreferences"), 0);
+                if (save)
+                {
+                    apply->click();
+                    QTRY_VERIFY_WITH_TIMEOUT(group->isEnabled() && !apply->isEnabled(), 6000);
+                    QVERIFY(group->isChecked() && mixed->isChecked());
+                    QCOMPARE(host->text(), QStringLiteral("sam.internal"));
+                    QCOMPARE(port->value(), 7660);
+                    QVERIFY(!pex->isEnabled());
+                }
+            });
+            if (!save)
+                QCOMPARE(legacy.serverPreferences(), initialLegacy);
+        }
+        const QJsonObject legacyDelta{
+            {QStringLiteral("i2p_enabled"), true},
+            {QStringLiteral("i2p_address"), QStringLiteral("sam.internal")},
+            {QStringLiteral("i2p_port"), 7660},
+            {QStringLiteral("i2p_mixed_mode"), true}
+        };
+        QJsonObject expectedLegacy = initialLegacy;
+        for (auto it = legacyDelta.constBegin(); it != legacyDelta.constEnd(); ++it)
+            expectedLegacy.insert(it.key(), it.value());
+        QCOMPARE(delta(legacy), legacyDelta);
+        QCOMPARE(legacy.serverPreferences(), expectedLegacy);
+        QCOMPARE(modern.serverPreferences(), initialModern);
+
+        tabs->setCurrentIndex(1);
+        withI2P(QString(), [](QGroupBox *group, QLineEdit *host,
+            QSpinBox *port, QCheckBox *mixed, QCheckBox *pex, QPushButton *apply) {
+            QVERIFY(group->isEnabled() && group->isChecked() && pex->isEnabled());
+            QCOMPARE(host->text(), QStringLiteral("router.internal"));
+            QCOMPARE(port->value(), 7657);
+            QVERIFY(!mixed->isChecked() && !pex->isChecked());
+            QVERIFY(pex->text().contains(QStringLiteral("requires restart")));
+            pex->click();
+            QVERIFY(apply->isEnabled());
+            apply->click();
+            QTRY_VERIFY_WITH_TIMEOUT(group->isEnabled() && !apply->isEnabled(), 6000);
+            QVERIFY(pex->isChecked());
+        });
+        const QJsonObject modernDelta{{QStringLiteral("i2p_pex_enabled"), true}};
+        QJsonObject expectedModern = initialModern;
+        expectedModern.insert(QStringLiteral("i2p_pex_enabled"), true);
+        QCOMPARE(delta(modern), modernDelta);
+        QCOMPARE(modern.serverPreferences(), expectedModern);
+        QCOMPARE(legacy.serverPreferences(), expectedLegacy);
+
+        // All five advertised keys are insufficient on a 1.x build.
+        tabs->setCurrentIndex(2);
+        withI2P(QStringLiteral("Unavailable for server libtorrent 1.2.20"),
+            [](QGroupBox *group, QLineEdit *host, QSpinBox *port, QCheckBox *mixed,
+               QCheckBox *pex, QPushButton *apply) {
+                QVERIFY(!group->isEnabled() && !host->isEnabled() && !port->isEnabled()
+                    && !mixed->isEnabled() && !pex->isEnabled() && !apply->isEnabled());
+            });
+        QCOMPARE(incompatible.commandsFor("/api/v2/app/setPreferences"), 0);
+
+        // Missing build info must not block ordinary Connection settings.
+        incompatible.setBuildInfo({});
+        withI2P(QStringLiteral("version could not be verified"),
+            [](QGroupBox *group, QLineEdit *host, QSpinBox *port, QCheckBox *mixed,
+               QCheckBox *pex, QPushButton *apply) {
+                QVERIFY(!group->isEnabled() && !host->isEnabled() && !port->isEnabled()
+                    && !mixed->isEnabled() && !pex->isEnabled() && !apply->isEnabled());
+            });
+        QCOMPARE(incompatible.commandsFor("/api/v2/app/setPreferences"), 0);
+
+        // PeX is separately gated by libtorrent >= 2.1, even when the key
+        // is present in a newer qBittorrent built against libtorrent 2.0.
+        modern.setBuildInfo({{QStringLiteral("libtorrent"), QStringLiteral("2.0.11.0")}});
+        tabs->setCurrentIndex(1);
+        withI2P(QString(), [](QGroupBox *group, QLineEdit *host,
+            QSpinBox *port, QCheckBox *mixed, QCheckBox *pex, QPushButton *apply) {
+            QVERIFY(group->isEnabled() && group->isChecked());
+            QVERIFY(host->isEnabled() && port->isEnabled() && mixed->isEnabled() && !pex->isEnabled());
+            QVERIFY(!apply->isEnabled());
+        });
+        QCOMPARE(modern.commandsFor("/api/v2/app/setPreferences"), 1);
+
+        // Individual malformed/missing fields remain unavailable.
+        modern.setBuildInfo({{QStringLiteral("libtorrent"), QStringLiteral("2.1.0.0")}});
+        modern.setServerPreferences({
+            {QStringLiteral("i2p_enabled"), true},
+            {QStringLiteral("i2p_address"), false},
+            {QStringLiteral("i2p_port"), 65536},
+            {QStringLiteral("upnp"), true}
+        });
+        withI2P(QString(), [](QGroupBox *group, QLineEdit *host,
+            QSpinBox *port, QCheckBox *mixed, QCheckBox *pex, QPushButton *apply) {
+            QVERIFY(group->isEnabled() && group->isChecked());
+            QVERIFY(!host->isEnabled() && !port->isEnabled() && !mixed->isEnabled() && !pex->isEnabled());
+            QVERIFY(!apply->isEnabled());
+        });
+        QCOMPARE(modern.commandsFor("/api/v2/app/setPreferences"), 1);
+        tabs->setCurrentIndex(0);
+        withI2P(QString(), [](QGroupBox *group, QLineEdit *host,
+            QSpinBox *port, QCheckBox *mixed, QCheckBox *pex, QPushButton *apply) {
+            QVERIFY(group->isChecked() && mixed->isChecked() && !pex->isEnabled());
+            QCOMPARE(host->text(), QStringLiteral("sam.internal"));
+            QCOMPARE(port->value(), 7660);
             QVERIFY(!apply->isEnabled());
         });
     }

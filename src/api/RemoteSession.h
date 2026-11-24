@@ -109,6 +109,7 @@ public:
     using PreferencesResult = std::function<void(const QJsonObject &)>;
     using PreferencesError = std::function<void(const QString &)>;
     void requestPreferences(PreferencesResult received = {}, PreferencesError failed = {});
+    void requestBuildInfo(PreferencesResult received, PreferencesError failed);
     // Session-wide operations affect only this authenticated NAS connection.
     void setAlternativeSpeedLimitsEnabled(bool enabled);
     void sendTestEmail(std::function<void()> accepted, PreferencesError rejected);
@@ -189,7 +190,7 @@ private:
         bool checkAccepted = false;
         bool detailsRequest = false;
         bool exportRequest = false;
-        bool preferencesRequest = false;
+        bool jsonObjectRequest = false;
         QString exportHash;
         QString detailHash;
         int detailTab = -1;
@@ -197,7 +198,7 @@ private:
         // category/tag creation must never enqueue an invalid assignment.
         std::function<void()> onAccepted;
         std::function<void(const QString &)> onRejected;
-        PreferencesResult onPreferences;
+        PreferencesResult onJsonObject;
         bool reportOperation = true;
     };
 

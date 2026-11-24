@@ -56,6 +56,9 @@ private:
     void bindConnectionListeningControls();
     void bindConnectionLimits();
     void refreshConnectionLimitControls();
+    void bindI2PControls();
+    void refreshI2PControls();
+    void readI2PBuildInfo();
     void bindDownloadsSavingControls();
     void bindTorrentAdditionDefaults();
     void bindBackupAndWatchedFolders();
@@ -139,6 +142,10 @@ private:
     QStandardItemModel *m_watchedFoldersModel = nullptr;
     QJsonObject m_watchedFolders;
     QList<RemoteField> m_remoteFields;
+    bool m_i2pBuildInfoFinished = false;
+    bool m_i2pVersionSupportsConfig = false;
+    bool m_i2pVersionSupportsPeX = false;
+    QString m_i2pLibtorrentVersion;
     bool m_remotePreferencesLoaded = false;
     bool m_loadingRemotePreferences = false;
     bool m_remoteBusy = false;
