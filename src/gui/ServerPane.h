@@ -49,6 +49,7 @@ public:
     QString downloadRateText() const;
     QString uploadRateText() const;
     QString freeSpaceText() const;
+    QString connectionStatus() const { return m_serverState.value(QStringLiteral("connection_status")).toString(); }
     void setProgressFollowsStateColors(bool enabled);
     void setContentPathMappings(const QList<Remote::PathMapping> &mappings);
     void setContentDragEnabled(bool enabled);

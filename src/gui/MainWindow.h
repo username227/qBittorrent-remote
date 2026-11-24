@@ -20,6 +20,7 @@ class QMenu;
 class QLabel;
 class QLineEdit;
 class QComboBox;
+class QPushButton;
 class HidableTabWidget;
 class ServerPane;
 
@@ -69,6 +70,7 @@ private:
     void applyLocalBehaviorPreferences();
     void updateServerFreeSpace();
     void updateStatusBarFieldWidths();
+    void updateStatusBarIndicators();
     void updateTransferRates(const ServerPane *pane);
     QStringList selectedTorrentHashes() const;
     void openSelectedTorrentDestinations();
@@ -87,6 +89,8 @@ private:
     ServerPane *m_emptyPane = nullptr;
     QList<std::shared_ptr<SessionContext>> m_connections;
     QLabel *m_torrentCountLabel = nullptr;
+    QLabel *m_connectionStatusLabel = nullptr;
+    QPushButton *m_alternativeSpeedButton = nullptr;
     QLabel *m_downloadRateLabel = nullptr;
     QLabel *m_uploadRateLabel = nullptr;
     QLabel *m_freeSpaceSeparator = nullptr;

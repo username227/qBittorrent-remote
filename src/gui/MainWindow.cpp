@@ -68,6 +68,7 @@
 #include <QUrlQuery>
 #include <QSizePolicy>
 #include <QStatusBar>
+#include <QStyle>
 #include <QToolBar>
 #include <QWidget>
 #include <QSignalBlocker>
@@ -321,8 +322,8 @@ MainWindow::MainWindow(QWidget *parent, QSettings *settings,
     });
     m_ui->statusBar->showMessage(tr("Not connected to a server"));
     // Permanently visible widgets are inserted left to right. The displayed
-    // torrent count belongs left of the existing download/upload rates and
-    // any future connectivity/alternate-bandwidth indicators.
+    // torrent count stays left of the connectivity and alternative-speed
+    // indicators, followed by the existing transfer rates.
     m_torrentCountLabel = new QLabel(tr("Torrents: —"), m_ui->statusBar);
     m_torrentCountLabel->setObjectName(QStringLiteral("visibleTorrentCount"));
     m_torrentCountLabel->setToolTip(tr("Torrents visible after all filters / total on the selected server"));
@@ -334,6 +335,29 @@ MainWindow::MainWindow(QWidget *parent, QSettings *settings,
         return label;
     };
     separator("torrentCountSeparator");
+    // The globe/flame reports the selected daemon's BitTorrent connectivity,
+    // not whether the desktop can reach the authenticated Web API.
+    m_connectionStatusLabel = new QLabel(m_ui->statusBar);
+    m_connectionStatusLabel->setObjectName(QStringLiteral("remoteConnectionStatus"));
+    m_connectionStatusLabel->setAccessibleName(tr("BitTorrent connection status"));
+    m_connectionStatusLabel->setAlignment(Qt::AlignCenter);
+    m_ui->statusBar->addPermanentWidget(m_connectionStatusLabel);
+    separator("connectionStatusSeparator");
+
+    m_alternativeSpeedButton = new QPushButton(m_ui->statusBar);
+    m_alternativeSpeedButton->setObjectName(QStringLiteral("remoteAlternativeSpeedLimits"));
+    m_alternativeSpeedButton->setAccessibleName(tr("Alternative speed limits"));
+    m_alternativeSpeedButton->setFlat(true);
+    m_alternativeSpeedButton->setFocusPolicy(Qt::NoFocus);
+    m_alternativeSpeedButton->setCursor(Qt::PointingHandCursor);
+    m_alternativeSpeedButton->setCheckable(true);
+    m_ui->statusBar->addPermanentWidget(m_alternativeSpeedButton);
+    connect(m_alternativeSpeedButton, &QPushButton::clicked, this, [this]() {
+        // Both entry points use the same authenticated selected-server action.
+        m_ui->actionUseAlternativeSpeedLimits->trigger();
+        updateTrayActionState();
+    });
+    separator("alternativeSpeedSeparator");
     m_downloadRateLabel = new QLabel(tr("D: —"), m_ui->statusBar);
     m_downloadRateLabel->setObjectName(QStringLiteral("remoteDownloadRate"));
     m_ui->statusBar->addPermanentWidget(m_downloadRateLabel);
@@ -350,6 +374,7 @@ MainWindow::MainWindow(QWidget *parent, QSettings *settings,
     for (auto *label : {m_downloadRateLabel, m_uploadRateLabel, m_serverFreeSpaceLabel})
         label->installEventFilter(this);
     updateStatusBarFieldWidths();
+    updateTrayActionState();
     restoreWindowLayout();
     applyLocalBehaviorPreferences();
 
@@ -531,6 +556,9 @@ void MainWindow::setupActions()
                     return;
                 }
                 server->session->setAlternativeSpeedLimitsEnabled(enabled);
+                // A command acceptance is not authoritative state. Keep
+                // both entry points on the last synchronized value.
+                updateTrayActionState();
             });
     connect(m_ui->actionSetGlobalSpeedLimits, &QAction::triggered, this, [this]() {
         const auto server = activeConnection();
@@ -1447,12 +1475,54 @@ void MainWindow::updateTrayActionState()
         m_ui->actionUseAlternativeSpeedLimits->setChecked(
             altKnown && server->altSpeedMode);
     }
+    updateStatusBarIndicators();
     if (m_trayDisconnectMenu)
     {
         const bool anyConnected = std::any_of(m_connections.cbegin(), m_connections.cend(),
             [](const auto &connection) { return connection && connection->connected; });
         m_trayDisconnectMenu->setEnabled(anyConnected);
     }
+}
+
+void MainWindow::updateStatusBarIndicators()
+{
+    if (!m_connectionStatusLabel || !m_alternativeSpeedButton)
+        return;
+    const auto server = activeConnection();
+    const bool ready = server && server->connected;
+    const QString status = ready ? server->pane->connectionStatus() : QString();
+    const char *connectionIcon = "disconnected";
+    QString explanation;
+    if (!ready)
+        explanation = tr("Not connected to a server");
+    else if (status == QLatin1String("connected"))
+    {
+        connectionIcon = "connected";
+        explanation = tr("Online");
+    }
+    else if (status == QLatin1String("firewalled"))
+    {
+        connectionIcon = "firewalled";
+        explanation = tr("No direct connections. This may indicate network configuration problems.");
+    }
+    else if (status == QLatin1String("disconnected"))
+        explanation = tr("Offline. This usually means that qBittorrent failed to listen on the selected port for incoming connections.");
+    else
+        explanation = tr("BitTorrent connectivity has not been reported by the selected server.");
+    const int small = style()->pixelMetric(QStyle::PM_SmallIconSize, nullptr, this);
+    m_connectionStatusLabel->setPixmap(upstreamIcon(connectionIcon).pixmap(QSize(small, small), devicePixelRatioF()));
+    m_connectionStatusLabel->setToolTip(tr("<b>Connection Status:</b><br>%1").arg(explanation));
+    m_connectionStatusLabel->setAccessibleDescription(explanation);
+
+    const bool known = ready && server->altSpeedModeKnown;
+    const bool alternative = known && server->altSpeedMode;
+    m_alternativeSpeedButton->setEnabled(known);
+    m_alternativeSpeedButton->setChecked(alternative);
+    m_alternativeSpeedButton->setIcon(upstreamIcon(alternative ? "slow" : "slow_off"));
+    m_alternativeSpeedButton->setToolTip(!known
+        ? tr("Alternative speed limit mode is unavailable from the selected server.")
+        : alternative ? tr("Click to switch to regular speed limits")
+                      : tr("Click to switch to alternative speed limits"));
 }
 
 void MainWindow::refreshTrayDisconnectMenu()
@@ -1575,6 +1645,14 @@ void MainWindow::updateStatusBarFieldWidths()
 {
     if (!m_downloadRateLabel || !m_uploadRateLabel || !m_serverFreeSpaceLabel)
         return;
+
+    if (m_connectionStatusLabel && m_alternativeSpeedButton)
+    {
+        const int small = style()->pixelMetric(QStyle::PM_SmallIconSize, nullptr, this);
+        m_connectionStatusLabel->setFixedSize(small, small);
+        m_alternativeSpeedButton->setIconSize(QSize(small, small));
+        updateStatusBarIndicators();
+    }
 
     // Reserve space using the actual label font and locale, not padded
     // strings (which shift with proportional fonts) or hard-coded pixels.
@@ -2548,9 +2626,10 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
             connection->pane->applySync(payload);
             const QJsonObject state = payload.value(QStringLiteral("server_state")).toObject();
             const QJsonValue alt = state.value(QStringLiteral("use_alt_speed_limits"));
-            if (alt.isBool())
+            if (payload.value(QStringLiteral("full_update")).toBool()
+                || state.contains(QStringLiteral("use_alt_speed_limits")))
             {
-                connection->altSpeedModeKnown = true;
+                connection->altSpeedModeKnown = alt.isBool();
                 connection->altSpeedMode = alt.toBool();
             }
             if (activeConnection() == connection)
