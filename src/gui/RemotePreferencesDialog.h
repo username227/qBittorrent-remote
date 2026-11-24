@@ -13,11 +13,14 @@
 #include <memory>
 #include <functional>
 
+class QAction;
 class QComboBox;
+class QLineEdit;
 class QDialogButtonBox;
 class QPushButton;
 class QSettings;
 class QTableWidget;
+class TorrentModel;
 namespace Ui { class OptionsDialog; }
 namespace Remote { class RemoteSession; }
 
@@ -32,7 +35,8 @@ public:
     explicit RemotePreferencesDialog(QSettings &settings,
                                      const QString &preferredProfileId = {},
                                      QWidget *parent = nullptr,
-                                     Remote::RemoteSession *session = nullptr);
+                                     Remote::RemoteSession *session = nullptr,
+                                     TorrentModel *torrentModel = nullptr);
     ~RemotePreferencesDialog() override;
 
 signals:
@@ -44,6 +48,14 @@ private:
     void disableUnimplementedControls();
     void loadLocalBehaviorControls();
     void bindServerBehaviorControls();
+    void bindDownloadsSavingControls();
+    void bindBooleanCombo(const char *key, QComboBox *combo, int trueIndex,
+                          const QString &tooltip);
+    void bindRemotePath(const char *key, QLineEdit *line,
+                        std::function<bool()> dependency = {});
+    void browseRemotePath(QLineEdit *line);
+    bool validateDownloadChanges(const QJsonObject &changes);
+    void remoteFieldChanged();
     // Register typed controls, including custom enum/compound bindings for
     // later tabs. A field is available only after a valid server value.
     struct RemoteField
@@ -86,6 +98,7 @@ private:
     void done(int result) override;
 
     QSettings &m_settings;
+    const QString m_remoteProfileId;
     Remote::PathMappingStore m_mappingStore;
     std::unique_ptr<Ui::OptionsDialog> m_ui;
     QComboBox *m_serverSelector = nullptr;
@@ -104,4 +117,5 @@ private:
     bool m_remoteBusy = false;
     bool m_closeAfterApply = false;
     QPointer<Remote::RemoteSession> m_remoteSession;
+    QPointer<TorrentModel> m_torrentModel;
 };
