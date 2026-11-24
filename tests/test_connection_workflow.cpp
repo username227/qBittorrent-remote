@@ -327,7 +327,13 @@ public:
                                     const auto updates = parsed.object();
                                     for (auto it = updates.constBegin(); it != updates.constEnd(); ++it)
                                         if (m_preferences.contains(it.key()))
-                                            m_preferences.insert(it.key(), it.value());
+                                        {
+                                            const bool directory = it.key() == QLatin1String("save_path")
+                                                || it.key() == QLatin1String("temp_path");
+                                            m_preferences.insert(it.key(), directory && it.value().isString()
+                                                ? QJsonValue(QDir::cleanPath(it.value().toString()))
+                                                : it.value());
+                                        }
                                 }
                                 response = "Ok.";
                             }
@@ -2187,6 +2193,269 @@ private slots:
         QCOMPARE(server.commandsFor("/api/v2/app/setPreferences"), 3);
         QCOMPARE(server.serverPreferences().value(QStringLiteral("file_log_path")).toString(),
                  QStringLiteral("/share/new"));
+    }
+
+    void downloadsSavingManagementUsesSelectedServerAndMappedPaths()
+    {
+        DemoQbittorrentServer first(true), second(true);
+        const QJsonObject initial{
+            {QStringLiteral("preallocate_all"), false},
+            {QStringLiteral("incomplete_files_ext"), true},
+            {QStringLiteral("use_unwanted_folder"), false},
+            {QStringLiteral("auto_tmm_enabled"), false},
+            {QStringLiteral("torrent_changed_tmm_enabled"), true},
+            {QStringLiteral("save_path_changed_tmm_enabled"), false},
+            {QStringLiteral("category_changed_tmm_enabled"), true},
+            {QStringLiteral("use_category_paths_in_manual_mode"), false},
+            {QStringLiteral("save_path"), QStringLiteral("/share/First/downloads")},
+            {QStringLiteral("temp_path_enabled"), false},
+            {QStringLiteral("temp_path"), QStringLiteral("/share/First/incomplete")},
+            {QStringLiteral("mail_notification_enabled"), true}
+        };
+        const QJsonObject other{
+            {QStringLiteral("preallocate_all"), true},
+            {QStringLiteral("auto_tmm_enabled"), true},
+            {QStringLiteral("save_path"), QStringLiteral("/share/Second/downloads")},
+            {QStringLiteral("temp_path_enabled"), false},
+            {QStringLiteral("temp_path"), QStringLiteral("/share/Second/incomplete")}
+        };
+        first.setServerPreferences(initial);
+        second.setServerPreferences(other);
+        QVERIFY(first.start() && second.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QVERIFY(QDir(temp.path()).mkpath(QStringLiteral("mounted/finished")));
+        QVERIFY(QDir(temp.path()).mkpath(QStringLiteral("unmapped")));
+        const QString mount = temp.filePath(QStringLiteral("mounted"));
+        const QString mapped = temp.filePath(QStringLiteral("mounted/finished"));
+        QSettings settings(temp.filePath(QStringLiteral("prefs.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, first.url());
+        auto *tabs = window.findChild<QTabWidget *>(QStringLiteral("serverTabs"));
+        QVERIFY(tabs);
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(
+            QStringLiteral("Connected to Demo seedbox")), 6000);
+        openConnectDialog(window, second.url(), false, true, true, QStringLiteral("Second seedbox"));
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(
+            QStringLiteral("Connected to Second seedbox")), 6000);
+        const auto profiles = Remote::ProfileStore(settings).profiles();
+        QCOMPARE(profiles.size(), 2);
+        QString firstId, secondId;
+        for (const auto &profile : profiles)
+        {
+            if (profile.name == QStringLiteral("Demo seedbox"))
+                firstId = profile.id;
+            else if (profile.name == QStringLiteral("Second seedbox"))
+                secondId = profile.id;
+        }
+        QVERIFY(!firstId.isEmpty() && !secondId.isEmpty());
+        Remote::PathMappingStore mappings(settings);
+        QVERIFY(mappings.replace(firstId, {{mount, QStringLiteral("/share/First")}}));
+        QVERIFY(mappings.replace(secondId, {{mount, QStringLiteral("/share/Second")}}));
+        tabs->setCurrentIndex(0);
+        QTRY_VERIFY(window.statusBar()->currentMessage().contains(QStringLiteral("Connected to Demo seedbox")));
+        auto *options = window.findChild<QAction *>(QStringLiteral("actionOptions"));
+        QVERIFY(options);
+
+        const bool originalNative = QApplication::testAttribute(Qt::AA_DontUseNativeDialogs);
+        QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, true);
+        const auto restoreNative = qScopeGuard([originalNative]() {
+            QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, originalNative);
+        });
+
+        int confirmationCount = 0, invalidCount = 0, unmappedCount = 0;
+        bool approve = false;
+        QString nextFolder;
+        int pickers = 0;
+        QTimer modalDriver;
+        connect(&modalDriver, &QTimer::timeout, &window, [&]() {
+            if (auto *warning = qobject_cast<QMessageBox *>(QApplication::activeModalWidget()))
+            {
+                if (warning->windowTitle() == QStringLiteral("Change server download locations"))
+                {
+                    ++confirmationCount;
+                    warning->button(approve ? QMessageBox::Yes : QMessageBox::No)->click();
+                }
+                else if (warning->windowTitle() == QStringLiteral("Invalid server directory"))
+                {
+                    ++invalidCount;
+                    warning->accept();
+                }
+                else if (warning->windowTitle() == QStringLiteral("Unmapped local directory"))
+                {
+                    ++unmappedCount;
+                    warning->accept();
+                }
+            }
+            else if (auto *picker = qobject_cast<QFileDialog *>(QApplication::activeModalWidget());
+                     picker && !nextFolder.isEmpty())
+            {
+                ++pickers;
+                picker->setDirectory(nextFolder);
+                nextFolder.clear();
+                static_cast<QDialog *>(picker)->accept();
+            }
+        });
+        modalDriver.start(20);
+        bool opened = false;
+        QTimer::singleShot(0, &window, [&]() {
+            auto *dialog = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget());
+            if (!dialog)
+                return;
+            opened = true;
+            const auto cleanup = qScopeGuard([dialog]() {
+                if (dialog->isVisible())
+                    dialog->reject();
+            });
+            auto *nav = dialog->findChild<QListWidget *>(QStringLiteral("preferencesSections"));
+            auto *selector = dialog->findChild<QComboBox *>(QStringLiteral("remotePathsServer"));
+            auto *save = dialog->findChild<QLineEdit *>(QStringLiteral("textSavePath"));
+            auto *incomplete = dialog->findChild<QLineEdit *>(QStringLiteral("textDownloadPath"));
+            auto *useIncomplete = dialog->findChild<QCheckBox *>(QStringLiteral("checkUseDownloadPath"));
+            auto *preallocate = dialog->findChild<QCheckBox *>(QStringLiteral("checkPreallocateAll"));
+            auto *extension = dialog->findChild<QCheckBox *>(QStringLiteral("checkAppendqB"));
+            auto *unwanted = dialog->findChild<QCheckBox *>(QStringLiteral("checkUnwantedFolder"));
+            auto *mode = dialog->findChild<QComboBox *>(QStringLiteral("comboSavingMode"));
+            auto *category = dialog->findChild<QComboBox *>(QStringLiteral("comboTorrentCategoryChanged"));
+            auto *defaultPath = dialog->findChild<QComboBox *>(QStringLiteral("comboCategoryDefaultPathChanged"));
+            auto *categoryPath = dialog->findChild<QComboBox *>(QStringLiteral("comboCategoryChanged"));
+            auto *manualPaths = dialog->findChild<QCheckBox *>(QStringLiteral("checkUseCategoryPaths"));
+            auto *buttons = dialog->findChild<QDialogButtonBox *>(QStringLiteral("buttonBox"));
+            auto *browse = dialog->findChild<QAction *>(QStringLiteral("textSavePathBrowse"));
+            QVERIFY(nav && selector && save && incomplete && useIncomplete && preallocate
+                    && extension && unwanted && mode && category && defaultPath && categoryPath
+                    && manualPaths && buttons && browse);
+            // Deliberately select the other server in the *mapping* page.
+            // Download settings must remain bound to the authenticated first server.
+            nav->setCurrentRow(0);
+            const int otherIndex = selector->findData(secondId);
+            QVERIFY(otherIndex >= 0);
+            selector->setCurrentIndex(otherIndex);
+            nav->setCurrentRow(2);
+            auto *apply = buttons->button(QDialogButtonBox::Apply);
+            QTRY_VERIFY_WITH_TIMEOUT(save->isEnabled(), 6000);
+            QCOMPARE(save->text(), QStringLiteral("/share/First/downloads"));
+            QCOMPARE(incomplete->text(), QStringLiteral("/share/First/incomplete"));
+            QVERIFY(!useIncomplete->isChecked() && !incomplete->isEnabled());
+            QVERIFY(!preallocate->isChecked() && extension->isChecked() && !unwanted->isChecked());
+            QCOMPARE(mode->currentText(), QStringLiteral("Manual"));
+            QCOMPARE(category->currentText(), QStringLiteral("Relocate torrent"));
+            QCOMPARE(defaultPath->currentText(), QStringLiteral("Switch affected torrents to Manual Mode"));
+            QCOMPARE(categoryPath->currentText(), QStringLiteral("Relocate affected torrents"));
+            QVERIFY(!manualPaths->isChecked() && !apply->isEnabled());
+
+            save->setText(QStringLiteral("relative/path"));
+            apply->click();
+            QCOMPARE(invalidCount, 1);
+            QCOMPARE(first.serverPreferences(), initial);
+
+            nextFolder = temp.filePath(QStringLiteral("unmapped"));
+            browse->trigger();
+            QCOMPARE(unmappedCount, 1);
+            QCOMPARE(save->text(), QStringLiteral("relative/path"));
+            nextFolder = mapped;
+            browse->trigger();
+            QCOMPARE(pickers, 2);
+            QCOMPARE(save->text(), QStringLiteral("/share/First/finished"));
+
+            useIncomplete->setChecked(true);
+            QVERIFY(incomplete->isEnabled());
+            incomplete->setText(QStringLiteral("/share/First/new + incomplete/"));
+            preallocate->setChecked(true);
+            extension->setChecked(false);
+            unwanted->setChecked(true);
+            mode->setCurrentIndex(mode->findText(QStringLiteral("Automatic")));
+            category->setCurrentIndex(category->findText(QStringLiteral("Switch torrent to Manual Mode")));
+            defaultPath->setCurrentIndex(defaultPath->findText(QStringLiteral("Relocate affected torrents")));
+            categoryPath->setCurrentIndex(categoryPath->findText(QStringLiteral("Switch affected torrents to Manual Mode")));
+            manualPaths->setChecked(true);
+            apply->click(); // Decline the relocation warning.
+            QCOMPARE(confirmationCount, 1);
+            QCOMPARE(first.serverPreferences(), initial);
+            QVERIFY(apply->isEnabled());
+
+            approve = true;
+            apply->click();
+            QCOMPARE(confirmationCount, 2);
+            QTRY_VERIFY_WITH_TIMEOUT(buttons->isEnabled(), 6000);
+            QVERIFY(!apply->isEnabled());
+            QCOMPARE(incomplete->text(), QStringLiteral("/share/First/new + incomplete"));
+            QCOMPARE(save->text(), QStringLiteral("/share/First/finished"));
+            QCOMPARE(second.serverPreferences(), other);
+            const QJsonObject expected{
+                {QStringLiteral("preallocate_all"), true},
+                {QStringLiteral("incomplete_files_ext"), false},
+                {QStringLiteral("use_unwanted_folder"), true},
+                {QStringLiteral("auto_tmm_enabled"), true},
+                {QStringLiteral("torrent_changed_tmm_enabled"), false},
+                {QStringLiteral("save_path_changed_tmm_enabled"), true},
+                {QStringLiteral("category_changed_tmm_enabled"), false},
+                {QStringLiteral("use_category_paths_in_manual_mode"), true},
+                {QStringLiteral("save_path"), QStringLiteral("/share/First/finished")},
+                {QStringLiteral("temp_path_enabled"), true},
+                {QStringLiteral("temp_path"), QStringLiteral("/share/First/new + incomplete")},
+                {QStringLiteral("mail_notification_enabled"), true}
+            };
+            QCOMPARE(first.serverPreferences(), expected);
+            // Cancel a new edit after a confirmed Apply.
+            save->setText(QStringLiteral("/share/First/never-apply"));
+            buttons->button(QDialogButtonBox::Cancel)->click();
+        });
+        QTimer watchdog;
+        bool timedOut = false;
+        connect(&watchdog, &QTimer::timeout, &window, [&]() {
+            timedOut = true;
+            if (auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget()))
+                dialog->reject();
+        });
+        watchdog.start(16000);
+        options->trigger();
+        watchdog.stop();
+        QVERIFY(opened && !timedOut);
+        QCOMPARE(first.commandsFor("/api/v2/app/setPreferences"), 1);
+        QCOMPARE(first.serverPreferences().value(QStringLiteral("save_path")).toString(),
+                 QStringLiteral("/share/First/finished"));
+
+        tabs->setCurrentIndex(1);
+        QTRY_VERIFY(window.statusBar()->currentMessage().contains(QStringLiteral("Connected to Second seedbox")));
+        opened = false;
+        QTimer::singleShot(0, &window, [&]() {
+            auto *dialog = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget());
+            if (!dialog)
+                return;
+            opened = true;
+            const auto cleanup = qScopeGuard([dialog]() {
+                if (dialog->isVisible()) dialog->reject();
+            });
+            auto *nav = dialog->findChild<QListWidget *>(QStringLiteral("preferencesSections"));
+            auto *save = dialog->findChild<QLineEdit *>(QStringLiteral("textSavePath"));
+            auto *extension = dialog->findChild<QCheckBox *>(QStringLiteral("checkAppendqB"));
+            auto *mode = dialog->findChild<QComboBox *>(QStringLiteral("comboSavingMode"));
+            auto *policy = dialog->findChild<QComboBox *>(QStringLiteral("comboTorrentCategoryChanged"));
+            auto *buttons = dialog->findChild<QDialogButtonBox *>(QStringLiteral("buttonBox"));
+            QVERIFY(nav && save && extension && mode && policy && buttons);
+            nav->setCurrentRow(2);
+            QTRY_VERIFY_WITH_TIMEOUT(save->isEnabled(), 6000);
+            QCOMPARE(save->text(), QStringLiteral("/share/Second/downloads"));
+            QCOMPARE(mode->currentText(), QStringLiteral("Automatic"));
+            QVERIFY(!extension->isEnabled() && !policy->isEnabled());
+            // A manually typed remote path need not exist locally or match a mount.
+            save->setText(QStringLiteral("/remote-only/Second + data"));
+            buttons->button(QDialogButtonBox::Ok)->click();
+            QTRY_VERIFY_WITH_TIMEOUT(!dialog->isVisible(), 6000);
+        });
+        watchdog.start(16000);
+        options->trigger();
+        watchdog.stop();
+        modalDriver.stop();
+        QVERIFY(opened && !timedOut);
+        QCOMPARE(second.commandsFor("/api/v2/app/setPreferences"), 1);
+        QJsonObject expectedOther = other;
+        expectedOther.insert(QStringLiteral("save_path"), QStringLiteral("/remote-only/Second + data"));
+        QCOMPARE(second.serverPreferences(), expectedOther);
+        QCOMPARE(first.commandsFor("/api/v2/app/setPreferences"), 1);
     }
 
     void statusBarFieldsStayFixedDuringAuthenticatedRateUpdates()
