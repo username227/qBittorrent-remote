@@ -843,22 +843,75 @@ void RemoteSession::setTorrentCategory(const QStringList &hashes, const QString 
 void RemoteSession::createAndAssignTorrentCategory(const QStringList &hashes,
                                                   const QString &category)
 {
-    if (!validSelectedTorrentHashes(hashes) || category.trimmed().isEmpty()
-        || category != category.trimmed() || category.contains(QLatin1Char('\n'))
-        || category.contains(QLatin1Char('\r')))
+    if (!validSelectedTorrentHashes(hashes))
     {
-        emit operationFailed(tr("Create torrent category"), tr("Invalid selection or category name."));
+        emit operationFailed(tr("Create torrent category"), tr("Invalid torrent selection."));
+        return;
+    }
+    saveCategory(category, {{QStringLiteral("savePath"), QString()}}, false, hashes);
+}
+
+void RemoteSession::saveCategory(const QString &category, const QJsonObject &fields,
+                                 bool edit, const QStringList &assignHashes)
+{
+    // Upstream Session::isValidCategoryName rules, plus Web API delimiters.
+    if (category.trimmed().isEmpty() || category.contains(QLatin1Char('\\'))
+        || category.startsWith(QLatin1Char('/')) || category.endsWith(QLatin1Char('/'))
+        || category.contains(QStringLiteral("//")) || category.contains(QLatin1Char('\n'))
+        || category.contains(QLatin1Char('\r')) || category.contains(QChar::Null)
+        || (!assignHashes.isEmpty() && !validSelectedTorrentHashes(assignHashes)))
+    {
+        emit operationFailed(tr("Save torrent category"), tr("Invalid category name or torrent selection."));
+        return;
+    }
+    if (edit && fields.isEmpty())
+        return;
+    QUrlQuery form;
+    form.addQueryItem(QStringLiteral("category"), category);
+    for (auto it = fields.constBegin(); it != fields.constEnd(); ++it)
+    {
+        QString value = it.value().toVariant().toString();
+        if (value.isNull()) value = QStringLiteral("");
+        form.addQueryItem(it.key(), value);
+    }
+    queueOperation(edit ? QStringLiteral("api/v2/torrents/editCategory")
+                        : QStringLiteral("api/v2/torrents/createCategory"),
+                   form.toString(QUrl::FullyEncoded).toUtf8(),
+                   QByteArrayLiteral("application/x-www-form-urlencoded"),
+                   edit ? tr("Edit torrent category") : tr("Create torrent category"), true,
+                   [this, assignHashes, category]() {
+                       if (!assignHashes.isEmpty()) setTorrentCategory(assignHashes, category);
+                   });
+}
+
+void RemoteSession::removeCategories(const QStringList &categories)
+{
+    if (categories.isEmpty())
+        return;
+    for (const auto &name : categories)
+        if (name.isEmpty() || name.contains(QLatin1Char('\n')) || name.contains(QLatin1Char('\r')))
+            return;
+    QUrlQuery form;
+    form.addQueryItem(QStringLiteral("categories"), categories.join(QLatin1Char('\n')));
+    queueOperation(QStringLiteral("api/v2/torrents/removeCategories"),
+                   form.toString(QUrl::FullyEncoded).toUtf8(),
+                   QByteArrayLiteral("application/x-www-form-urlencoded"), tr("Remove categories"), true);
+}
+
+void RemoteSession::manageTagDefinitions(const QStringList &tags, bool create)
+{
+    if (!validSelectedTags(tags))
+    {
+        emit operationFailed(tr("Manage tags"), tr("Invalid tag names."));
         return;
     }
     QUrlQuery form;
-    form.addQueryItem(QStringLiteral("category"), category);
-    // Empty means the server applies its configured default save location.
-    form.addQueryItem(QStringLiteral("savePath"), QString());
-    queueOperation(QStringLiteral("api/v2/torrents/createCategory"),
+    form.addQueryItem(QStringLiteral("tags"), tags.join(QLatin1Char(',')));
+    queueOperation(create ? QStringLiteral("api/v2/torrents/createTags")
+                          : QStringLiteral("api/v2/torrents/deleteTags"),
                    form.toString(QUrl::FullyEncoded).toUtf8(),
                    QByteArrayLiteral("application/x-www-form-urlencoded"),
-                   tr("Create torrent category"), true,
-                   [this, hashes, category]() { setTorrentCategory(hashes, category); });
+                   create ? tr("Add tags") : tr("Remove tags"), true);
 }
 
 void RemoteSession::changeTorrentTags(const QStringList &hashes,

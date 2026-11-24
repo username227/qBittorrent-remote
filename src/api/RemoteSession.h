@@ -88,6 +88,10 @@ public:
     void setTorrentLocation(const QStringList &hashes, const QString &remotePath);
     void setTorrentCategory(const QStringList &hashes, const QString &category);
     void createAndAssignTorrentCategory(const QStringList &hashes, const QString &category);
+    void saveCategory(const QString &category, const QJsonObject &fields, bool edit,
+                      const QStringList &assignHashes = {});
+    void removeCategories(const QStringList &categories);
+    void manageTagDefinitions(const QStringList &tags, bool create);
     void changeTorrentTags(const QStringList &hashes, const QStringList &tags, bool add);
     void createAndAddTorrentTags(const QStringList &hashes, const QStringList &tags);
     void setTorrentAutoManagement(const QStringList &hashes, bool enabled);

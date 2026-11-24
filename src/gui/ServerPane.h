@@ -39,6 +39,10 @@ public:
     QTableView *table() const noexcept { return m_table; }
     TorrentModel *model() const noexcept { return m_model; }
     QStringList categories() const { return m_categories.values(); }
+    const QJsonObject &categoryDefinitions() const { return m_categoryDefinitions; }
+    const QSet<QString> &tagDefinitions() const { return m_tags; }
+    const QHash<QString, QSet<QString>> &trackerDefinitions() const { return m_trackers; }
+    bool hasFullSync() const { return m_hasFullSync; }
     QSortFilterProxyModel *proxy() const noexcept { return m_proxy; }
 
     void applySync(const QJsonObject &payload);
@@ -86,6 +90,8 @@ private:
     QSortFilterProxyModel *m_proxy = nullptr;
     QJsonObject m_serverState;
     QSet<QString> m_categories;
+    QJsonObject m_categoryDefinitions;
+    bool m_hasFullSync = false;
     QSet<QString> m_tags;
     QHash<QString, QSet<QString>> m_trackers;
     QString m_search;
