@@ -40,7 +40,8 @@ public:
                                      const QString &preferredProfileId = {},
                                      QWidget *parent = nullptr,
                                      Remote::RemoteSession *session = nullptr,
-                                     TorrentModel *torrentModel = nullptr);
+                                     TorrentModel *torrentModel = nullptr,
+                                     const QString &serverVersion = {});
     ~RemotePreferencesDialog() override;
 
 signals:
@@ -59,6 +60,8 @@ private:
     void bindI2PControls();
     void bindProxyControls();
     void refreshProxyControls();
+    void bindIPFilterControls();
+    bool validateIPFilterChanges(const QJsonObject &changes);
     void refreshI2PControls();
     void readI2PBuildInfo();
     void bindDownloadsSavingControls();
@@ -80,7 +83,7 @@ private:
                           const QString &tooltip);
     void bindRemotePath(const char *key, QLineEdit *line,
                         std::function<bool()> dependency = {});
-    void browseRemotePath(QLineEdit *line);
+    void browseRemotePath(QLineEdit *line, bool filterFile = false);
     bool validateDownloadChanges(const QJsonObject &changes);
     void remoteFieldChanged();
     // Register typed controls, including custom enum/compound bindings for
@@ -144,6 +147,8 @@ private:
     QStandardItemModel *m_watchedFoldersModel = nullptr;
     QJsonObject m_watchedFolders;
     QList<RemoteField> m_remoteFields;
+    QString m_bannedIPs;
+    bool m_banRangesSupported = false;
     bool m_i2pBuildInfoFinished = false;
     bool m_i2pVersionSupportsConfig = false;
     bool m_i2pVersionSupportsPeX = false;

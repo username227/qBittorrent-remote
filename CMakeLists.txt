@@ -81,6 +81,9 @@ add_library(qbittorrent_remote_gui STATIC
     src/gui/ConnectionDialog.h
     src/gui/RemotePreferencesDialog.cpp
     src/gui/RemotePreferencesDialog.h
+    src/gui/RemoteBanListDialog.cpp
+    src/gui/RemoteBanListDialog.h
+    src/gui/banlistoptionsdialog.ui
     src/gui/RemoteCategoryDialog.cpp
     src/gui/RemoteCategoryDialog.h
     src/gui/remotetorrentcategorydialog.ui
@@ -316,6 +319,7 @@ if(BUILD_TESTING)
         connectionLimitsFollowSelectedServer
         i2pConfigurationFollowsSelectedServerAndBuild
         proxyConfigurationFollowsSelectedServer
+        ipFilteringFollowsSelectedServer
     )
 
     # Check the registration against the actual QtTest-discovered functions.

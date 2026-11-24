@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/RemotePreferencesDialog.h"
+#include "gui/RemoteBanListDialog.h"
+#include <QFileInfo>
+#include <QToolButton>
 #include "gui/DesktopAutostart.h"
 #include "gui/TorrentModel.h"
 #include "api/ServerProfile.h"
@@ -149,7 +152,8 @@ RemotePreferencesDialog::RemotePreferencesDialog(QSettings &settings,
                                                  const QString &preferredProfileId,
                                                  QWidget *parent,
                                                  Remote::RemoteSession *session,
-                                                 TorrentModel *torrentModel)
+                                                 TorrentModel *torrentModel,
+                                                 const QString &serverVersion)
     : QDialog(parent)
     , m_settings(settings)
     , m_remoteProfileId(preferredProfileId)
@@ -186,6 +190,14 @@ RemotePreferencesDialog::RemotePreferencesDialog(QSettings &settings,
     bindConnectionLimits();
     bindI2PControls();
     bindProxyControls();
+    // The range API was introduced in 5.3.0; 5.1/5.2 silently discard
+    // ranges. Use the authenticated daemon's version, not the GUI version.
+    QString numeric = serverVersion;
+    if (numeric.startsWith(QLatin1Char('v'))) numeric.remove(0, 1);
+    const auto version = QVersionNumber::fromString(numeric);
+    m_banRangesSupported = version.segmentCount() >= 3
+        && version >= QVersionNumber(5, 3, 0);
+    bindIPFilterControls();
     populateAdvancedPlaceholders();
     buildRemotePathsPage(preferredProfileId);
 
@@ -769,6 +781,72 @@ void RemotePreferencesDialog::refreshProxyControls()
     m_ui->lblProxyPassword->setEnabled(m_ui->textProxyPassword->isEnabled());
 }
 
+void RemotePreferencesDialog::bindIPFilterControls()
+{
+    bindRemoteControl("ip_filter_enabled", m_ui->checkIPFilter);
+    bindRemoteControl("ip_filter_path", m_ui->textFilterPath, [this]() {
+        return remoteFieldAvailable("ip_filter_enabled") && m_ui->checkIPFilter->isChecked();
+    }, tr("Absolute IP filter file path on the connected server. Browse a mapped NAS file or enter the server path."));
+    auto *browse = m_ui->textFilterPath->addAction(style()->standardIcon(QStyle::SP_DirOpenIcon),
+                                                   QLineEdit::TrailingPosition);
+    browse->setObjectName(QStringLiteral("textFilterPathBrowse"));
+    browse->setToolTip(tr("Choose a mapped local NAS filter file"));
+    connect(browse, &QAction::triggered, this, [this]() {
+        if (m_ui->textFilterPath->isEnabled())
+            browseRemotePath(m_ui->textFilterPath, true);
+    });
+    bindRemoteControl("ip_filter_trackers", m_ui->checkIpFilterTrackers);
+    m_ui->IpFilterRefreshBtn->setIcon(icon("view-refresh"));
+    m_ui->IpFilterRefreshBtn->setEnabled(false);
+    m_ui->IpFilterRefreshBtn->setToolTip(tr(
+        "The Web API has no explicit filter reload operation. Reload on the server itself."));
+    bindRemoteField(RemoteField{
+        QStringLiteral("banned_IPs"), m_ui->banListButton,
+        [this]() { return QJsonValue(m_bannedIPs); },
+        [this](const QJsonValue &value) { m_bannedIPs = value.toString(); },
+        [this](const QJsonValue &value) {
+            return value.isString() && RemoteBanListDialog::validList(value.toString(), m_banRangesSupported);
+        },
+        {}, tr("Edit manually banned addresses on the selected server. Changes are staged until Apply or OK.")
+    });
+    connect(m_ui->banListButton, &QPushButton::clicked, this, [this]() {
+        if (m_remoteBusy || !remoteFieldAvailable("banned_IPs"))
+            return;
+        RemoteBanListDialog dialog(m_bannedIPs, m_banRangesSupported, this);
+        if (dialog.exec() == QDialog::Accepted && remoteFieldAvailable("banned_IPs"))
+        {
+            m_bannedIPs = dialog.entries();
+            remoteFieldChanged();
+        }
+    });
+}
+
+bool RemotePreferencesDialog::validateIPFilterChanges(const QJsonObject &changes)
+{
+    if (!changes.contains(QStringLiteral("ip_filter_path"))
+        && !changes.value(QStringLiteral("ip_filter_enabled")).toBool())
+        return true;
+    if (!remoteFieldAvailable("ip_filter_path"))
+    {
+        QMessageBox::warning(this, tr("Unavailable filter path"),
+            tr("The server has not reported a usable IP filter path."));
+        return false;
+    }
+    const QString path = m_ui->textFilterPath->text();
+    // Empty dormant paths are allowed; enabling a filter requires a file.
+    if (path.isEmpty() && !m_ui->checkIPFilter->isChecked())
+        return true;
+    if (!path.startsWith(QLatin1Char('/')) || path.endsWith(QLatin1Char('/'))
+        || path.contains(QLatin1Char('\\')) || path.contains(QLatin1Char('\n'))
+        || path.contains(QLatin1Char('\r')) || path.contains(QChar::Null))
+    {
+        QMessageBox::warning(this, tr("Invalid filter path"),
+            tr("Enter an absolute server file path, or choose a mapped local NAS filter file."));
+        return false;
+    }
+    return true;
+}
+
 void RemotePreferencesDialog::bindServerBehaviorControls()
 {
     bindRemoteControl("file_log_enabled", m_ui->checkFileLog);
@@ -1275,7 +1353,7 @@ void RemotePreferencesDialog::bindRemotePath(const char *key, QLineEdit *line,
     });
 }
 
-void RemotePreferencesDialog::browseRemotePath(QLineEdit *line)
+void RemotePreferencesDialog::browseRemotePath(QLineEdit *line, bool filterFile)
 {
     // The Servers page selector edits local mappings only. Always use the
     // authenticated profile captured when this Preferences dialog opened.
@@ -1289,17 +1367,19 @@ void RemotePreferencesDialog::browseRemotePath(QLineEdit *line)
         return;
     }
     QString initial = Remote::PathMappingStore::toLocal(line->text(), entries);
-    if (initial.isEmpty() || !QDir(initial).exists())
+    if (initial.isEmpty() || (!QDir(initial).exists() && !(filterFile && QFileInfo(initial).isFile())))
         initial = entries.constFirst().localRoot;
-    const QString local = QFileDialog::getExistingDirectory(
-        this, tr("Choose mapped local NAS directory"), initial);
+    const QString local = filterFile
+        ? QFileDialog::getOpenFileName(this, tr("Choose an IP filter file"), initial,
+            tr("All supported filters (*.dat *.p2p *.p2b);;.dat (*.dat);;.p2p (*.p2p);;.p2b (*.p2b)"))
+        : QFileDialog::getExistingDirectory(this, tr("Choose mapped local NAS directory"), initial);
     if (local.isEmpty())
         return;
     const QString remote = Remote::PathMappingStore::toRemote(local, entries);
     if (remote.isEmpty())
     {
-        QMessageBox::warning(this, tr("Unmapped local directory"),
-            tr("The selected folder is not covered by a mapping for this connected server. "
+        QMessageBox::warning(this, filterFile ? tr("Unmapped local file") : tr("Unmapped local directory"),
+            tr("The selected path is not covered by a mapping for this connected server. "
                "The server path has not been changed."));
         return;
     }
@@ -2039,7 +2119,7 @@ void RemotePreferencesDialog::applyChanges(bool closeAfter)
         remoteSaveFailed(tr("The server is no longer available. Reopen Preferences after reconnecting."));
         return;
     }
-    if (!validateDownloadChanges(changes))
+    if (!validateDownloadChanges(changes) || !validateIPFilterChanges(changes))
     {
         m_closeAfterApply = false;
         return;
@@ -2052,19 +2132,26 @@ void RemotePreferencesDialog::applyChanges(bool closeAfter)
     }
     setRemoteBusy(true);
     const QPointer<RemotePreferencesDialog> dialog(this);
-    // scan_dirs is a replacement map rather than a per-folder update.
-    // Refuse to overwrite visible changes made by another client since load.
-    if (changes.contains(QStringLiteral("scan_dirs")))
+    // Replacement collections must not overwrite a newer list observed
+    // on the server. The API has no atomic compare-and-set.
+    QJsonObject replacementBaselines;
+    for (const auto &field : m_remoteFields)
+        if ((field.key == QLatin1String("scan_dirs") || field.key == QLatin1String("banned_IPs"))
+            && changes.contains(field.key))
+            replacementBaselines.insert(field.key, field.baseline);
+    if (!replacementBaselines.isEmpty())
     {
-        QJsonValue baseline;
-        for (const auto &field : m_remoteFields)
-            if (field.key == QLatin1String("scan_dirs")) baseline = field.baseline;
-        m_remoteSession->requestPreferences([dialog, changes, baseline](const QJsonObject &values) {
+        m_remoteSession->requestPreferences([dialog, changes, replacementBaselines](const QJsonObject &values) {
             if (!dialog || !dialog->m_remoteBusy) return;
-            if (values.value(QStringLiteral("scan_dirs")) != baseline)
+            for (auto it = replacementBaselines.constBegin(); it != replacementBaselines.constEnd(); ++it)
             {
-                dialog->remoteSaveFailed(dialog->tr("Watched folders changed on the server. Reopen Preferences to review the new list before editing."));
-                return;
+                if (values.value(it.key()) != it.value())
+                {
+                    dialog->remoteSaveFailed(it.key() == QLatin1String("scan_dirs")
+                        ? dialog->tr("Watched folders changed on the server. Reopen Preferences to review the new list before editing.")
+                        : dialog->tr("Banned IP addresses changed on the server. Reopen Preferences to review the new list before editing."));
+                    return;
+                }
             }
             dialog->sendRemoteChanges(changes);
         }, [dialog](const QString &reason) {
