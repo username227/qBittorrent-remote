@@ -110,6 +110,7 @@ public:
     void requestPreferences(PreferencesResult received = {}, PreferencesError failed = {});
     // Session-wide operations affect only this authenticated NAS connection.
     void setAlternativeSpeedLimitsEnabled(bool enabled);
+    void sendTestEmail(std::function<void()> accepted, PreferencesError rejected);
     void setPreferences(const QJsonObject &changes,
                         std::function<void()> accepted = {}, PreferencesError rejected = {});
     void renameTorrentContent(const QString &hash, const QString &oldPath,

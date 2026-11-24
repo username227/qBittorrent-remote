@@ -554,6 +554,13 @@ void RemoteSession::setPreferences(const QJsonObject &changes,
         std::move(rejected), reportOperation);
 }
 
+void RemoteSession::sendTestEmail(std::function<void()> accepted, PreferencesError rejected)
+{
+    queueOperation(QStringLiteral("api/v2/app/sendTestEmail"), {},
+        QByteArrayLiteral("application/x-www-form-urlencoded"),
+        tr("Send test email"), true, std::move(accepted), std::move(rejected), false);
+}
+
 void RemoteSession::pumpOperations()
 {
     // The existing secure TLS/checkReply path tracks one outstanding reply.

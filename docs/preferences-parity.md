@@ -14,7 +14,7 @@ a live setting from the connected server**.
 | Native section | GUI included | Functionality in this PR | Follow-up |
 | --- | --- | --- | --- |
 | Behavior | Yes | Local desktop controls and live server log settings | Remaining unsupported controls |
-| Downloads | Yes | Disk options, Saving Management, addition defaults, duplicate behavior, backup settings, legacy watched folders and file-name exclusions | Notifications, external programs and unsupported local-file deletion controls |
+| Downloads | Yes | Disk options, Saving Management, addition defaults, duplicate behavior, backup settings, legacy watched folders, file-name exclusions, completion email and external program hooks | Unsupported local-file deletion and console controls |
 | Connection | Yes | Unsupported controls disabled | Actual remote server preferences, never the local device's BitTorrent port |
 | Speed | Yes | Unsupported controls disabled | Server speed limits and scheduler |
 | BitTorrent | Yes | Unsupported controls disabled | DHT, PeX, encryption, queues and peer controls |
@@ -86,4 +86,9 @@ All five native .torrent backup controls bind to the upstream torrent_files_back
 
 ## Downloads checkpoint 6 — excluded file names
 
-The native checkable group, multiline wildcard list and no-extension checkbox use `excluded_file_names_enabled`, `excluded_file_names` (newline-separated string) and `exclude_files_without_extension`. The latter is absent from the 5.1.4 API; each field is gated by the advertised type/value and the enabled parent group, not a hard-coded version cutoff. Disabling the group preserves the saved patterns and no-extension preference. No client-side filtering, file deletion, priority commands or extra polling: the selected server interprets and applies its exclusion rules. The existing Apply/Cancel and readback transaction verifies edits and never sends unsupported keys.
+The native checkable group, multiline wildcard list and no-extension checkbox use `excluded_file_names_enabled`, `excluded_file_names` (newline-separated string) and `exclude_files_without_extension`. The latter is absent from the 5.1.4 and 5.3.0 APIs (introduced in Web API 2.17.0); each field is gated by the advertised type/value and the enabled parent group, not a hard-coded version cutoff. Disabling the group preserves the saved patterns and no-extension preference. No client-side filtering, file deletion, priority commands or extra polling: the selected server interprets and applies its exclusion rules. The existing Apply/Cancel and readback transaction verifies edits and never sends unsupported keys.
+
+
+## Downloads checkpoint 7 — email notifications and external programs
+
+The native email group uses typed `mail_notification_*` fields. Older servers expose Boolean `mail_notification_ssl_enabled`; newer servers expose string `mail_notification_encryption_type` (`None`, `STARTTLS`, `SMTPS`). The actual advertised capability selects the native checkbox or combo. SMTP passwords are masked and never persisted as desktop preferences. Test email sends an authenticated POST to `app/sendTestEmail` only after email edits have been applied and read back; HTTP acceptance is not delivery confirmation. The native added/finished program controls bind to `autorun_on_torrent_added_enabled`, `autorun_on_torrent_added_program`, `autorun_enabled`, and `autorun_program`. A confirmation precedes enabling hooks or editing commands, including inactive commands for safety if another client changed their state. Commands execute only on the server. Unsupported local deletion, recursive downloading and console settings remain disabled. No local process, SMTP connection or extra polling is introduced.
