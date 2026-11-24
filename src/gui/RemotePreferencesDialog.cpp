@@ -155,6 +155,7 @@ RemotePreferencesDialog::RemotePreferencesDialog(QSettings &settings,
     // were substituted with stock QLineEdit widgets.
     disableUnimplementedControls();
     loadLocalBehaviorControls();
+    loadLocalAdditionControls();
     bindServerBehaviorControls();
     bindDownloadsSavingControls();
     bindTorrentAdditionDefaults();
@@ -598,8 +599,38 @@ void RemotePreferencesDialog::bindStringCombo(const char *key, QComboBox *combo,
             this, [this]() { remoteFieldChanged(); });
 }
 
+void RemotePreferencesDialog::loadLocalAdditionControls()
+{
+    const auto show = m_settings.value(QStringLiteral("Preferences/Downloads/ShowAdditionDialog"), true).toBool();
+    m_ui->checkAdditionDialog->setChecked(show);
+    m_ui->checkAdditionDialog->setEnabled(true);
+    m_ui->checkAdditionDialog->setToolTip(tr("Show the desktop Add Torrent options dialog. Otherwise add to the active server using its defaults."));
+    m_ui->checkAdditionDialogFront->setChecked(m_settings.value(
+        QStringLiteral("Preferences/Downloads/AdditionDialogFront"), true).toBool());
+    m_ui->checkAdditionDialogFront->setToolTip(tr("Request activation of the Add Torrent window. The desktop compositor may decline."));
+    m_ui->checkConfirmMergeTrackers->setChecked(m_settings.value(
+        QStringLiteral("Preferences/Downloads/ConfirmMergeTrackers"), true).toBool());
+    m_ui->checkConfirmMergeTrackers->setToolTip(tr("Ask before merging trackers for a manually added duplicate. When unchecked, use the selected server's merge setting."));
+    const auto refresh = [this]() {
+        const bool show = m_ui->checkAdditionDialog->isChecked();
+        m_ui->checkAdditionDialogFront->setEnabled(show);
+        m_ui->checkConfirmMergeTrackers->setEnabled(show);
+    };
+    refresh();
+    const auto changed = [this, refresh]() {
+        refresh();
+        m_additionDirty = true;
+        updateButtons();
+    };
+    connect(m_ui->checkAdditionDialog, &QGroupBox::toggled, this, changed);
+    connect(m_ui->checkAdditionDialogFront, &QCheckBox::toggled, this, changed);
+    connect(m_ui->checkConfirmMergeTrackers, &QCheckBox::toggled, this, changed);
+}
+
 void RemotePreferencesDialog::bindTorrentAdditionDefaults()
 {
+    bindRemoteControl("merge_trackers", m_ui->checkMergeTrackers, {},
+        tr("Server default for duplicate torrents. Private torrents are never merged."));
     bindStringCombo("torrent_content_layout", m_ui->contentLayoutComboBox,
         {QStringLiteral("Original"), QStringLiteral("Subfolder"), QStringLiteral("NoSubfolder")});
     bindRemoteControl("add_to_top_of_queue", m_ui->checkAddToQueueTop);
@@ -1281,7 +1312,7 @@ void RemotePreferencesDialog::updateButtons()
     m_checkMount->setEnabled(selected);
     if (m_applyButton)
         m_applyButton->setEnabled(!m_remoteBusy && (!m_changedProfiles.isEmpty()
-                                  || m_behaviorDirty || !remoteChanges().isEmpty()));
+                                  || m_behaviorDirty || m_additionDirty || !remoteChanges().isEmpty()));
 }
 
 void RemotePreferencesDialog::applyChanges(bool closeAfter)
@@ -1367,6 +1398,16 @@ bool RemotePreferencesDialog::applyLocalChanges()
         }
     }
     m_changedProfiles.clear();
+    if (m_additionDirty)
+    {
+        m_settings.setValue(QStringLiteral("Preferences/Downloads/ShowAdditionDialog"),
+            m_ui->checkAdditionDialog->isChecked());
+        m_settings.setValue(QStringLiteral("Preferences/Downloads/AdditionDialogFront"),
+            m_ui->checkAdditionDialogFront->isChecked());
+        m_settings.setValue(QStringLiteral("Preferences/Downloads/ConfirmMergeTrackers"),
+            m_ui->checkConfirmMergeTrackers->isChecked());
+        m_additionDirty = false;
+    }
     if (m_behaviorDirty)
     {
         const bool tray = m_ui->checkShowSystray->isChecked()

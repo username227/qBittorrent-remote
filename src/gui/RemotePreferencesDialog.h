@@ -49,6 +49,7 @@ private:
     void populateAdvancedPlaceholders();
     void disableUnimplementedControls();
     void loadLocalBehaviorControls();
+    void loadLocalAdditionControls();
     void bindServerBehaviorControls();
     void bindDownloadsSavingControls();
     void bindTorrentAdditionDefaults();
@@ -118,6 +119,7 @@ private:
     QHash<QString, QList<Remote::PathMapping>> m_staged;
     QSet<QString> m_changedProfiles;
     bool m_behaviorDirty = false;
+    bool m_additionDirty = false;
     QList<RemoteField> m_remoteFields;
     bool m_remotePreferencesLoaded = false;
     bool m_loadingRemotePreferences = false;

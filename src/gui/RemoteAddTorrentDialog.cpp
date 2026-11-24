@@ -30,6 +30,7 @@
 #include <QScrollArea>
 #include <QSizePolicy>
 #include <QSplitter>
+#include <QShowEvent>
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
 #include <QUrl>
@@ -291,13 +292,15 @@ void RemoteAddTorrentDialog::setupOptions()
 
     // The Web API does not manage these *local GUI* behaviors.
     for (auto *checkbox : {m_ui->defaultCategoryCheckbox,
-                           m_ui->doNotDeleteTorrentCheckBox,
-                           m_ui->checkBoxNeverShow})
+                           m_ui->doNotDeleteTorrentCheckBox})
     {
         checkbox->setChecked(false);
         checkbox->setEnabled(false);
         checkbox->setToolTip(tr("Not implemented in qBittorrent Remote."));
     }
+    m_ui->checkBoxNeverShow->setChecked(false);
+    m_ui->checkBoxNeverShow->setEnabled(true);
+    m_ui->checkBoxNeverShow->setToolTip(tr("Skip the Add Torrent options dialog for future additions. Change this in Preferences → Downloads."));
     m_ui->tagsEditButton->setEnabled(false);
     m_ui->tagsEditButton->setToolTip(tr(
         "Enter tags separated by commas above. Native tag editing is planned."));
@@ -345,6 +348,7 @@ void RemoteAddTorrentDialog::loadServerDefaults()
     const auto generation = ++m_defaultsGeneration;
     m_defaultsLoading = false;
     m_stopConditionSupported = false;
+    m_mergeTrackersDefault = QJsonValue(QJsonValue::Undefined);
     m_ui->comboTMM->setCurrentIndex(0);
     m_ui->contentLayoutComboBox->setCurrentIndex(0);
     m_ui->startTorrentCheckBox->setChecked(true);
@@ -370,6 +374,8 @@ void RemoteAddTorrentDialog::loadServerDefaults()
             const auto value = values.value(QLatin1String(key));
             return value.isBool() ? value.toBool() : fallback;
         };
+        const auto merge = values.value(QStringLiteral("merge_trackers"));
+        if (merge.isBool()) dialog->m_mergeTrackersDefault = merge;
         auto &ui = *dialog->m_ui;
         ui.comboTMM->setCurrentIndex(boolean("auto_tmm_enabled", false) ? 1 : 0);
         const QStringList layouts{QStringLiteral("Original"), QStringLiteral("Subfolder"), QStringLiteral("NoSubfolder")};
@@ -709,7 +715,19 @@ void RemoteAddTorrentDialog::accept()
         else
             m_settings.setValue(savedPathKey(), remote);
     }
+    if (m_ui->checkBoxNeverShow->isChecked())
+        m_settings.setValue(QStringLiteral("Preferences/Downloads/ShowAdditionDialog"), false);
     QDialog::accept();
+}
+
+void RemoteAddTorrentDialog::showEvent(QShowEvent *event)
+{
+    QDialog::showEvent(event);
+    if (m_settings.value(QStringLiteral("Preferences/Downloads/AdditionDialogFront"), true).toBool())
+    {
+        activateWindow();
+        raise();
+    }
 }
 
 void RemoteAddTorrentDialog::done(int result)
