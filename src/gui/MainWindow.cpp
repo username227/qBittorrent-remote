@@ -1198,7 +1198,8 @@ void MainWindow::openPreferences(const std::shared_ptr<SessionContext> &server)
     const QString profileId = server ? server->profile.id : m_preferredServerId;
     RemotePreferencesDialog dialog(*m_settings, profileId, this,
                                   server && server->connected ? server->session : nullptr,
-                                  server && server->connected ? server->pane->model() : nullptr);
+                                  server && server->connected ? server->pane->model() : nullptr,
+                                  server && server->connected ? server->version : QString());
     connect(&dialog, &RemotePreferencesDialog::localBehaviorApplied,
             this, &MainWindow::applyLocalBehaviorPreferences);
     trackDialogGeometry(dialog, QStringLiteral("Preferences"));

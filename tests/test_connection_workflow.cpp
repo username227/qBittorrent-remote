@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/MainWindow.h"
+#include "gui/RemoteBanListDialog.h"
+#include <QToolButton>
 #include "gui/CompletionNotifier.h"
 #include "gui/ServerPane.h"
 #include "gui/RemotePreferencesDialog.h"
@@ -4393,6 +4395,214 @@ private slots:
             QCOMPARE(c.port->value(), 1081);
             QVERIFY(c.auth->isChecked() && c.lookup->isChecked() && c.bt->isChecked()
                 && c.peer->isChecked() && c.rss->isChecked() && c.misc->isChecked());
+            QVERIFY(!c.apply->isEnabled());
+        });
+    }
+
+    void ipFilteringFollowsSelectedServer()
+    {
+        DemoQbittorrentServer legacy(true), modern(true);
+        modern.enableModernResponses();
+        const QJsonObject initialLegacy{
+            {QStringLiteral("ip_filter_enabled"), false},
+            {QStringLiteral("ip_filter_path"), QStringLiteral("/share/old.dat")},
+            {QStringLiteral("ip_filter_trackers"), true},
+            {QStringLiteral("banned_IPs"), QStringLiteral("192.0.2.1")}
+        };
+        const QJsonObject initialModern{
+            {QStringLiteral("ip_filter_enabled"), true},
+            {QStringLiteral("ip_filter_path"), QStringLiteral("/share/modern.p2p")},
+            {QStringLiteral("ip_filter_trackers"), false},
+            {QStringLiteral("banned_IPs"), QStringLiteral("198.51.100.1 - 198.51.100.9")}
+        };
+        legacy.setServerPreferences(initialLegacy);
+        modern.setServerPreferences(initialModern);
+        QVERIFY(legacy.start() && modern.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("prefs.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, legacy.url());
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(QStringLiteral("v5.1.4")), 6000);
+        openConnectDialog(window, modern.url(), false, true, true, QStringLiteral("Modern seedbox"));
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(QStringLiteral("v5.3.0")), 6000);
+        auto *tabs = window.findChild<QTabWidget *>(QStringLiteral("serverTabs"));
+        auto *prefs = window.findChild<QAction *>(QStringLiteral("actionOptions"));
+        QVERIFY(tabs && prefs);
+
+        struct Controls
+        {
+            QCheckBox *enabled;
+            QLineEdit *path;
+            QCheckBox *trackers;
+            QPushButton *ban;
+            QToolButton *reload;
+            QPushButton *apply;
+        };
+        const auto withFilter = [&](auto exercise) {
+            bool finished = false;
+            QTimer::singleShot(0, &window, [&]() {
+                auto *dlg = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget());
+                QVERIFY(dlg);
+                const auto cleanup = qScopeGuard([dlg]() { if (dlg->isVisible()) dlg->reject(); });
+                auto *sections = dlg->findChild<QListWidget *>(QStringLiteral("preferencesSections"));
+                const Controls c{
+                    dlg->findChild<QCheckBox *>(QStringLiteral("checkIPFilter")),
+                    dlg->findChild<QLineEdit *>(QStringLiteral("textFilterPath")),
+                    dlg->findChild<QCheckBox *>(QStringLiteral("checkIpFilterTrackers")),
+                    dlg->findChild<QPushButton *>(QStringLiteral("banListButton")),
+                    dlg->findChild<QToolButton *>(QStringLiteral("IpFilterRefreshBtn")),
+                    dlg->findChild<QPushButton *>(QStringLiteral("preferencesApply"))
+                };
+                QVERIFY(sections && c.enabled && c.path && c.trackers && c.ban && c.reload && c.apply);
+                sections->setCurrentRow(3);
+                QTRY_VERIFY_WITH_TIMEOUT(c.trackers->isEnabled(), 6000);
+                QVERIFY(!c.reload->isEnabled());
+                exercise(c);
+                finished = true;
+            });
+            prefs->trigger();
+            QVERIFY(finished);
+        };
+        const auto editBanList = [&](QPushButton *button, const QString &initial,
+                                     const QString &entry, bool ranges, bool accept, bool removeOld) {
+            bool finished = false;
+            QTimer::singleShot(0, &window, [&]() {
+                auto *dialog = qobject_cast<RemoteBanListDialog *>(QApplication::activeModalWidget());
+                QVERIFY(dialog);
+                const auto cleanup = qScopeGuard([dialog]() { if (dialog->isVisible()) dialog->reject(); });
+                auto *list = dialog->findChild<QTreeView *>(QStringLiteral("bannedIPList"));
+                auto *ip = dialog->findChild<QLineEdit *>(QStringLiteral("txtIP"));
+                auto *add = dialog->findChild<QPushButton *>(QStringLiteral("buttonBanIP"));
+                auto *del = dialog->findChild<QPushButton *>(QStringLiteral("buttonDeleteIP"));
+                auto *buttons = dialog->findChild<QDialogButtonBox *>(QStringLiteral("buttonBox"));
+                QVERIFY(list && ip && add && del && buttons);
+                QCOMPARE(list->model()->rowCount(), 1);
+                QCOMPARE(list->model()->index(0, 0).data().toString(), initial);
+                ip->setText(QStringLiteral("invalid"));
+                QVERIFY(!add->isEnabled());
+                ip->setText(QStringLiteral("203.0.113.0/24"));
+                QCOMPARE(add->isEnabled(), ranges);
+                ip->setText(entry);
+                QVERIFY(add->isEnabled());
+                if (removeOld)
+                {
+                    list->selectionModel()->select(list->model()->index(0, 0),
+                        QItemSelectionModel::ClearAndSelect);
+                    QVERIFY(del->isEnabled());
+                    del->click();
+                }
+                add->click();
+                QCOMPARE(list->model()->rowCount(), removeOld ? 1 : 2);
+                buttons->button(accept ? QDialogButtonBox::Ok : QDialogButtonBox::Cancel)->click();
+                finished = true;
+            });
+            button->click();
+            QVERIFY(finished);
+        };
+        tabs->setCurrentIndex(0);
+        for (bool save : {false, true})
+        {
+            withFilter([&](const Controls &c) {
+                QVERIFY(c.enabled->isEnabled() && c.ban->isEnabled());
+                QVERIFY(!c.enabled->isChecked() && !c.path->isEnabled() && c.trackers->isChecked());
+                QCOMPARE(c.path->text(), QStringLiteral("/share/old.dat"));
+                QVERIFY(!c.apply->isEnabled());
+                editBanList(c.ban, QStringLiteral("192.0.2.1"), QStringLiteral("2001:0db8::1"),
+                    false, false, false);
+                QVERIFY(!c.apply->isEnabled());
+                editBanList(c.ban, QStringLiteral("192.0.2.1"), QStringLiteral("2001:0db8::1"),
+                    false, true, true);
+                c.enabled->setChecked(true);
+                QVERIFY(c.path->isEnabled() && !c.reload->isEnabled());
+                c.path->setText(QStringLiteral("/share/new filter.dat"));
+                c.trackers->setChecked(false);
+                QVERIFY(c.apply->isEnabled());
+                QCOMPARE(legacy.commandsFor("/api/v2/app/setPreferences"), 0);
+                if (save)
+                {
+                    c.apply->click();
+                    QTRY_VERIFY_WITH_TIMEOUT(c.enabled->isEnabled() && !c.apply->isEnabled(), 6000);
+                }
+            });
+            if (!save) QCOMPARE(legacy.serverPreferences(), initialLegacy);
+        }
+        const QJsonObject expectedLegacy{
+            {QStringLiteral("ip_filter_enabled"), true},
+            {QStringLiteral("ip_filter_path"), QStringLiteral("/share/new filter.dat")},
+            {QStringLiteral("ip_filter_trackers"), false},
+            {QStringLiteral("banned_IPs"), QStringLiteral("2001:db8::1")}
+        };
+        QCOMPARE(legacy.serverPreferences(), expectedLegacy);
+        QCOMPARE(modern.serverPreferences(), initialModern);
+        const auto delta = [](DemoQbittorrentServer &server) {
+            const QUrlQuery form(QString::fromUtf8(server.lastCommandBody("/api/v2/app/setPreferences")));
+            return QJsonDocument::fromJson(form.queryItemValue(
+                QStringLiteral("json"), QUrl::FullyDecoded).toUtf8()).object();
+        };
+        QCOMPARE(delta(legacy), expectedLegacy);
+        tabs->setCurrentIndex(1);
+        withFilter([&](const Controls &c) {
+            QVERIFY(c.enabled->isChecked() && c.path->isEnabled() && c.ban->isEnabled());
+            QCOMPARE(c.path->text(), QStringLiteral("/share/modern.p2p"));
+            editBanList(c.ban, QStringLiteral("198.51.100.1 - 198.51.100.9"),
+                QStringLiteral("203.0.113.0/24"), true, true, false);
+            c.apply->click();
+            QTRY_VERIFY_WITH_TIMEOUT(c.ban->isEnabled() && !c.apply->isEnabled(), 6000);
+        });
+        const QJsonObject modernDelta{{QStringLiteral("banned_IPs"),
+            QStringLiteral("198.51.100.1 - 198.51.100.9\n203.0.113.0 - 203.0.113.255")}};
+        QCOMPARE(delta(modern), modernDelta);
+        QCOMPARE(legacy.serverPreferences(), expectedLegacy);
+        withFilter([&](const Controls &c) {
+            QVERIFY(c.ban->isEnabled());
+            // A stale replacement must be rejected before any POST.
+            bool edited = false;
+            QTimer::singleShot(0, &window, [&]() {
+                auto *dialog = qobject_cast<RemoteBanListDialog *>(QApplication::activeModalWidget());
+                QVERIFY(dialog);
+                const auto cleanup = qScopeGuard([dialog]() { if (dialog->isVisible()) dialog->reject(); });
+                auto *list = dialog->findChild<QTreeView *>(QStringLiteral("bannedIPList"));
+                auto *del = dialog->findChild<QPushButton *>(QStringLiteral("buttonDeleteIP"));
+                auto *buttons = dialog->findChild<QDialogButtonBox *>(QStringLiteral("buttonBox"));
+                QVERIFY(list && del && buttons);
+                QCOMPARE(list->model()->rowCount(), 2);
+                list->selectionModel()->select(list->model()->index(0, 0),
+                    QItemSelectionModel::ClearAndSelect);
+                del->click();
+                buttons->button(QDialogButtonBox::Ok)->click();
+                edited = true;
+            });
+            c.ban->click();
+            QVERIFY(edited && c.apply->isEnabled());
+            QJsonObject concurrent = modern.serverPreferences();
+            concurrent.insert(QStringLiteral("banned_IPs"), QStringLiteral("192.0.2.55"));
+            modern.setServerPreferences(concurrent);
+            const int writes = modern.commandsFor("/api/v2/app/setPreferences");
+            QTimer closer;
+            closer.setInterval(20);
+            connect(&closer, &QTimer::timeout, &window, []() {
+                if (auto *warning = qobject_cast<QMessageBox *>(QApplication::activeModalWidget()))
+                    warning->accept();
+            });
+            closer.start();
+            c.apply->click();
+            QTRY_VERIFY_WITH_TIMEOUT(c.apply->isEnabled(), 6000);
+            closer.stop();
+            QCOMPARE(modern.commandsFor("/api/v2/app/setPreferences"), writes);
+            QCOMPARE(modern.serverPreferences(), concurrent);
+        });
+        modern.setServerPreferences({
+            {QStringLiteral("ip_filter_enabled"), true},
+            {QStringLiteral("ip_filter_path"), false},
+            {QStringLiteral("ip_filter_trackers"), true},
+            {QStringLiteral("banned_IPs"), QStringLiteral("invalid")}
+        });
+        withFilter([](const Controls &c) {
+            QVERIFY(c.enabled->isEnabled() && c.trackers->isEnabled());
+            QVERIFY(!c.path->isEnabled() && !c.ban->isEnabled() && !c.reload->isEnabled());
             QVERIFY(!c.apply->isEnabled());
         });
     }

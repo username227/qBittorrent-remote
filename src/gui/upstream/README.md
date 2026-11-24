@@ -134,3 +134,5 @@ content adapter preserves QTreeView/model, file/folder icons and metadata
 filtering without binding the desktop libtorrent engine. Destinations are
 mapped through `PathMappingStore`; no local download engine is instantiated. See `docs/add-torrent-parity.md` for detailed
 feature and Web API limitation accounting.
+
+- `../banlistoptionsdialog.ui`: verbatim upstream qBittorrent release-5.3.0 ban-list Designer layout, adapted by RemoteBanListDialog for staged Web API preferences. Original dialog implementation copyright (C) 2016 Alexandr Milovantsev; layout from GPL-licensed upstream. No local session dependency.
