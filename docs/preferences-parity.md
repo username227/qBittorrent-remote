@@ -14,7 +14,7 @@ a live setting from the connected server**.
 | Native section | GUI included | Functionality in this PR | Follow-up |
 | --- | --- | --- | --- |
 | Behavior | Yes | Local desktop controls and live server log settings | Remaining unsupported controls |
-| Downloads | Yes | Disk options, Saving Management, addition defaults, duplicate behavior, backup settings, legacy watched folders, file-name exclusions, completion email and external program hooks | Unsupported local-file deletion and console controls |
+| Downloads | Yes | Disk options, Saving Management, addition defaults, duplicate behavior, backup settings, legacy watched folders, file-name exclusions, completion email, external program hooks and local original .torrent deletion | Unsupported recursive downloading and console controls |
 | Connection | Yes | Unsupported controls disabled | Actual remote server preferences, never the local device's BitTorrent port |
 | Speed | Yes | Unsupported controls disabled | Server speed limits and scheduler |
 | BitTorrent | Yes | Unsupported controls disabled | DHT, PeX, encryption, queues and peer controls |
@@ -92,3 +92,10 @@ The native checkable group, multiline wildcard list and no-extension checkbox us
 ## Downloads checkpoint 7 — email notifications and external programs
 
 The native email group uses typed `mail_notification_*` fields. Older servers expose Boolean `mail_notification_ssl_enabled`; newer servers expose string `mail_notification_encryption_type` (`None`, `STARTTLS`, `SMTPS`). The actual advertised capability selects the native checkbox or combo. SMTP passwords are masked and never persisted as desktop preferences. Test email sends an authenticated POST to `app/sendTestEmail` only after email edits have been applied and read back; HTTP acceptance is not delivery confirmation. The native added/finished program controls bind to `autorun_on_torrent_added_enabled`, `autorun_on_torrent_added_program`, `autorun_enabled`, and `autorun_program`. A confirmation precedes enabling hooks or editing commands, including inactive commands for safety if another client changed their state. Commands execute only on the server. Unsupported local deletion, recursive downloading and console settings remain disabled. No local process, SMTP connection or extra polling is introduced.
+
+
+## Downloads checkpoint 8 — local original .torrent deletion
+
+The two native deletion controls are desktop preferences, disabled by default, independent of server `auto_delete_mode`. They concern only original selected `.torrent` metadata files, never downloaded content or server backup files. The native Add Torrent override preserves the entire selection, including on cancellation; links have no original to delete. Explicit Cancel-button activation permits deletion only if the cancellation preference was enabled. Window close, programmatic rejection and shutdown do not delete unsubmitted files. After a successful upload response, normal synchronization on the same authenticated session must confirm every submitted torrent hash within 30 seconds, with a complete pre-upload model confirming absence. Partial batches remain intact unless all submitted hashes appear; skipped duplicates, failure and disconnect retain originals. Before removing a file, verify its captured canonical path, file type, size, modification time and SHA-256 content digest; refuse symlinks, changed or unrecognized files. No extra polling or server preference writes. A timed-out or unconfirmed operation retains metadata. This is intentionally more conservative than upstream's local-engine completion callback.
+
+The server does not expose an atomic per-file upload receipt; matching newly visible infohashes is the available confirmation. Simultaneous additions by another client cannot be distinguished perfectly. Filesystem checks are best effort across desktop platforms, not an atomic compare-and-delete filesystem primitive.

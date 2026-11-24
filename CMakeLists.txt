@@ -283,6 +283,7 @@ if(BUILD_TESTING)
         downloadsBackupsAndWatchedFoldersUseSelectedServer
         downloadsExclusionsFollowSelectedServerCapabilities
         downloadsNotificationsAndProgramsFollowSelectedServer
+        localOriginalTorrentDeletionRequiresConfirmedAddition
     )
 
     # Check the registration against the actual QtTest-discovered functions.

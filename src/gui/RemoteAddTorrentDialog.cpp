@@ -106,8 +106,10 @@ RemoteAddTorrentDialog::RemoteAddTorrentDialog(QSettings &settings,
 
     connect(m_ui->buttonBox, &QDialogButtonBox::accepted,
             this, &RemoteAddTorrentDialog::accept);
-    connect(m_ui->buttonBox, &QDialogButtonBox::rejected,
-            this, &RemoteAddTorrentDialog::reject);
+    connect(m_ui->buttonBox, &QDialogButtonBox::rejected, this, [this]() {
+        m_explicitlyCancelled = true;
+        reject();
+    });
 
     // Qt can select the native server path without claiming that the local
     // machine or the Web API can browse an unmounted server filesystem.
@@ -290,14 +292,17 @@ void RemoteAddTorrentDialog::setupOptions()
     m_ui->sequentialCheckBox->setChecked(false);
     m_ui->firstLastCheckBox->setChecked(false);
 
-    // The Web API does not manage these *local GUI* behaviors.
-    for (auto *checkbox : {m_ui->defaultCategoryCheckbox,
-                           m_ui->doNotDeleteTorrentCheckBox})
-    {
-        checkbox->setChecked(false);
-        checkbox->setEnabled(false);
-        checkbox->setToolTip(tr("Not implemented in qBittorrent Remote."));
-    }
+    // The Web API does not manage this local GUI behavior.
+    m_ui->defaultCategoryCheckbox->setChecked(false);
+    m_ui->defaultCategoryCheckbox->setEnabled(false);
+    m_ui->defaultCategoryCheckbox->setToolTip(tr("Not implemented in qBittorrent Remote."));
+    const bool allowDelete = m_source != Source::Links && m_settings.value(
+        QStringLiteral("Preferences/Downloads/DeleteOriginalTorrent"), false).toBool();
+    m_ui->doNotDeleteTorrentCheckBox->setChecked(false);
+    m_ui->doNotDeleteTorrentCheckBox->setEnabled(allowDelete);
+    m_ui->doNotDeleteTorrentCheckBox->setVisible(allowDelete);
+    m_ui->doNotDeleteTorrentCheckBox->setToolTip(tr(
+        "Keep all original local .torrent files for this addition, including if cancelled."));
     m_ui->checkBoxNeverShow->setChecked(false);
     m_ui->checkBoxNeverShow->setEnabled(true);
     m_ui->checkBoxNeverShow->setToolTip(tr("Skip the Add Torrent options dialog for future additions. Change this in Preferences → Downloads."));
@@ -626,6 +631,11 @@ Remote::AddTorrentOptions RemoteAddTorrentDialog::options() const
     result.contentLayout = layouts.value(m_ui->contentLayoutComboBox->currentIndex(),
                                           QStringLiteral("Original"));
     return result;
+}
+
+bool RemoteAddTorrentDialog::keepOriginalTorrentFiles() const
+{
+    return m_ui->doNotDeleteTorrentCheckBox->isChecked();
 }
 
 QString RemoteAddTorrentDialog::links() const

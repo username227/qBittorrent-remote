@@ -624,7 +624,26 @@ void RemotePreferencesDialog::loadLocalAdditionControls()
     m_ui->checkConfirmMergeTrackers->setChecked(m_settings.value(
         QStringLiteral("Preferences/Downloads/ConfirmMergeTrackers"), true).toBool());
     m_ui->checkConfirmMergeTrackers->setToolTip(tr("Ask before merging trackers for a manually added duplicate. When unchecked, use the selected server's merge setting."));
+    m_ui->deleteTorrentBox->setEnabled(true);
+    m_ui->deleteTorrentBox->setChecked(m_settings.value(
+        QStringLiteral("Preferences/Downloads/DeleteOriginalTorrent"), false).toBool());
+    m_ui->deleteCancelledTorrentBox->setChecked(m_settings.value(
+        QStringLiteral("Preferences/Downloads/DeleteCancelledTorrent"), false).toBool());
+    m_ui->deleteTorrentWarningIcon->setPixmap(style()->standardIcon(
+        QStyle::SP_MessageBoxCritical).pixmap(16, 16));
+    const QString warning = tr("Warning: this permanently deletes the original .torrent "
+        "files selected on this computer, not downloaded content. Files are removed after "
+        "the selected server confirms their addition. Cancelled files are removed only "
+        "if you explicitly cancel the Add Torrent dialog and allow deletion. "
+        "Use Do not delete .torrent file to retain the originals.");
+    m_ui->deleteTorrentBox->setToolTip(warning);
+    m_ui->deleteCancelledTorrentBox->setToolTip(warning);
+    m_ui->deleteTorrentWarningLabel->setToolTip(warning);
     const auto refresh = [this]() {
+        const bool deleteOriginal = m_ui->deleteTorrentBox->isChecked();
+        m_ui->deleteCancelledTorrentBox->setEnabled(deleteOriginal);
+        m_ui->deleteTorrentWarningIcon->setVisible(deleteOriginal);
+        m_ui->deleteTorrentWarningLabel->setVisible(deleteOriginal);
         const bool show = m_ui->checkAdditionDialog->isChecked();
         m_ui->checkAdditionDialogFront->setEnabled(show);
         m_ui->checkConfirmMergeTrackers->setEnabled(show);
@@ -638,6 +657,8 @@ void RemotePreferencesDialog::loadLocalAdditionControls()
     connect(m_ui->checkAdditionDialog, &QGroupBox::toggled, this, changed);
     connect(m_ui->checkAdditionDialogFront, &QCheckBox::toggled, this, changed);
     connect(m_ui->checkConfirmMergeTrackers, &QCheckBox::toggled, this, changed);
+    connect(m_ui->deleteTorrentBox, &QGroupBox::toggled, this, changed);
+    connect(m_ui->deleteCancelledTorrentBox, &QCheckBox::toggled, this, changed);
 }
 
 void RemotePreferencesDialog::bindTorrentAdditionDefaults()
@@ -1820,6 +1841,10 @@ bool RemotePreferencesDialog::applyLocalChanges()
             m_ui->checkAdditionDialogFront->isChecked());
         m_settings.setValue(QStringLiteral("Preferences/Downloads/ConfirmMergeTrackers"),
             m_ui->checkConfirmMergeTrackers->isChecked());
+        m_settings.setValue(QStringLiteral("Preferences/Downloads/DeleteOriginalTorrent"),
+            m_ui->deleteTorrentBox->isChecked());
+        m_settings.setValue(QStringLiteral("Preferences/Downloads/DeleteCancelledTorrent"),
+            m_ui->deleteTorrentBox->isChecked() && m_ui->deleteCancelledTorrentBox->isChecked());
         m_additionDirty = false;
     }
     if (m_behaviorDirty)

@@ -45,6 +45,8 @@ public:
     QJsonValue mergeTrackersDefault() const { return m_mergeTrackersDefault; }
     QString selectedServerId() const { return m_server.id; }
     QString links() const;
+    bool keepOriginalTorrentFiles() const;
+    bool explicitlyCancelled() const { return m_explicitlyCancelled; }
     QString fileName() const { return m_fileName; }
     QByteArray fileContents() const { return m_fileContents; }
     const QList<Remote::TorrentUpload> &batchFiles() const { return m_batchFiles; }
@@ -90,6 +92,7 @@ private:
     std::function<Remote::RemoteSession *(const QString &)> m_sessionForServer;
     quint64 m_defaultsGeneration = 0;
     bool m_defaultsLoading = false;
+    bool m_explicitlyCancelled = false;
     bool m_stopConditionSupported = false;
     QJsonValue m_mergeTrackersDefault = QJsonValue(QJsonValue::Undefined);
 };
