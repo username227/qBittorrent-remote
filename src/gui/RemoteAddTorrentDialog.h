@@ -37,7 +37,8 @@ public:
                            QWidget *parent = nullptr,
                            QList<Remote::ServerProfile> availableServers = {},
                            std::function<bool(const QString &)> serverIsConnected = {},
-                           QList<Remote::TorrentUpload> batchFiles = {});
+                           QList<Remote::TorrentUpload> batchFiles = {},
+                           std::function<Remote::RemoteSession *(const QString &)> sessionForServer = {});
     ~RemoteAddTorrentDialog() override;
 
     Remote::AddTorrentOptions options() const;
@@ -61,6 +62,8 @@ private:
     void adaptOptionsGridToFont();
     void setupPaths();
     void setupOptions();
+    void loadServerDefaults();
+    void refreshDefaultControls();
     void setupSource(QString initialLinks);
     void displayMetadata();
     void browseMappedPath(RemoteFileSystemPathComboEdit *target);
@@ -82,4 +85,8 @@ private:
     QList<Remote::ServerProfile> m_availableServers;
     QComboBox *m_serverSelector = nullptr;
     std::function<bool(const QString &)> m_serverIsConnected;
+    std::function<Remote::RemoteSession *(const QString &)> m_sessionForServer;
+    quint64 m_defaultsGeneration = 0;
+    bool m_defaultsLoading = false;
+    bool m_stopConditionSupported = false;
 };

@@ -730,7 +730,11 @@ void MainWindow::setupActions()
         RemoteAddTorrentDialog dialog(*m_settings, server->profile,
             RemoteAddTorrentDialog::Source::Links, initialLinks, {}, {}, this,
             connectedServerProfiles(),
-            [this](const QString &id) { return static_cast<bool>(connectedById(id)); });
+            [this](const QString &id) { return static_cast<bool>(connectedById(id)); }, {},
+            [this](const QString &id) -> Remote::RemoteSession * {
+                const auto target = connectedById(id);
+                return target ? target->session : nullptr;
+            });
         trackDialogGeometry(dialog, QStringLiteral("AddTorrent"));
         if (dialog.exec() != QDialog::Accepted)
             return;
@@ -806,7 +810,11 @@ void MainWindow::setupActions()
             batch ? QByteArray() : uploads.first().contents,
             this, available,
             [this](const QString &id) { return static_cast<bool>(connectedById(id)); },
-            batch ? uploads : QList<Remote::TorrentUpload>{});
+            batch ? uploads : QList<Remote::TorrentUpload>{},
+            [this](const QString &id) -> Remote::RemoteSession * {
+                const auto target = connectedById(id);
+                return target ? target->session : nullptr;
+            });
         trackDialogGeometry(dialog, QStringLiteral("AddTorrent"));
         if (dialog.exec() != QDialog::Accepted)
             return;

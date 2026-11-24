@@ -10,6 +10,7 @@
 #include <QList>
 #include <QSet>
 #include <QString>
+#include <QStringList>
 #include <memory>
 #include <functional>
 
@@ -50,6 +51,9 @@ private:
     void loadLocalBehaviorControls();
     void bindServerBehaviorControls();
     void bindDownloadsSavingControls();
+    void bindTorrentAdditionDefaults();
+    void bindStringCombo(const char *key, QComboBox *combo, const QStringList &values,
+                         std::function<bool()> dependency = {});
     void bindBooleanCombo(const char *key, QComboBox *combo, int trueIndex,
                           const QString &tooltip);
     void bindRemotePath(const char *key, QLineEdit *line,

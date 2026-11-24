@@ -1217,8 +1217,12 @@ void appendAddOptions(QUrlQuery &form, const AddTorrentOptions &options)
         form.addQueryItem(QStringLiteral("sequentialDownload"), QStringLiteral("true"));
     if (options.firstLastPiece)
         form.addQueryItem(QStringLiteral("firstLastPiecePrio"), QStringLiteral("true"));
-    if (options.queueTop)
-        form.addQueryItem(QStringLiteral("addToTopOfQueue"), QStringLiteral("true"));
+    form.addQueryItem(QStringLiteral("addToTopOfQueue"), options.queueTop
+        ? QStringLiteral("true") : QStringLiteral("false"));
+    if (options.stopCondition == QLatin1String("None")
+        || options.stopCondition == QLatin1String("MetadataReceived")
+        || options.stopCondition == QLatin1String("FilesChecked"))
+        form.addQueryItem(QStringLiteral("stopCondition"), options.stopCondition);
     if (options.seedMode)
         form.addQueryItem(QStringLiteral("seedMode"), QStringLiteral("true"));
     if (options.contentLayout == QLatin1String("Original")
