@@ -178,6 +178,7 @@ public:
                                     {QStringLiteral("torrents"), QJsonObject()},
                                     {QStringLiteral("server_state"), QJsonObject{
                                         {QStringLiteral("use_alt_speed_limits"), m_trayAltMode},
+                                        {QStringLiteral("connection_status"), m_trayConnectionStatus},
                                         {QStringLiteral("dl_info_speed"), 0},
                                         {QStringLiteral("up_info_speed"), 0}
                                     }}
@@ -739,6 +740,7 @@ public:
     void rejectPreferenceWrites(bool reject) { m_rejectPreferences = reject; }
     void ignorePreferenceWrites(bool ignore) { m_ignorePreferences = ignore; }
     bool trayAlternative() const { return m_trayAltMode; }
+    void setTrayConnectionStatus(const QString &status) { m_trayConnectionStatus = status; }
     QJsonObject trayLimits() const { return m_traySpeedLimits; }
     void setReportedVersions(const QString &qbtVersion, const QString &apiVersion)
     {
@@ -876,6 +878,7 @@ private:
     QJsonObject m_statusRates;
     bool m_trayDemo = false;
     bool m_trayAltMode = false;
+    QString m_trayConnectionStatus = QStringLiteral("connected");
     QJsonObject m_traySpeedLimits;
     bool m_preferencesDemo = false;
     bool m_rejectPreferences = false;
@@ -1446,6 +1449,7 @@ private slots:
         DemoQbittorrentServer beta(true, nullptr, true);
         alpha.enableNativeTrayDemo(false);
         beta.enableNativeTrayDemo(true);
+        beta.setTrayConnectionStatus(QStringLiteral("firewalled"));
         QVERIFY(alpha.start());
         QVERIFY(beta.start());
         QTemporaryDir temp;
@@ -1468,18 +1472,51 @@ private slots:
         auto *alternative = window.findChild<QAction *>(
             QStringLiteral("actionUseAlternativeSpeedLimits"));
         auto *disconnectMenu = window.findChild<QMenu *>(QStringLiteral("trayDisconnectMenu"));
-        QVERIFY(tabs && alternative && disconnectMenu);
+        auto *connectionStatus = window.statusBar()->findChild<QLabel *>(
+            QStringLiteral("remoteConnectionStatus"));
+        auto *speedMode = window.statusBar()->findChild<QPushButton *>(
+            QStringLiteral("remoteAlternativeSpeedLimits"));
+        QVERIFY(tabs && alternative && disconnectMenu && connectionStatus && speedMode);
+        QVERIFY(!speedMode->isEnabled());
+        QVERIFY(connectionStatus->toolTip().contains(QStringLiteral("Not connected")));
         QTRY_COMPARE_WITH_TIMEOUT(tabs->count(), 2, 7000);
         tabs->setCurrentIndex(0);
         QTRY_VERIFY_WITH_TIMEOUT(alternative->isEnabled() && disconnectMenu->isEnabled(), 7000);
         QCOMPARE(alternative->isChecked(), false);
+        QTRY_VERIFY_WITH_TIMEOUT(connectionStatus->toolTip().contains(QStringLiteral("Online")), 7000);
+        QVERIFY(speedMode->isVisible() && speedMode->isEnabled() && !speedMode->isChecked());
+        QVERIFY(!connectionStatus->pixmap().isNull() && !speedMode->icon().isNull());
+        QVERIFY(speedMode->toolTip().contains(QStringLiteral("alternative speed limits")));
         tabs->setCurrentIndex(1);
         QTRY_VERIFY_WITH_TIMEOUT(alternative->isEnabled() && alternative->isChecked(), 7000);
+        QTRY_VERIFY_WITH_TIMEOUT(connectionStatus->toolTip().contains(QStringLiteral("No direct connections")), 7000);
+        QVERIFY(speedMode->isChecked());
+        QVERIFY(speedMode->toolTip().contains(QStringLiteral("regular speed limits")));
+
+        // The bottom-row speed button changes only the selected server.
+        QTest::mouseClick(speedMode, Qt::LeftButton);
+        QTRY_VERIFY_WITH_TIMEOUT(!beta.trayAlternative() && !speedMode->isChecked(), 7000);
+        QVERIFY(!alternative->isChecked());
+        QCOMPARE(beta.commandsFor("/api/v2/transfer/setSpeedLimitsMode"), 1);
+        QCOMPARE(alpha.commandsFor("/api/v2/transfer/setSpeedLimitsMode"), 0);
+
+        // Incoming connectivity is distinct from Web API connectivity.
+        beta.setTrayConnectionStatus(QStringLiteral("disconnected"));
+        QTRY_VERIFY_WITH_TIMEOUT(connectionStatus->toolTip().contains(QStringLiteral("Offline")), 7000);
+        QVERIFY(speedMode->isEnabled());
+        beta.setTrayConnectionStatus(QStringLiteral("unknown"));
+        QTRY_VERIFY_WITH_TIMEOUT(connectionStatus->toolTip().contains(QStringLiteral("has not been reported")), 7000);
 
         // Disconnect Beta while Alpha is selected. It must not act on the
         // current tab by accident or modify the NAS daemon's torrent state.
         tabs->setCurrentIndex(0);
         QCOMPARE(alternative->isChecked(), false);
+        QVERIFY(connectionStatus->toolTip().contains(QStringLiteral("Online")));
+        QTest::mouseClick(speedMode, Qt::LeftButton);
+        QTRY_VERIFY_WITH_TIMEOUT(alpha.trayAlternative() && speedMode->isChecked(), 7000);
+        QVERIFY(alternative->isChecked());
+        QCOMPARE(alpha.commandsFor("/api/v2/transfer/setSpeedLimitsMode"), 1);
+        QCOMPARE(beta.commandsFor("/api/v2/transfer/setSpeedLimitsMode"), 1);
         disconnectMenu->popup(QPoint(40, 40));
         QTRY_COMPARE(disconnectMenu->actions().size(), 2);
         QAction *betaEntry = nullptr;
@@ -1509,6 +1546,8 @@ private slots:
         alphaEntry->trigger();
         QTRY_COMPARE_WITH_TIMEOUT(alpha.logouts(), 1, 7000);
         QTRY_VERIFY(!disconnectMenu->isEnabled());
+        QVERIFY(!speedMode->isEnabled());
+        QVERIFY(connectionStatus->toolTip().contains(QStringLiteral("Not connected")));
         QVERIFY(!window.isVisible());
     }
 
