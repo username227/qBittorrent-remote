@@ -321,20 +321,14 @@ MainWindow::MainWindow(QWidget *parent, QSettings *settings,
         });
     });
     m_ui->statusBar->showMessage(tr("Not connected to a server"));
-    // Permanently visible widgets are inserted left to right. The displayed
-    // torrent count stays left of the connectivity and alternative-speed
-    // indicators, followed by the existing transfer rates.
-    m_torrentCountLabel = new QLabel(tr("Torrents: —"), m_ui->statusBar);
-    m_torrentCountLabel->setObjectName(QStringLiteral("visibleTorrentCount"));
-    m_torrentCountLabel->setToolTip(tr("Torrents visible after all filters / total on the selected server"));
-    m_ui->statusBar->addPermanentWidget(m_torrentCountLabel);
+    // Keep the two native status indicators together, before our remote
+    // torrent count and the existing transfer rates.
     const auto separator = [this](const char *name) {
         auto *label = new QLabel(QStringLiteral("|"), m_ui->statusBar);
         label->setObjectName(QString::fromLatin1(name));
         m_ui->statusBar->addPermanentWidget(label);
         return label;
     };
-    separator("torrentCountSeparator");
     // The globe/flame reports the selected daemon's BitTorrent connectivity,
     // not whether the desktop can reach the authenticated Web API.
     m_connectionStatusLabel = new QLabel(m_ui->statusBar);
@@ -358,6 +352,11 @@ MainWindow::MainWindow(QWidget *parent, QSettings *settings,
         updateTrayActionState();
     });
     separator("alternativeSpeedSeparator");
+    m_torrentCountLabel = new QLabel(tr("Torrents: —"), m_ui->statusBar);
+    m_torrentCountLabel->setObjectName(QStringLiteral("visibleTorrentCount"));
+    m_torrentCountLabel->setToolTip(tr("Torrents visible after all filters / total on the selected server"));
+    m_ui->statusBar->addPermanentWidget(m_torrentCountLabel);
+    separator("torrentCountSeparator");
     m_downloadRateLabel = new QLabel(tr("D: —"), m_ui->statusBar);
     m_downloadRateLabel->setObjectName(QStringLiteral("remoteDownloadRate"));
     m_ui->statusBar->addPermanentWidget(m_downloadRateLabel);
@@ -1649,9 +1648,14 @@ void MainWindow::updateStatusBarFieldWidths()
     if (m_connectionStatusLabel && m_alternativeSpeedButton)
     {
         const int small = style()->pixelMetric(QStyle::PM_SmallIconSize, nullptr, this);
-        m_connectionStatusLabel->setFixedSize(small, small);
         m_alternativeSpeedButton->setIconSize(QSize(small, small));
         updateStatusBarIndicators();
+        // The clickable button needs native style padding. Reserve the same
+        // compartment for the informational icon and center its pixmap,
+        // without forcing a particular pixel width on different Qt styles.
+        const QSize compartment = m_alternativeSpeedButton->sizeHint();
+        m_alternativeSpeedButton->setFixedSize(compartment);
+        m_connectionStatusLabel->setFixedSize(compartment);
     }
 
     // Reserve space using the actual label font and locale, not padded
