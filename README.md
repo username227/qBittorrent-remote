@@ -46,6 +46,8 @@ must not be written around individual code blocks, internal implementation
 details, or fixed example inputs merely to exercise a parser or function.
 
 Qt Test may drive GUI interactions but is invoked exclusively through CTest.
+The functional suites share one linked `qbittorrent_remote_tests` executable;
+CTest still launches each registered workflow in a separate process.
 
 ### Windows installer and cross-platform CI
 

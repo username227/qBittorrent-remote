@@ -100,5 +100,9 @@ private slots:
     }
 };
 
+// Preserve QtTest's native QApplication and test setup for this suite.
+// The shared dispatcher selects this entry point before Qt is initialized.
+#define main runProfileWorkflow
 QTEST_MAIN(ProfileWorkflowTest)
+#undef main
 #include "test_profile_workflow.moc"

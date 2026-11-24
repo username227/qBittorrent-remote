@@ -481,5 +481,9 @@ private slots:
     }
 };
 
+// Preserve QtTest's native QApplication and test setup for this suite.
+// The shared dispatcher selects this entry point before Qt is initialized.
+#define main runTlsTrustWorkflow
 QTEST_MAIN(TlsTrustWorkflowTest)
+#undef main
 #include "test_tls_trust_workflow.moc"

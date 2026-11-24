@@ -252,5 +252,9 @@ void DetailsSortingWorkflowTest::trackersSortStatusAndNumericColumnsWithoutFlatt
         }));
 }
 
+// Preserve QtTest's native QApplication and test setup for this suite.
+// The shared dispatcher selects this entry point before Qt is initialized.
+#define main runDetailsSortingWorkflow
 QTEST_MAIN(DetailsSortingWorkflowTest)
+#undef main
 #include "test_details_sorting_workflow.moc"
