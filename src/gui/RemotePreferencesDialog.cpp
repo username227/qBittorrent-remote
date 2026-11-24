@@ -827,6 +827,33 @@ void RemotePreferencesDialog::bindBackupAndWatchedFolders()
     bindRemoteControl("remove_torrent_file_backup", m_ui->removeBackupTorrentFileCheckBox, {},
         tr("Remove the server's backup .torrent metadata when a torrent is removed."));
 
+    // Legacy APIs encode both the enable flag and destination in one
+    // string: empty disables copying, a nonempty path enables it.
+    // Reuse the same native controls and mapped browse action. The modern
+    // fields and legacy pair are mutually exclusive for each destination.
+    const auto bindLegacyExport = [this](const char *key, QCheckBox *enabled, QLineEdit *path) {
+        bindRemoteField(RemoteField{
+            QString::fromLatin1(key), enabled,
+            [enabled, path]() -> QJsonValue {
+                if (!enabled->isChecked()) return QJsonValue(QString());
+                // Distinguish a checked empty destination from disabling.
+                if (path->text().trimmed().isEmpty()) return QJsonValue(QJsonValue::Null);
+                return QJsonValue(path->text());
+            },
+            [enabled, path](const QJsonValue &value) {
+                const QString directory = value.toString();
+                enabled->setChecked(!directory.isEmpty());
+                path->setText(directory);
+            },
+            [](const QJsonValue &value) { return value.isString(); },
+            {}, tr("Legacy server export: uncheck and Apply to clear the server's saved destination.")
+        });
+        // The checkbox and path already have change connections via the
+        // modern bindings, including the existing mapped Browse action.
+    };
+    bindLegacyExport("export_dir", m_ui->backupDirCheckBox, m_ui->backupDirPathEdit);
+    bindLegacyExport("export_dir_fin", m_ui->finishedBackupDirCheckBox, m_ui->finishedBackupDirPathEdit);
+
     auto *view = m_ui->scanFoldersView;
     m_watchedFoldersModel = new QStandardItemModel(this);
     view->setModel(m_watchedFoldersModel);
@@ -869,6 +896,37 @@ void RemotePreferencesDialog::bindBackupAndWatchedFolders()
         displayWatchedFolders();
         remoteFieldChanged();
     });
+}
+
+void RemotePreferencesDialog::refreshBackupControls()
+{
+    // A legacy field and its modern counterpart share the checkbox. Resolve
+    // their final enabled state here instead of allowing iteration order
+    // to disable a valid binding. The modern path remains independently
+    // capability-gated.
+    const auto refresh = [this](const char *legacy, const char *modernEnabled,
+        const char *modernPath, QCheckBox *box, QLineEdit *line,
+        const QString &modernLabel, const QString &legacyLabel) {
+        const bool old = remoteFieldAvailable(legacy);
+        const bool enabled = remoteFieldAvailable(modernEnabled);
+        const bool pathAvailable = remoteFieldAvailable(modernPath);
+        box->setText(old ? legacyLabel : modernLabel);
+        box->setEnabled(old || enabled);
+        line->setEnabled((old || (enabled && pathAvailable)) && box->isChecked());
+        if (old)
+        {
+            box->setToolTip(tr("Legacy server export: disabling and applying clears the saved server destination."));
+            line->setToolTip(tr("Absolute directory on the connected server, or choose a mapped local NAS directory."));
+        }
+        else if (enabled)
+            box->setToolTip(QString());
+    };
+    refresh("export_dir", "torrent_files_backup_enabled", "torrent_files_backup_dir",
+        m_ui->backupDirCheckBox, m_ui->backupDirPathEdit,
+        tr("Store backup in:"), tr("Copy .torrent files to:"));
+    refresh("export_dir_fin", "torrent_files_finished_backup_dir_enabled", "torrent_files_finished_backup_dir",
+        m_ui->finishedBackupDirCheckBox, m_ui->finishedBackupDirPathEdit,
+        tr("When torrent finished move backup to:"), tr("Copy .torrent files for finished downloads to:"));
 }
 
 void RemotePreferencesDialog::displayWatchedFolders()
@@ -1087,11 +1145,16 @@ bool RemotePreferencesDialog::validateDownloadChanges(const QJsonObject &changes
     // This client supports absolute POSIX NAS paths. Do not resolve relative
     // text against the desktop filesystem, guess a mapping, or require a mount.
     for (const QString &key : {QStringLiteral("save_path"), QStringLiteral("temp_path"),
-         QStringLiteral("torrent_files_backup_dir"), QStringLiteral("torrent_files_finished_backup_dir")})
+         QStringLiteral("torrent_files_backup_dir"), QStringLiteral("torrent_files_finished_backup_dir"),
+         QStringLiteral("export_dir"), QStringLiteral("export_dir_fin")})
     {
         if (!changes.contains(key))
             continue;
-        const QString path = changes.value(key).toString();
+        const QJsonValue value = changes.value(key);
+        const QString path = value.toString();
+        const bool legacyExport = key == QLatin1String("export_dir") || key == QLatin1String("export_dir_fin");
+        if (legacyExport && value.isString() && path.isEmpty())
+            continue; // Unchecked: disable the legacy copy destination.
         if (!path.startsWith(QLatin1Char('/')) || path.contains(QLatin1Char('\\'))
             || path.contains(QLatin1Char('\n')) || path.contains(QLatin1Char('\r'))
             || path.contains(QChar::Null))
@@ -1184,6 +1247,7 @@ void RemotePreferencesDialog::refreshRemoteControls()
     m_ui->stopConditionLabel->setEnabled(m_ui->stopConditionComboBox->isEnabled());
     refreshWatchedFolderButtons();
     refreshNotificationControls();
+    refreshBackupControls();
 }
 
 void RemotePreferencesDialog::populateRemoteFields(const QJsonObject &values,
@@ -1193,7 +1257,16 @@ void RemotePreferencesDialog::populateRemoteFields(const QJsonObject &values,
     m_remotePreferencesLoaded = true;
     for (auto &field : m_remoteFields)
     {
-        const QJsonValue value = values.value(field.key);
+        QJsonValue value = values.value(field.key);
+        // Prefer modern keys if the server advertises them, even on a
+        // transitional server exposing deprecated export aliases as well.
+        if ((field.key == QLatin1String("export_dir")
+                && (values.contains(QStringLiteral("torrent_files_backup_enabled"))
+                    || values.contains(QStringLiteral("torrent_files_backup_dir"))))
+            || (field.key == QLatin1String("export_dir_fin")
+                && (values.contains(QStringLiteral("torrent_files_finished_backup_dir_enabled"))
+                    || values.contains(QStringLiteral("torrent_files_finished_backup_dir")))))
+            value = QJsonValue(QJsonValue::Undefined);
         field.baseline = field.accepts(value) ? value : QJsonValue(QJsonValue::Undefined);
         if (!field.baseline.isUndefined())
         {
@@ -1227,7 +1300,8 @@ QJsonObject RemotePreferencesDialog::remoteChanges() const
             continue;
         if ((field.key == QLatin1String("save_path") || field.key == QLatin1String("temp_path")
             || field.key == QLatin1String("torrent_files_backup_dir")
-            || field.key == QLatin1String("torrent_files_finished_backup_dir"))
+            || field.key == QLatin1String("torrent_files_finished_backup_dir")
+            || field.key == QLatin1String("export_dir") || field.key == QLatin1String("export_dir_fin"))
             && value.isString() && field.baseline.isString()
             && value.toString().startsWith(QLatin1Char('/'))
             && field.baseline.toString().startsWith(QLatin1Char('/'))
@@ -1323,7 +1397,8 @@ void RemotePreferencesDialog::verifyRemoteChanges(const QJsonObject &changes)
                 const bool pathKey = it.key() == QLatin1String("save_path")
                     || it.key() == QLatin1String("temp_path")
                     || it.key() == QLatin1String("torrent_files_backup_dir")
-                    || it.key() == QLatin1String("torrent_files_finished_backup_dir");
+                    || it.key() == QLatin1String("torrent_files_finished_backup_dir")
+                    || it.key() == QLatin1String("export_dir") || it.key() == QLatin1String("export_dir_fin");
                 const bool equivalentPath = pathKey && returned.isString() && it.value().isString()
                     && returned.toString().startsWith(QLatin1Char('/'))
                     && it.value().toString().startsWith(QLatin1Char('/'))
