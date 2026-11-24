@@ -3004,12 +3004,27 @@ private slots:
                 QCOMPARE(view->model()->rowCount(), 2);
                 if (save)
                 {
-                    QTimer::singleShot(0, dlg, []() {
+                    bool confirmed = false;
+                    QTimer modalDriver;
+                    connect(&modalDriver, &QTimer::timeout, dlg, [&]() {
                         if (auto *question = qobject_cast<QMessageBox *>(QApplication::activeModalWidget()))
-                            question->done(QMessageBox::Yes);
+                        {
+                            if (question->windowTitle() == QStringLiteral("Change watched folders"))
+                            {
+                                confirmed = true;
+                                question->button(QMessageBox::Yes)->click();
+                            }
+                            else
+                            {
+                                QTest::qFail(qPrintable(question->text()), __FILE__, __LINE__);
+                                question->reject();
+                            }
+                        }
                     });
+                    modalDriver.start(20);
                     QVERIFY(apply->isEnabled());
                     apply->click();
+                    QVERIFY(confirmed);
                     QTRY_VERIFY_WITH_TIMEOUT(backup->isEnabled() && !apply->isEnabled(), 6000);
                 }
                 finished = true;
