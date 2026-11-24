@@ -1028,8 +1028,12 @@ protected:
             QTimer::singleShot(0, dialog, [dialog]() {
                 auto *buttons = dialog->findChild<QDialogButtonBox *>(
                     QStringLiteral("buttonBox"));
-                if (buttons && buttons->button(QDialogButtonBox::Ok))
-                    buttons->button(QDialogButtonBox::Ok)->click();
+                const auto cleanup = qScopeGuard([dialog]() {
+                    if (dialog->isVisible()) dialog->reject();
+                });
+                QVERIFY(buttons && buttons->button(QDialogButtonBox::Ok));
+                QTRY_VERIFY_WITH_TIMEOUT(buttons->button(QDialogButtonBox::Ok)->isEnabled(), 6000);
+                buttons->button(QDialogButtonBox::Ok)->click();
             });
         }
         else if (auto *prompt = qobject_cast<QMessageBox *>(obj))
@@ -1140,6 +1144,10 @@ protected:
                     if (!names->toPlainText().contains(name))
                         error = QStringLiteral("Missing selected file: ") + name;
                 if (!error.isEmpty()) { dialog->reject(); return; }
+                const auto cleanup = qScopeGuard([dialog]() {
+                    if (dialog->isVisible()) dialog->reject();
+                });
+                QTRY_VERIFY_WITH_TIMEOUT(buttons->button(QDialogButtonBox::Ok)->isEnabled(), 6000);
                 category->setEditText(QStringLiteral("Queue Test"));
                 save->setEditText(QStringLiteral("/share/QueueTest"));
                 start->setChecked(true);
@@ -1192,6 +1200,10 @@ protected:
                     dialog->reject();
                     return;
                 }
+                const auto cleanup = qScopeGuard([dialog]() {
+                    if (dialog->isVisible()) dialog->reject();
+                });
+                QTRY_VERIFY_WITH_TIMEOUT(buttons->button(QDialogButtonBox::Ok)->isEnabled(), 6000);
                 buttons->button(QDialogButtonBox::Ok)->click();
             });
         }
@@ -2837,6 +2849,147 @@ private slots:
         expectedOther.insert(QStringLiteral("save_path"), QStringLiteral("/remote-only/Second + data"));
         QCOMPARE(second.serverPreferences(), expectedOther);
         QCOMPARE(first.commandsFor("/api/v2/app/setPreferences"), 2);
+    }
+
+    void downloadsAdditionDefaultsFollowSelectedServer()
+    {
+        DemoQbittorrentServer first(true), second(true);
+        const QJsonObject initial{
+            {QStringLiteral("torrent_content_layout"), QStringLiteral("Original")},
+            {QStringLiteral("add_to_top_of_queue"), false},
+            {QStringLiteral("add_stopped_enabled"), true},
+            {QStringLiteral("torrent_stop_condition"), QStringLiteral("None")},
+            {QStringLiteral("auto_tmm_enabled"), false}
+        };
+        const QJsonObject other{
+            {QStringLiteral("torrent_content_layout"), QStringLiteral("Subfolder")},
+            {QStringLiteral("add_to_top_of_queue"), true},
+            {QStringLiteral("add_stopped_enabled"), false},
+            {QStringLiteral("torrent_stop_condition"), QStringLiteral("FilesChecked")},
+            {QStringLiteral("auto_tmm_enabled"), true}
+        };
+        first.setServerPreferences(initial);
+        second.setServerPreferences(other);
+        QVERIFY(first.start() && second.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("prefs.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, first.url());
+        auto *tabs = window.findChild<QTabWidget *>(QStringLiteral("serverTabs"));
+        QVERIFY(tabs);
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(
+            QStringLiteral("Connected to Demo seedbox")), 6000);
+        openConnectDialog(window, second.url(), false, true, true, QStringLiteral("Second seedbox"));
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(
+            QStringLiteral("Connected to Second seedbox")), 6000);
+        tabs->setCurrentIndex(0);
+        auto *prefs = window.findChild<QAction *>(QStringLiteral("actionOptions"));
+        auto *link = window.findChild<QAction *>(QStringLiteral("actionDownloadFromURL"));
+        QVERIFY(prefs && link);
+        bool saved = false;
+        QTimer::singleShot(0, &window, [&]() {
+            auto *dialog = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget());
+            QVERIFY(dialog);
+            const auto cleanup = qScopeGuard([dialog]() {
+                if (dialog->isVisible()) dialog->reject();
+            });
+            auto *sections = dialog->findChild<QListWidget *>(QStringLiteral("preferencesSections"));
+            auto *layout = dialog->findChild<QComboBox *>(QStringLiteral("contentLayoutComboBox"));
+            auto *top = dialog->findChild<QCheckBox *>(QStringLiteral("checkAddToQueueTop"));
+            auto *stopped = dialog->findChild<QCheckBox *>(QStringLiteral("checkAddStopped"));
+            auto *stop = dialog->findChild<QComboBox *>(QStringLiteral("stopConditionComboBox"));
+            auto *apply = dialog->findChild<QPushButton *>(QStringLiteral("preferencesApply"));
+            QVERIFY(sections && layout && top && stopped && stop && apply);
+            sections->setCurrentRow(2);
+            QTRY_VERIFY_WITH_TIMEOUT(layout->isEnabled(), 6000);
+            QCOMPARE(layout->currentText(), QStringLiteral("Original"));
+            QVERIFY(!top->isChecked() && stopped->isChecked());
+            QVERIFY(!stop->isEnabled());
+            stopped->click();
+            QVERIFY(stop->isEnabled());
+            layout->setCurrentIndex(2);
+            top->click();
+            stop->setCurrentIndex(1);
+            QVERIFY(apply->isEnabled());
+            apply->click();
+            QTRY_VERIFY_WITH_TIMEOUT(layout->isEnabled() && !apply->isEnabled(), 6000);
+            saved = true;
+        });
+        prefs->trigger();
+        QVERIFY(saved);
+        QJsonObject expected = initial;
+        expected.insert(QStringLiteral("torrent_content_layout"), QStringLiteral("NoSubfolder"));
+        expected.insert(QStringLiteral("add_to_top_of_queue"), true);
+        expected.insert(QStringLiteral("add_stopped_enabled"), false);
+        expected.insert(QStringLiteral("torrent_stop_condition"), QStringLiteral("MetadataReceived"));
+        QCOMPARE(first.serverPreferences(), expected);
+        QCOMPARE(second.serverPreferences(), other);
+        QCOMPARE(second.commandsFor("/api/v2/app/setPreferences"), 0);
+
+        const auto add = [&](bool switchTarget) {
+            bool accepted = false;
+            QTimer::singleShot(0, &window, [&]() {
+                auto *dialog = qobject_cast<RemoteAddTorrentDialog *>(QApplication::activeModalWidget());
+                QVERIFY(dialog);
+                const auto cleanup = qScopeGuard([dialog]() {
+                    if (dialog->isVisible()) dialog->reject();
+                });
+                auto *buttons = dialog->findChild<QDialogButtonBox *>(QStringLiteral("buttonBox"));
+                auto *layout = dialog->findChild<QComboBox *>(QStringLiteral("contentLayoutComboBox"));
+                auto *top = dialog->findChild<QCheckBox *>(QStringLiteral("addToQueueTopCheckBox"));
+                auto *start = dialog->findChild<QCheckBox *>(QStringLiteral("startTorrentCheckBox"));
+                auto *stop = dialog->findChild<QComboBox *>(QStringLiteral("stopConditionComboBox"));
+                auto *tmm = dialog->findChild<QComboBox *>(QStringLiteral("comboTMM"));
+                auto *selector = dialog->findChild<QComboBox *>(QStringLiteral("addTorrentServerSelector"));
+                auto *links = dialog->findChild<QPlainTextEdit *>(QStringLiteral("torrentLinks"));
+                QVERIFY(buttons && layout && top && start && stop && tmm && selector && links);
+                auto *ok = buttons->button(QDialogButtonBox::Ok);
+                QVERIFY(ok);
+                QTRY_VERIFY_WITH_TIMEOUT(ok->isEnabled(), 6000);
+                QCOMPARE(layout->currentIndex(), 2);
+                QVERIFY(top->isChecked() && start->isChecked() && stop->isEnabled());
+                QCOMPARE(stop->currentData().toString(), QStringLiteral("MetadataReceived"));
+                QCOMPARE(tmm->currentIndex(), 0);
+                if (switchTarget)
+                {
+                    selector->setCurrentIndex(selector->findText(QStringLiteral("Second seedbox")));
+                    QTRY_VERIFY_WITH_TIMEOUT(ok->isEnabled(), 6000);
+                    QCOMPARE(layout->currentIndex(), 1);
+                    QVERIFY(top->isChecked() && start->isChecked());
+                    QCOMPARE(stop->currentData().toString(), QStringLiteral("FilesChecked"));
+                    QCOMPARE(tmm->currentIndex(), 1);
+                    // A user override must win over the server default.
+                    top->click();
+                    stop->setCurrentIndex(stop->findData(QStringLiteral("None")));
+                }
+                links->setPlainText(QStringLiteral(
+                    "magnet:?xt=urn:btih:fedcba9876543210fedcba9876543210fedcba98"));
+                ok->click();
+                accepted = !dialog->isVisible();
+            });
+            link->trigger();
+            QVERIFY(accepted);
+        };
+        add(false);
+        QTRY_COMPARE_WITH_TIMEOUT(first.commandsFor("/api/v2/torrents/add"), 1, 6000);
+        QCOMPARE(second.commandsFor("/api/v2/torrents/add"), 0);
+        QUrlQuery form(QString::fromUtf8(first.lastCommandBody("/api/v2/torrents/add")));
+        QCOMPARE(form.queryItemValue(QStringLiteral("contentLayout")), QStringLiteral("NoSubfolder"));
+        QCOMPARE(form.queryItemValue(QStringLiteral("addToTopOfQueue")), QStringLiteral("true"));
+        QCOMPARE(form.queryItemValue(QStringLiteral("stopped")), QStringLiteral("false"));
+        QCOMPARE(form.queryItemValue(QStringLiteral("stopCondition")), QStringLiteral("MetadataReceived"));
+        add(true);
+        QTRY_COMPARE_WITH_TIMEOUT(second.commandsFor("/api/v2/torrents/add"), 1, 6000);
+        QCOMPARE(first.commandsFor("/api/v2/torrents/add"), 1);
+        form = QUrlQuery(QString::fromUtf8(second.lastCommandBody("/api/v2/torrents/add")));
+        QCOMPARE(form.queryItemValue(QStringLiteral("contentLayout")), QStringLiteral("Subfolder"));
+        QCOMPARE(form.queryItemValue(QStringLiteral("addToTopOfQueue")), QStringLiteral("false"));
+        QCOMPARE(form.queryItemValue(QStringLiteral("stopCondition")), QStringLiteral("None"));
+        QCOMPARE(form.queryItemValue(QStringLiteral("autoTMM")), QStringLiteral("true"));
+        QCOMPARE(second.serverPreferences(), other);
     }
 
     void statusBarFieldsStayFixedDuringAuthenticatedRateUpdates()
@@ -4768,6 +4921,11 @@ private slots:
                 QStringLiteral("torrentLinks"));
             auto *buttons = dialog->findChild<QDialogButtonBox *>(
                 QStringLiteral("buttonBox"));
+            const auto cleanup = qScopeGuard([dialog]() {
+                if (dialog->isVisible()) dialog->reject();
+            });
+            QVERIFY(links && buttons && buttons->button(QDialogButtonBox::Ok));
+            QTRY_VERIFY_WITH_TIMEOUT(buttons->button(QDialogButtonBox::Ok)->isEnabled(), 6000);
             if (links && buttons)
             {
                 links->setPlainText(QStringLiteral(

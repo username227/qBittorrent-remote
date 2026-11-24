@@ -277,6 +277,7 @@ if(BUILD_TESTING)
 
     add_remote_workflow_group(remote_downloads_preferences_workflow 60
         downloadsSavingManagementUsesSelectedServerAndMappedPaths
+        downloadsAdditionDefaultsFollowSelectedServer
     )
 
     # Check the registration against the actual QtTest-discovered functions.

@@ -157,6 +157,7 @@ RemotePreferencesDialog::RemotePreferencesDialog(QSettings &settings,
     loadLocalBehaviorControls();
     bindServerBehaviorControls();
     bindDownloadsSavingControls();
+    bindTorrentAdditionDefaults();
     populateAdvancedPlaceholders();
     buildRemotePathsPage(preferredProfileId);
 
@@ -579,6 +580,37 @@ void RemotePreferencesDialog::bindBooleanCombo(const char *key, QComboBox *combo
             this, [this]() { remoteFieldChanged(); });
 }
 
+void RemotePreferencesDialog::bindStringCombo(const char *key, QComboBox *combo,
+    const QStringList &values, std::function<bool()> dependency)
+{
+    bindRemoteField(RemoteField{
+        QString::fromLatin1(key), combo,
+        [combo, values]() { return QJsonValue(values.value(combo->currentIndex())); },
+        [combo, values](const QJsonValue &value) {
+            combo->setCurrentIndex(values.indexOf(value.toString()));
+        },
+        [values](const QJsonValue &value) {
+            return value.isString() && values.contains(value.toString());
+        },
+        std::move(dependency), {}
+    });
+    connect(combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this]() { remoteFieldChanged(); });
+}
+
+void RemotePreferencesDialog::bindTorrentAdditionDefaults()
+{
+    bindStringCombo("torrent_content_layout", m_ui->contentLayoutComboBox,
+        {QStringLiteral("Original"), QStringLiteral("Subfolder"), QStringLiteral("NoSubfolder")});
+    bindRemoteControl("add_to_top_of_queue", m_ui->checkAddToQueueTop);
+    bindRemoteControl("add_stopped_enabled", m_ui->checkAddStopped);
+    bindStringCombo("torrent_stop_condition", m_ui->stopConditionComboBox,
+        {QStringLiteral("None"), QStringLiteral("MetadataReceived"), QStringLiteral("FilesChecked")},
+        [this]() {
+            return remoteFieldAvailable("add_stopped_enabled") && !m_ui->checkAddStopped->isChecked();
+        });
+}
+
 void RemotePreferencesDialog::bindRemotePath(const char *key, QLineEdit *line,
     std::function<bool()> dependency)
 {
@@ -729,6 +761,7 @@ void RemotePreferencesDialog::refreshRemoteControls()
         if (auto *combo = qobject_cast<QComboBox *>(field.widget))
             combo->view()->setEnabled(supported);
     }
+    m_ui->stopConditionLabel->setEnabled(m_ui->stopConditionComboBox->isEnabled());
 }
 
 void RemotePreferencesDialog::populateRemoteFields(const QJsonObject &values,

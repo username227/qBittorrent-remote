@@ -45,6 +45,7 @@ struct AddTorrentOptions
     QString category;
     QString tags;
     QString contentLayout = QStringLiteral("Original");
+    QString stopCondition; // Empty when the server does not advertise support.
     bool autoTMM = false;
     bool useDownloadPath = false;
     bool stopped = false;

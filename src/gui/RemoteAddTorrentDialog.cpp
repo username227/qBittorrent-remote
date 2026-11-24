@@ -25,6 +25,7 @@
 #include <QLocale>
 #include <QMessageBox>
 #include <QPlainTextEdit>
+#include <QPointer>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSizePolicy>
@@ -64,7 +65,8 @@ RemoteAddTorrentDialog::RemoteAddTorrentDialog(QSettings &settings,
                                                QWidget *parent,
                                                QList<Remote::ServerProfile> availableServers,
                                                std::function<bool(const QString &)> serverIsConnected,
-                                               QList<Remote::TorrentUpload> batchFiles)
+                                               QList<Remote::TorrentUpload> batchFiles,
+                                               std::function<Remote::RemoteSession *(const QString &)> sessionForServer)
     : QDialog(parent)
     , m_settings(settings)
     , m_server(server)
@@ -76,6 +78,7 @@ RemoteAddTorrentDialog::RemoteAddTorrentDialog(QSettings &settings,
     , m_batchFiles(std::move(batchFiles))
     , m_availableServers(std::move(availableServers))
     , m_serverIsConnected(std::move(serverIsConnected))
+    , m_sessionForServer(std::move(sessionForServer))
 {
     m_ui->setupUi(this);
     setObjectName(QStringLiteral("remoteAddTorrentDialog"));
@@ -120,6 +123,7 @@ RemoteAddTorrentDialog::RemoteAddTorrentDialog(QSettings &settings,
     if (settings.value(QStringLiteral("Layout/Dialogs/AddTorrent/SplitterVersion"),
                        0).toInt() >= 2 && !splitter.isEmpty())
         m_ui->splitter->restoreState(splitter);
+    loadServerDefaults();
 }
 
 RemoteAddTorrentDialog::~RemoteAddTorrentDialog() = default;
@@ -193,6 +197,7 @@ void RemoteAddTorrentDialog::switchServer(const QString &id)
         return;
     m_server = *it;
     clearTargetFields();
+    loadServerDefaults();
     if (m_source == Source::Links)
         setWindowTitle(tr("Add Torrent — %1").arg(m_server.name));
     else if (m_source == Source::TorrentFiles)
@@ -274,9 +279,11 @@ void RemoteAddTorrentDialog::setupOptions()
     m_ui->tagsLineEdit->setPlaceholderText(tr("Comma-separated server tags (optional)"));
 
     m_ui->startTorrentCheckBox->setChecked(true);
-    m_ui->stopConditionComboBox->addItem(tr("None"));
-    m_ui->stopConditionComboBox->setToolTip(tr(
-        "Only None is enabled until remote stop-condition support is verified."));
+    m_ui->stopConditionComboBox->addItem(tr("None"), QStringLiteral("None"));
+    m_ui->stopConditionComboBox->setEnabled(false);
+    m_ui->stopConditionLabel->setEnabled(false);
+    connect(m_ui->startTorrentCheckBox, &QCheckBox::toggled,
+            this, [this]() { refreshDefaultControls(); });
     m_ui->addToQueueTopCheckBox->setChecked(false);
     m_ui->seedModeCheckBox->setChecked(false);
     m_ui->sequentialCheckBox->setChecked(false);
@@ -317,6 +324,85 @@ void RemoteAddTorrentDialog::setupOptions()
         button->setToolTip(tr(
             "File priorities must be changed after adding the torrent "
             "using the bottom Content panel (server Web API limitation)."));
+}
+
+void RemoteAddTorrentDialog::refreshDefaultControls()
+{
+    const bool editable = !m_defaultsLoading;
+    m_ui->comboTMM->setEnabled(editable);
+    m_ui->contentLayoutComboBox->setEnabled(editable);
+    m_ui->startTorrentCheckBox->setEnabled(editable);
+    m_ui->addToQueueTopCheckBox->setEnabled(editable);
+    const bool stopAvailable = editable && m_stopConditionSupported
+        && m_ui->startTorrentCheckBox->isChecked();
+    m_ui->stopConditionComboBox->setEnabled(stopAvailable);
+    m_ui->stopConditionLabel->setEnabled(stopAvailable);
+    m_ui->buttonBox->button(QDialogButtonBox::Ok)->setEnabled(editable);
+}
+
+void RemoteAddTorrentDialog::loadServerDefaults()
+{
+    const auto generation = ++m_defaultsGeneration;
+    m_defaultsLoading = false;
+    m_stopConditionSupported = false;
+    m_ui->comboTMM->setCurrentIndex(0);
+    m_ui->contentLayoutComboBox->setCurrentIndex(0);
+    m_ui->startTorrentCheckBox->setChecked(true);
+    m_ui->addToQueueTopCheckBox->setChecked(false);
+    m_ui->stopConditionComboBox->clear();
+    m_ui->stopConditionComboBox->addItem(tr("None"), QStringLiteral("None"));
+    m_ui->stopConditionComboBox->setToolTip(tr("Stop-condition support is not available from this server."));
+    auto *session = m_sessionForServer ? m_sessionForServer(m_server.id) : nullptr;
+    if (!session || !session->isConnected())
+    {
+        refreshDefaultControls();
+        return;
+    }
+    m_defaultsLoading = true;
+    m_ui->buttonBox->button(QDialogButtonBox::Ok)->setToolTip(tr("Reading the selected server's torrent defaults…"));
+    refreshDefaultControls();
+
+    const QPointer<RemoteAddTorrentDialog> dialog(this);
+    const auto finish = [dialog, generation](const QJsonObject &values) {
+        if (!dialog || dialog->m_defaultsGeneration != generation || !dialog->m_defaultsLoading)
+            return;
+        const auto boolean = [&values](const char *key, bool fallback) {
+            const auto value = values.value(QLatin1String(key));
+            return value.isBool() ? value.toBool() : fallback;
+        };
+        auto &ui = *dialog->m_ui;
+        ui.comboTMM->setCurrentIndex(boolean("auto_tmm_enabled", false) ? 1 : 0);
+        const QStringList layouts{QStringLiteral("Original"), QStringLiteral("Subfolder"), QStringLiteral("NoSubfolder")};
+        const int layout = layouts.indexOf(values.value(QStringLiteral("torrent_content_layout")).toString());
+        ui.contentLayoutComboBox->setCurrentIndex(layout >= 0 ? layout : 0);
+        ui.addToQueueTopCheckBox->setChecked(boolean("add_to_top_of_queue", false));
+        const QString stop = values.value(QStringLiteral("torrent_stop_condition")).toString();
+        dialog->m_stopConditionSupported = stop == QLatin1String("None")
+            || stop == QLatin1String("MetadataReceived") || stop == QLatin1String("FilesChecked");
+        bool stopped = boolean("add_stopped_enabled", false);
+        if (dialog->m_stopConditionSupported)
+        {
+            if (dialog->m_source == Source::Links)
+                ui.stopConditionComboBox->addItem(dialog->tr("Metadata received"), QStringLiteral("MetadataReceived"));
+            ui.stopConditionComboBox->addItem(dialog->tr("Files checked"), QStringLiteral("FilesChecked"));
+            // Native qBittorrent treats metadata-already-present torrents
+            // with a MetadataReceived default as stopped at addition.
+            if (stop == QLatin1String("MetadataReceived") && dialog->m_source != Source::Links)
+                stopped = true;
+            const int index = ui.stopConditionComboBox->findData(stop);
+            ui.stopConditionComboBox->setCurrentIndex(index >= 0 ? index : 0);
+            ui.stopConditionComboBox->setToolTip(QString());
+        }
+        ui.startTorrentCheckBox->setChecked(!stopped);
+        dialog->m_defaultsLoading = false;
+        ui.buttonBox->button(QDialogButtonBox::Ok)->setToolTip(QString());
+        dialog->refreshDefaultControls();
+    };
+    const auto failed = [finish](const QString &) { finish({}); };
+    connect(session, &Remote::RemoteSession::failed, this, failed);
+    connect(session, &Remote::RemoteSession::disconnected, this, [finish]() { finish({}); });
+    connect(session, &QObject::destroyed, this, [finish]() { finish({}); });
+    session->requestPreferences(finish, failed);
 }
 
 void RemoteAddTorrentDialog::setupSource(QString initialLinks)
@@ -521,6 +607,8 @@ Remote::AddTorrentOptions RemoteAddTorrentDialog::options() const
     result.tags = m_ui->tagsLineEdit->text().trimmed();
     result.stopped = !m_ui->startTorrentCheckBox->isChecked();
     result.queueTop = m_ui->addToQueueTopCheckBox->isChecked();
+    if (m_stopConditionSupported)
+        result.stopCondition = m_ui->stopConditionComboBox->currentData().toString();
     result.seedMode = m_ui->seedModeCheckBox->isChecked();
     result.sequential = m_ui->sequentialCheckBox->isChecked();
     result.firstLastPiece = m_ui->firstLastCheckBox->isChecked();
@@ -541,6 +629,8 @@ QString RemoteAddTorrentDialog::links() const
 
 void RemoteAddTorrentDialog::accept()
 {
+    if (m_defaultsLoading)
+        return;
     // A connection can disappear while this modal dialog is open; never
     // silently fall back to whichever main-window tab is selected now.
     if (m_serverIsConnected && !m_serverIsConnected(m_server.id))
