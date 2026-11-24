@@ -39,6 +39,8 @@
 #include <QSignalBlocker>
 #include <QSizePolicy>
 #include <QSpinBox>
+#include <QTimeEdit>
+#include <QLocale>
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QStandardItemModel>
@@ -67,6 +69,22 @@ QJsonValue normalizedConnectionLimit(const QString &key, QJsonValue value)
         && value.toInt() <= 0)
         return QJsonValue(-1);
     return value;
+}
+
+// Both supported API generations require the two components of a time
+// in the same setPreferences request, even if only one component changed.
+struct ScheduleTimeKeys
+{
+    const char *hour;
+    const char *minute;
+};
+constexpr ScheduleTimeKeys scheduleFrom{"schedule_from_hour", "schedule_from_min"};
+constexpr ScheduleTimeKeys scheduleTo{"schedule_to_hour", "schedule_to_min"};
+
+bool validTimeComponent(const QJsonValue &value, int maximum)
+{
+    return value.isDouble() && value.toDouble() >= 0
+        && value.toDouble() <= maximum && value.toDouble() == value.toInt();
 }
 
 QIcon icon(const char *name)
@@ -198,6 +216,7 @@ RemotePreferencesDialog::RemotePreferencesDialog(QSettings &settings,
     m_banRangesSupported = version.segmentCount() >= 3
         && version >= QVersionNumber(5, 3, 0);
     bindIPFilterControls();
+    bindSpeedControls();
     populateAdvancedPlaceholders();
     buildRemotePathsPage(preferredProfileId);
 
@@ -585,6 +604,115 @@ void RemotePreferencesDialog::bindRemoteControl(const char *key, QWidget *widget
     else
         return;
     bindRemoteField(std::move(field));
+}
+
+void RemotePreferencesDialog::bindSpeedControls()
+{
+    m_ui->labelGlobalRate->setPixmap(icon("slow_off").pixmap(22, 22));
+    m_ui->labelAltRate->setPixmap(icon("slow").pixmap(22, 22));
+
+    const auto bindRate = [this](const char *key, QSpinBox *spin) {
+        // Native UI uses whole KiB/s; preferences API uses bytes/sec.
+        // Do not turn a fractional KiB/s into an incorrect unlimited rate.
+        if (auto *editor = spin->findChild<QLineEdit *>())
+            editor->setEnabled(true);
+        bindRemoteField(RemoteField{
+            QString::fromLatin1(key), spin,
+            [spin]() { return QJsonValue(spin->value() * 1024); },
+            [spin](const QJsonValue &value) { spin->setValue(value.toInt() / 1024); },
+            [spin](const QJsonValue &value) {
+                return value.isDouble() && value.toDouble() >= 0
+                    && value.toDouble() <= spin->maximum() * 1024.0
+                    && value.toDouble() == value.toInt()
+                    && value.toInt() % 1024 == 0;
+            },
+            {}, tr("Rate limit on the selected server in KiB/s; 0 means unlimited.")
+        });
+        connect(spin, QOverload<int>::of(&QSpinBox::valueChanged),
+                this, [this]() { remoteFieldChanged(); });
+    };
+    bindRate("up_limit", m_ui->spinUploadLimit);
+    bindRate("dl_limit", m_ui->spinDownloadLimit);
+    bindRate("alt_up_limit", m_ui->spinUploadLimitAlt);
+    bindRate("alt_dl_limit", m_ui->spinDownloadLimitAlt);
+
+    bindRemoteControl("scheduler_enabled", m_ui->groupBoxSchedule, {},
+        tr("Schedule alternative rate limits using the connected server's local time."));
+    const auto scheduleEnabled = [this]() {
+        return remoteFieldAvailable("scheduler_enabled") && m_ui->groupBoxSchedule->isChecked();
+    };
+    const auto bindTime = [this, scheduleEnabled](ScheduleTimeKeys keys, QTimeEdit *editor) {
+        if (auto *line = editor->findChild<QLineEdit *>())
+            line->setEnabled(true);
+        const auto available = [this, scheduleEnabled, keys]() {
+            return scheduleEnabled() && remoteFieldAvailable(keys.hour)
+                && remoteFieldAvailable(keys.minute);
+        };
+        const QString tooltip = tr("Time on the connected server, not this desktop.");
+        bindRemoteField(RemoteField{
+            QString::fromLatin1(keys.hour), editor,
+            [editor]() { return QJsonValue(editor->time().hour()); },
+            [editor](const QJsonValue &value) {
+                editor->setTime(QTime(value.toInt(), editor->time().minute()));
+            },
+            [](const QJsonValue &value) { return validTimeComponent(value, 23); },
+            available, tooltip
+        });
+        bindRemoteField(RemoteField{
+            QString::fromLatin1(keys.minute), editor,
+            [editor]() { return QJsonValue(editor->time().minute()); },
+            [editor](const QJsonValue &value) {
+                editor->setTime(QTime(editor->time().hour(), value.toInt()));
+            },
+            [](const QJsonValue &value) { return validTimeComponent(value, 59); },
+            available, tooltip
+        });
+        connect(editor, &QTimeEdit::timeChanged, this, [this]() { remoteFieldChanged(); });
+    };
+    bindTime(scheduleFrom, m_ui->timeEditScheduleFrom);
+    bindTime(scheduleTo, m_ui->timeEditScheduleTo);
+
+    // The Designer form already contains Every day, Weekdays, Weekends.
+    // Upstream appends Monday through Sunday, in that exact enum order.
+    const QLocale locale;
+    for (int day = 1; day <= 7; ++day)
+        m_ui->comboBoxScheduleDays->addItem(locale.dayName(day, QLocale::LongFormat));
+    bindRemoteControl("scheduler_days", m_ui->comboBoxScheduleDays, scheduleEnabled,
+        tr("Days on which the connected server uses the alternative rate schedule."));
+    bindRemoteControl("limit_utp_rate", m_ui->checkLimituTPConnections);
+    bindRemoteControl("limit_tcp_overhead", m_ui->checkLimitTransportOverhead);
+    bindRemoteControl("limit_lan_peers", m_ui->checkLimitLocalPeerRate);
+}
+
+bool RemotePreferencesDialog::validateSpeedChanges(const QJsonObject &changes)
+{
+    const bool timeChanged = changes.contains(QLatin1String(scheduleFrom.hour))
+        || changes.contains(QLatin1String(scheduleTo.hour));
+    const bool enabling = changes.value(QStringLiteral("scheduler_enabled")).toBool();
+    const bool enabled = remoteFieldAvailable("scheduler_enabled")
+        && m_ui->groupBoxSchedule->isChecked();
+    const bool daysChanged = changes.contains(QStringLiteral("scheduler_days"));
+    if (!timeChanged && !enabling && !(enabled && daysChanged))
+        return true;
+    const bool timesAvailable = remoteFieldAvailable(scheduleFrom.hour)
+        && remoteFieldAvailable(scheduleFrom.minute)
+        && remoteFieldAvailable(scheduleTo.hour)
+        && remoteFieldAvailable(scheduleTo.minute);
+    if (enabled && (!timesAvailable || !remoteFieldAvailable("scheduler_days")))
+    {
+        m_ui->tabSelection->setCurrentRow(4);
+        QMessageBox::warning(this, tr("Unavailable schedule"),
+            tr("The connected server has not provided a complete, valid alternative rate schedule."));
+        return false;
+    }
+    if (timesAvailable && m_ui->timeEditScheduleFrom->time() == m_ui->timeEditScheduleTo->time())
+    {
+        m_ui->tabSelection->setCurrentRow(4);
+        QMessageBox::warning(this, tr("Time Error"),
+            tr("The start time and the end time can't be the same."));
+        return false;
+    }
+    return true;
 }
 
 void RemotePreferencesDialog::bindConnectionListeningControls()
@@ -1561,9 +1689,22 @@ void RemotePreferencesDialog::populateRemoteFields(const QJsonObject &values,
 {
     m_loadingRemotePreferences = true;
     m_remotePreferencesLoaded = true;
+    QJsonObject availableValues = values;
+    // A half-present or invalid time is not an editable setting.
+    for (const auto keys : {scheduleFrom, scheduleTo})
+    {
+        const QString hour = QString::fromLatin1(keys.hour);
+        const QString minute = QString::fromLatin1(keys.minute);
+        if (!validTimeComponent(values.value(hour), 23)
+            || !validTimeComponent(values.value(minute), 59))
+        {
+            availableValues.remove(hour);
+            availableValues.remove(minute);
+        }
+    }
     for (auto &field : m_remoteFields)
     {
-        QJsonValue value = normalizedConnectionLimit(field.key, values.value(field.key));
+        QJsonValue value = normalizedConnectionLimit(field.key, availableValues.value(field.key));
         // Prefer modern keys if the server advertises them, even on a
         // transitional server exposing deprecated export aliases as well.
         if ((field.key == QLatin1String("export_dir")
@@ -1615,6 +1756,24 @@ QJsonObject RemotePreferencesDialog::remoteChanges() const
             continue;
         changes.insert(field.key, value);
     }
+    const auto completeTime = [&changes, this](ScheduleTimeKeys keys, const QTime &time) {
+        const QString hour = QString::fromLatin1(keys.hour);
+        const QString minute = QString::fromLatin1(keys.minute);
+        if (!changes.contains(hour) && !changes.contains(minute))
+            return;
+        if (remoteFieldAvailable(keys.hour) && remoteFieldAvailable(keys.minute))
+        {
+            changes.insert(hour, time.hour());
+            changes.insert(minute, time.minute());
+        }
+        else
+        {
+            changes.remove(hour);
+            changes.remove(minute);
+        }
+    };
+    completeTime(scheduleFrom, m_ui->timeEditScheduleFrom->time());
+    completeTime(scheduleTo, m_ui->timeEditScheduleTo->time());
     return changes;
 }
 
@@ -2119,7 +2278,8 @@ void RemotePreferencesDialog::applyChanges(bool closeAfter)
         remoteSaveFailed(tr("The server is no longer available. Reopen Preferences after reconnecting."));
         return;
     }
-    if (!validateDownloadChanges(changes) || !validateIPFilterChanges(changes))
+    if (!validateDownloadChanges(changes) || !validateIPFilterChanges(changes)
+        || !validateSpeedChanges(changes))
     {
         m_closeAfterApply = false;
         return;
