@@ -3430,9 +3430,27 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(first.syncRequests() > priorFirst, 6000);
         QTRY_VERIFY_WITH_TIMEOUT(second.syncRequests() > priorSecond, 6000);
 
-        auto *disconnect = window.findChild<QAction *>(QStringLiteral("disconnectServer"));
-        QVERIFY(disconnect);
-        disconnect->trigger();
+        // Disconnect the background server through its own tab, without
+        // activating it or logging out of the currently selected server.
+        tabs->setCurrentIndex(0);
+        auto *bar = tabs->tabBar();
+        bool disconnectedFromMenu = false;
+        QTimer::singleShot(0, &window, [&]() {
+            auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+            if (!menu)
+                return;
+            for (auto *action : menu->actions())
+                if (action->objectName() == QLatin1String("serverTabDisconnect"))
+                {
+                    disconnectedFromMenu = true;
+                    action->trigger();
+                    break;
+                }
+            menu->close();
+        });
+        QVERIFY(QMetaObject::invokeMethod(bar, "customContextMenuRequested",
+            Qt::DirectConnection, Q_ARG(QPoint, bar->tabRect(1).center())));
+        QVERIFY(disconnectedFromMenu);
         QTRY_COMPARE(tabs->count(), 1);
         QVERIFY2(!tabs->tabBar()->isVisible(), "Returning to one server hides tabs.");
         QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(
@@ -3441,7 +3459,7 @@ private slots:
         QVERIFY(window.statusBar()->currentMessage().contains(first.reportedQbtVersion()));
         QVERIFY(!window.statusBar()->currentMessage().contains(second.reportedQbtVersion()));
         QTRY_COMPARE_WITH_TIMEOUT(second.logouts(), 1, 6000);
-
+        QCOMPARE(first.logouts(), 0);
         const int beforeLastPoll = first.syncRequests();
         QTRY_VERIFY_WITH_TIMEOUT(first.syncRequests() > beforeLastPoll, 6000);
     }

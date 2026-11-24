@@ -73,6 +73,7 @@
 #include <QSignalBlocker>
 #include <QTimer>
 #include <QTabWidget>
+#include <QTabBar>
 #include <algorithm>
 
 namespace
@@ -403,6 +404,32 @@ void MainWindow::setupMainArea()
 
     connect(m_views, &QTabWidget::currentChanged, this,
             [this](int) { updateActiveUi(); });
+
+    auto *tabBar = m_views->tabBar();
+    tabBar->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(tabBar, &QTabBar::customContextMenuRequested, this,
+        [this, tabBar](const QPoint &position) {
+            const int index = tabBar->tabAt(position);
+            if (index < 0)
+                return;
+            const auto *pane = m_views->widget(index);
+            const auto it = std::find_if(m_connections.cbegin(), m_connections.cend(),
+                [pane](const auto &connection) { return connection->pane == pane; });
+            if (it == m_connections.cend())
+                return;
+            // Capture the actual clicked connection, not its tab index or
+            // the active server. Sync/disconnect events can run in the menu.
+            const auto connection = *it;
+            QMenu menu(this);
+            menu.setObjectName(QStringLiteral("serverTabContextMenu"));
+            auto *disconnect = menu.addAction(upstreamIcon("disconnected"), tr("Disconnect"));
+            disconnect->setObjectName(QStringLiteral("serverTabDisconnect"));
+            connect(disconnect, &QAction::triggered, this, [this, connection]() {
+                if (containsConnection(connection))
+                    removeConnection(connection);
+            });
+            menu.exec(tabBar->mapToGlobal(position));
+        });
 
     // Keep the original, shared native qBittorrent toolbar search.
     // Each server pane keeps its own search string and filter column.
