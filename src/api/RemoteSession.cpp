@@ -306,21 +306,25 @@ void RemoteSession::connectToServer(const ServerProfile &profile,
     QNetworkReply *reply = m_network.post(request, body);
     armReply(reply);
     connect(reply, &QNetworkReply::finished, this, [this, reply]() {
-        checkReply(reply, [this](const QByteArray &response) {
-            if (response.trimmed() != QByteArrayLiteral("Ok."))
+        const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        checkReply(reply, [this, status](const QByteArray &response) {
+            // Older servers return 200 with "Ok."; newer ones return 204.
+            // Authenticated version reads must still succeed before connecting.
+            if (status != 204 && response.trimmed() != QByteArrayLiteral("Ok."))
             {
                 fail(tr("Login failed. Check your username and password."));
                 return;
             }
             requestVersion();
-        });
+        }, {}, true);
     });
 }
 
 void RemoteSession::checkReply(
     QNetworkReply *reply,
     const std::function<void(const QByteArray &)> &onSuccess,
-    const std::function<void(const QString &)> &onFailure)
+    const std::function<void(const QString &)> &onFailure,
+    bool allowNoContent)
 {
     if (m_pendingReply != reply)
     {
@@ -376,7 +380,7 @@ void RemoteSession::checkReply(
             reject(tr("Cannot reach the server: %1").arg(errorText));
         return;
     }
-    if (status != 200)
+    if (status != 200 && !(allowNoContent && status == 204))
     {
         reject(tr("Unexpected HTTP response: %1").arg(status));
         return;
@@ -649,7 +653,7 @@ void RemoteSession::pumpOperations()
                 if (operation.onRejected)
                     operation.onRejected(reason);
             }
-        });
+        }, !operation.detailsRequest && !operation.exportRequest && !operation.preferencesRequest);
         // Continue the queue even when an individual command was rejected.
         if (m_connected && !m_pendingReply)
             QTimer::singleShot(0, this, &RemoteSession::pumpOperations);

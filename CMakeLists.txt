@@ -210,6 +210,7 @@ if(BUILD_TESTING)
         userCanConnectWithBlankPasswordWhenServerPermitsIt
         startupConnectsOnlyOptedInProfilesUsingProtectedCredentials
         userSeesAuthenticationFailure
+        modernServerLoginAndPreferencesAcceptNoContent
     )
 
     add_remote_workflow_group(remote_server_isolation_workflow 60

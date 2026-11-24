@@ -172,7 +172,8 @@ private:
                         bool reportOperation = true);
     void checkReply(QNetworkReply *reply,
                     const std::function<void(const QByteArray &)> &onSuccess,
-                    const std::function<void(const QString &)> &onFailure = {});
+                    const std::function<void(const QString &)> &onFailure = {},
+                    bool allowNoContent = false);
     void fail(const QString &reason);
 
     struct QueuedOperation
