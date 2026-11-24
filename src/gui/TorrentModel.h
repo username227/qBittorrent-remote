@@ -13,6 +13,9 @@ class TorrentModel final : public QAbstractTableModel
 {
     Q_OBJECT
 public:
+    // State palette is available independently of the text-color preference.
+    enum { StateColorRole = Qt::UserRole + 1 };
+
     explicit TorrentModel(QObject *parent = nullptr);
 
     int rowCount(const QModelIndex &parent = {}) const override;

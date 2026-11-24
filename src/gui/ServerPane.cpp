@@ -402,7 +402,7 @@ void ServerPane::setContentDragEnabled(bool enabled)
 void ServerPane::setProgressFollowsStateColors(bool enabled)
 {
     auto *delegate = static_cast<TransferListDelegate *>(m_table->itemDelegate());
-    delegate->setProgressFollowsTextColor(enabled);
+    delegate->setProgressFollowsStateColor(enabled);
     m_table->viewport()->update();
 }
 

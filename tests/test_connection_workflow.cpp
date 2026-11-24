@@ -4135,6 +4135,68 @@ private slots:
         const QImage completeBar = paintProgress(seed);
         const QImage partialBar = paintProgress(partial);
         QVERIFY2(completeBar != partialBar, "100% and 50% must paint distinct progress bars.");
+
+        // Exercise the real Preferences dialog and the existing delegate.
+        // The partial download's green bar must be independent of text colors.
+        auto *prefs = window.findChild<QAction *>(QStringLiteral("actionOptions"));
+        QVERIFY(prefs);
+        const auto setColors = [&](bool textColors, bool progressColors, bool save) {
+            bool edited = false;
+            QTimer::singleShot(0, &window, [&]() {
+                auto *dlg = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget());
+                QVERIFY(dlg);
+                const auto cleanup = qScopeGuard([dlg]() { if (dlg->isVisible()) dlg->reject(); });
+                auto *sections = dlg->findChild<QListWidget *>(QStringLiteral("preferencesSections"));
+                auto *text = dlg->findChild<QCheckBox *>(QStringLiteral("checkUseTorrentStatesColors"));
+                auto *bars = dlg->findChild<QCheckBox *>(QStringLiteral("checkProgressBarFollowsTextColor"));
+                auto *apply = dlg->findChild<QPushButton *>(QStringLiteral("preferencesApply"));
+                QVERIFY(sections && text && bars && apply);
+                sections->setCurrentRow(1);
+                QVERIFY(text->isEnabled() && bars->isEnabled());
+                QCOMPARE(bars->text(), QStringLiteral("Use different progress bar colors by torrent states"));
+                QCOMPARE(text->isChecked(), settings.value(
+                    QStringLiteral("Preferences/Behavior/StateColors"), true).toBool());
+                QCOMPARE(bars->isChecked(), settings.value(
+                    QStringLiteral("Preferences/Behavior/ProgressFollowsState"), false).toBool());
+                text->setChecked(textColors);
+                QVERIFY(bars->isEnabled());
+                bars->setChecked(progressColors);
+                if (save)
+                {
+                    QVERIFY(apply->isEnabled());
+                    apply->click();
+                    QTRY_VERIFY(!apply->isEnabled());
+                }
+                edited = true;
+            });
+            prefs->trigger();
+            QVERIFY(edited);
+        };
+        const auto progressIndex = [&]() { return indexFor(QStringLiteral("Partial download"), 2); };
+        const auto nameIndex = [&]() { return indexFor(QStringLiteral("Partial download"), 0); };
+
+        setColors(true, true, true);
+        QVERIFY(nameIndex().data(Qt::ForegroundRole).value<QColor>().isValid());
+        const QImage coloredBar = paintProgress(progressIndex());
+        QVERIFY2(coloredBar != partialBar, "State-colored bar must differ from the native palette.");
+
+        setColors(false, true, true);
+        QVERIFY(!nameIndex().data(Qt::ForegroundRole).isValid());
+        QCOMPARE(paintProgress(progressIndex()), coloredBar);
+        QCOMPARE(settings.value(QStringLiteral("Preferences/Behavior/StateColors")).toBool(), false);
+        QCOMPARE(settings.value(QStringLiteral("Preferences/Behavior/ProgressFollowsState")).toBool(), true);
+
+        setColors(false, false, false); // Cancel must retain the colorful bars.
+        QCOMPARE(paintProgress(progressIndex()), coloredBar);
+        QVERIFY(!nameIndex().data(Qt::ForegroundRole).isValid());
+        setColors(false, false, true);
+        QVERIFY(!nameIndex().data(Qt::ForegroundRole).isValid());
+        QCOMPARE(paintProgress(progressIndex()), partialBar);
+
+        setColors(true, false, true);
+        QVERIFY(nameIndex().data(Qt::ForegroundRole).value<QColor>().isValid());
+        QCOMPARE(paintProgress(progressIndex()), partialBar);
+        QCOMPARE(server.commandsFor("/api/v2/app/setPreferences"), 0);
     }
 
     void nativeTorrentDetailsUseSelectedRemoteServerAndFilePriorityApis()
@@ -4603,6 +4665,7 @@ private slots:
         // When the setting is disabled, the native text palette wins.
         model.setUseStateColors(false);
         QVERIFY(!model.index(7, 0).data(Qt::ForegroundRole).isValid());
+        QVERIFY(model.index(7, 2).data(TorrentModel::StateColorRole).value<QColor>().isValid());
 
         // A state transition must invalidate the ForegroundRole as well as
         // text/decoration, so the visible row and progress repaint together.
@@ -4619,6 +4682,7 @@ private slots:
         QVERIFY(!changed.isEmpty());
         const QList<int> roles = changed.constLast().at(2).value<QList<int>>();
         QVERIFY(roles.contains(Qt::ForegroundRole));
+        QVERIFY(roles.contains(TorrentModel::StateColorRole));
         QCOMPARE(model.index(7, 0).data(Qt::ForegroundRole).value<QColor>(),
                  QColor(dark ? QStringLiteral("#a371f7") : QStringLiteral("#8250df")));
     }

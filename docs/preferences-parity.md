@@ -104,3 +104,8 @@ The server does not expose an atomic per-file upload receipt; matching newly vis
 ## Legacy backup compatibility — qBittorrent 5.1.x export destinations
 
 Older servers advertise `export_dir` and `export_dir_fin` strings rather than the five modern backup preferences. Each nonempty string enables the corresponding copy destination; disabling and applying writes an empty string, clearing the destination because the legacy API has no separate enable flag. Use the native legacy labels (copy .torrent files, and copy for finished downloads), not the modern move-backup semantics. Both share the existing mapped directory browse support. Removal of backups when removing a torrent is unsupported on these servers. Prefer modern keys when both families are advertised; never write legacy aliases alongside modern settings. The existing typed transaction verifies the actual legacy strings and rejects enabled empty/relative paths; Cancel does not clear anything. No desktop persistence of remote export paths.
+
+
+## Independent transfer text and progress colors
+
+The desktop Behavior options for torrent-state text colors and progress-bar colors are independent. Both use the same upstream-derived light/dark palette. With text colors disabled, ordinary text follows the desktop palette and bars may still use the state palette. With progress colors disabled, the original native progress palette is used. Existing `StateColors` and `ProgressFollowsState` settings and defaults are retained; a previously checked progress-color option now takes effect even when text colors are disabled. No remote preferences are sent. The live transfer presentation test exercises the actual Preferences dialog, native delegate rendering, all four combinations, and Cancel.

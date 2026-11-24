@@ -310,7 +310,7 @@
                <item>
                 <widget class="QCheckBox" name="checkProgressBarFollowsTextColor">
                  <property name="text">
-                  <string extracomment="Progress bar color is based on text color.">Make progress bars follow text colors</string>
+                  <string>Use different progress bar colors by torrent states</string>
                  </property>
                 </widget>
                </item>

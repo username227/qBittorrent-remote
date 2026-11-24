@@ -177,7 +177,7 @@ QVariant TorrentModel::data(const QModelIndex &index, int role) const
         return static_cast<int>(Qt::AlignVCenter | Qt::AlignRight);
     if (role == Qt::UserRole)
         return value.isUndefined() ? QVariant() : value.toVariant();
-    if (role == Qt::ForegroundRole && m_useStateColors)
+    if (role == StateColorRole || (role == Qt::ForegroundRole && m_useStateColors))
     {
         const QString state = record.value(QStringLiteral("state")).toString();
         const bool dark = QGuiApplication::palette().color(QPalette::Base).lightness() < 128;
@@ -346,7 +346,7 @@ void TorrentModel::applySync(const QJsonObject &payload)
         {
             emit dataChanged(index(row, 0), index(row, columnCount() - 1),
                              {Qt::DisplayRole, Qt::UserRole, Qt::DecorationRole,
-                               Qt::ForegroundRole});
+                               Qt::ForegroundRole, StateColorRole});
         }
     }
 }

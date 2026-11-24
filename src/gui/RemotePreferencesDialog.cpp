@@ -397,8 +397,7 @@ void RemotePreferencesDialog::loadLocalBehaviorControls()
         QStringLiteral("Preferences/Behavior/StateColors"), true).toBool());
     m_ui->checkProgressBarFollowsTextColor->setChecked(m_settings.value(
         QStringLiteral("Preferences/Behavior/ProgressFollowsState"), false).toBool());
-    m_ui->checkProgressBarFollowsTextColor->setEnabled(
-        m_ui->checkUseTorrentStatesColors->isChecked());
+
     m_ui->checkBoxUseSeparateTrackerStatusFilter->setChecked(m_settings.value(
         QStringLiteral("Preferences/Behavior/SeparateTrackerStatus"), false).toBool());
     m_ui->checkAltRowColors->setChecked(m_settings.value(
@@ -460,11 +459,7 @@ void RemotePreferencesDialog::loadLocalBehaviorControls()
     connect(m_ui->confirmDeletion, &QCheckBox::toggled, this, dirty);
     connect(m_ui->checkProgramExitConfirm, &QCheckBox::toggled, this, dirty);
     connect(m_ui->checkTorrentContentDrag, &QCheckBox::toggled, this, dirty);
-    connect(m_ui->checkUseTorrentStatesColors, &QCheckBox::toggled, this,
-            [this, dirty](bool enabled) {
-                m_ui->checkProgressBarFollowsTextColor->setEnabled(enabled);
-                dirty();
-            });
+    connect(m_ui->checkUseTorrentStatesColors, &QCheckBox::toggled, this, dirty);
     connect(m_ui->checkProgressBarFollowsTextColor, &QCheckBox::toggled,
             this, dirty);
     connect(m_ui->checkBoxUseSeparateTrackerStatusFilter, &QCheckBox::toggled,
