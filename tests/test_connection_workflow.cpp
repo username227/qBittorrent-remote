@@ -70,6 +70,8 @@
 #include <QProgressBar>
 #include <QTableWidget>
 #include <QTreeWidget>
+#include <QTreeView>
+#include <QItemSelectionModel>
 #include <QTreeWidgetItemIterator>
 #include <QPainter>
 #include <QStyleOptionViewItem>
@@ -2904,6 +2906,166 @@ private slots:
         expectedOther.insert(QStringLiteral("save_path"), QStringLiteral("/remote-only/Second + data"));
         QCOMPARE(second.serverPreferences(), expectedOther);
         QCOMPARE(first.commandsFor("/api/v2/app/setPreferences"), 2);
+    }
+
+    void downloadsBackupsAndWatchedFoldersUseSelectedServer()
+    {
+        DemoQbittorrentServer first(true), second(true);
+        const QJsonObject watched{
+            {QStringLiteral("/share/watch-existing"), 0},
+            {QStringLiteral("/share/watch-remove"), 1}
+        };
+        const QJsonObject initial{
+            {QStringLiteral("torrent_files_backup_enabled"), false},
+            {QStringLiteral("torrent_files_backup_dir"), QStringLiteral("/share/old-backup")},
+            {QStringLiteral("torrent_files_finished_backup_dir_enabled"), false},
+            {QStringLiteral("torrent_files_finished_backup_dir"), QStringLiteral("/share/finished")},
+            {QStringLiteral("remove_torrent_file_backup"), false},
+            {QStringLiteral("scan_dirs"), watched}
+        };
+        const QJsonObject other{{QStringLiteral("scan_dirs"), QJsonObject{
+            {QStringLiteral("/other/watch"), 1}}}};
+        first.setServerPreferences(initial);
+        second.setServerPreferences(other);
+        QVERIFY(first.start() && second.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("prefs.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, first.url());
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(
+            QStringLiteral("Connected to Demo seedbox")), 6000);
+        openConnectDialog(window, second.url(), false, true, true, QStringLiteral("Second seedbox"));
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(
+            QStringLiteral("Connected to Second seedbox")), 6000);
+        auto *tabs = window.findChild<QTabWidget *>(QStringLiteral("serverTabs"));
+        auto *prefs = window.findChild<QAction *>(QStringLiteral("actionOptions"));
+        QVERIFY(tabs && prefs);
+        tabs->setCurrentIndex(0);
+
+        const auto edit = [&](bool save) {
+            bool finished = false;
+            QTimer::singleShot(0, &window, [&]() {
+                auto *dlg = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget());
+                QVERIFY(dlg);
+                const auto cleanup = qScopeGuard([dlg]() { if (dlg->isVisible()) dlg->reject(); });
+                auto *sections = dlg->findChild<QListWidget *>(QStringLiteral("preferencesSections"));
+                auto *backup = dlg->findChild<QCheckBox *>(QStringLiteral("backupDirCheckBox"));
+                auto *backupPath = dlg->findChild<QLineEdit *>(QStringLiteral("backupDirPathEdit"));
+                auto *complete = dlg->findChild<QCheckBox *>(QStringLiteral("finishedBackupDirCheckBox"));
+                auto *completePath = dlg->findChild<QLineEdit *>(QStringLiteral("finishedBackupDirPathEdit"));
+                auto *removeBackup = dlg->findChild<QCheckBox *>(QStringLiteral("removeBackupTorrentFileCheckBox"));
+                auto *view = dlg->findChild<QTreeView *>(QStringLiteral("scanFoldersView"));
+                auto *add = dlg->findChild<QPushButton *>(QStringLiteral("addWatchedFolderButton"));
+                auto *options = dlg->findChild<QPushButton *>(QStringLiteral("editWatchedFolderButton"));
+                auto *remove = dlg->findChild<QPushButton *>(QStringLiteral("removeWatchedFolderButton"));
+                auto *apply = dlg->findChild<QPushButton *>(QStringLiteral("preferencesApply"));
+                QVERIFY(sections && backup && backupPath && complete && completePath && removeBackup
+                    && view && add && options && remove && apply);
+                sections->setCurrentRow(2);
+                QTRY_VERIFY_WITH_TIMEOUT(backup->isEnabled() && add->isEnabled(), 6000);
+                QCOMPARE(view->model()->rowCount(), 2);
+                QVERIFY(!backupPath->isEnabled() && !completePath->isEnabled());
+                backup->click();
+                complete->click();
+                QVERIFY(backupPath->isEnabled() && completePath->isEnabled());
+                backupPath->setText(QStringLiteral("/share/new-backup"));
+                completePath->setText(QStringLiteral("/share/new-finished"));
+                removeBackup->click();
+
+                // Add a server-side watch folder with an explicit destination.
+                bool edited = false;
+                QTimer::singleShot(0, dlg, [&]() {
+                    auto *editor = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+                    QVERIFY(editor && editor != dlg);
+                    const auto closeEditor = qScopeGuard([editor]() { if (editor->isVisible()) editor->reject(); });
+                    auto *path = editor->findChild<QLineEdit *>(QStringLiteral("watchedFolderPath"));
+                    auto *mode = editor->findChild<QComboBox *>(QStringLiteral("watchedFolderDestinationMode"));
+                    auto *dest = editor->findChild<QLineEdit *>(QStringLiteral("watchedFolderDestinationPath"));
+                    auto *buttons = editor->findChild<QDialogButtonBox *>();
+                    QVERIFY(path && mode && dest && buttons);
+                    path->setText(QStringLiteral("/share/watch-new"));
+                    mode->setCurrentIndex(mode->findData(2));
+                    dest->setText(QStringLiteral("/share/downloads"));
+                    buttons->button(QDialogButtonBox::Ok)->click();
+                    edited = true;
+                });
+                add->click();
+                QVERIFY(edited);
+                QCOMPARE(view->model()->rowCount(), 3);
+                for (int row = 0; row < view->model()->rowCount(); ++row)
+                    if (view->model()->index(row, 0).data().toString() == QStringLiteral("/share/watch-remove"))
+                        view->selectionModel()->select(view->model()->index(row, 0),
+                            QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+                QVERIFY(remove->isEnabled() && options->isEnabled());
+                remove->click();
+                QCOMPARE(view->model()->rowCount(), 2);
+                if (save)
+                {
+                    bool confirmed = false;
+                    QTimer modalDriver;
+                    connect(&modalDriver, &QTimer::timeout, dlg, [&]() {
+                        if (auto *question = qobject_cast<QMessageBox *>(QApplication::activeModalWidget()))
+                        {
+                            if (question->windowTitle() == QStringLiteral("Change watched folders"))
+                            {
+                                confirmed = true;
+                                question->button(QMessageBox::Yes)->click();
+                            }
+                            else
+                            {
+                                QTest::qFail(qPrintable(question->text()), __FILE__, __LINE__);
+                                question->reject();
+                            }
+                        }
+                    });
+                    modalDriver.start(20);
+                    QVERIFY(apply->isEnabled());
+                    apply->click();
+                    QVERIFY(confirmed);
+                    QTRY_VERIFY_WITH_TIMEOUT(backup->isEnabled() && !apply->isEnabled(), 6000);
+                }
+                finished = true;
+            });
+            prefs->trigger();
+            QVERIFY(finished);
+        };
+        edit(false);
+        QCOMPARE(first.serverPreferences(), initial);
+        QCOMPARE(first.commandsFor("/api/v2/app/setPreferences"), 0);
+        edit(true);
+        QJsonObject expected = initial;
+        expected.insert(QStringLiteral("torrent_files_backup_enabled"), true);
+        expected.insert(QStringLiteral("torrent_files_backup_dir"), QStringLiteral("/share/new-backup"));
+        expected.insert(QStringLiteral("torrent_files_finished_backup_dir_enabled"), true);
+        expected.insert(QStringLiteral("torrent_files_finished_backup_dir"), QStringLiteral("/share/new-finished"));
+        expected.insert(QStringLiteral("remove_torrent_file_backup"), true);
+        expected.insert(QStringLiteral("scan_dirs"), QJsonObject{
+            {QStringLiteral("/share/watch-existing"), 0},
+            {QStringLiteral("/share/watch-new"), QStringLiteral("/share/downloads")}});
+        QCOMPARE(first.serverPreferences(), expected);
+        QCOMPARE(first.commandsFor("/api/v2/app/setPreferences"), 1);
+        QCOMPARE(second.serverPreferences(), other);
+        QCOMPARE(second.commandsFor("/api/v2/app/setPreferences"), 0);
+        tabs->setCurrentIndex(1);
+        bool checked = false;
+        QTimer::singleShot(0, &window, [&]() {
+            auto *dlg = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget());
+            QVERIFY(dlg);
+            const auto cleanup = qScopeGuard([dlg]() { if (dlg->isVisible()) dlg->reject(); });
+            auto *view = dlg->findChild<QTreeView *>(QStringLiteral("scanFoldersView"));
+            auto *backup = dlg->findChild<QCheckBox *>(QStringLiteral("backupDirCheckBox"));
+            QVERIFY(view && backup);
+            QTRY_VERIFY_WITH_TIMEOUT(view->isEnabled(), 6000);
+            QVERIFY(!backup->isEnabled());
+            QCOMPARE(view->model()->rowCount(), 1);
+            QCOMPARE(view->model()->index(0, 0).data().toString(), QStringLiteral("/other/watch"));
+            checked = true;
+        });
+        prefs->trigger();
+        QVERIFY(checked);
     }
 
     void downloadsAdditionDefaultsFollowSelectedServer()

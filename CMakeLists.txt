@@ -280,6 +280,7 @@ if(BUILD_TESTING)
         downloadsSavingManagementUsesSelectedServerAndMappedPaths
         downloadsAdditionDefaultsFollowSelectedServer
         downloadsDialogBehaviorAndDuplicateDefaults
+        downloadsBackupsAndWatchedFoldersUseSelectedServer
     )
 
     # Check the registration against the actual QtTest-discovered functions.

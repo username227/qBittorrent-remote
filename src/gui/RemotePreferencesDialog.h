@@ -22,6 +22,7 @@ class QDialogButtonBox;
 class QPushButton;
 class QSettings;
 class QTableWidget;
+class QStandardItemModel;
 class TorrentModel;
 namespace Ui { class OptionsDialog; }
 namespace Remote { class RemoteSession; }
@@ -53,6 +54,11 @@ private:
     void bindServerBehaviorControls();
     void bindDownloadsSavingControls();
     void bindTorrentAdditionDefaults();
+    void bindBackupAndWatchedFolders();
+    void displayWatchedFolders();
+    void refreshWatchedFolderButtons();
+    void editWatchedFolder(bool existing);
+    void sendRemoteChanges(const QJsonObject &changes);
     void bindStringCombo(const char *key, QComboBox *combo, const QStringList &values,
                          std::function<bool()> dependency = {});
     void bindBooleanCombo(const char *key, QComboBox *combo, int trueIndex,
@@ -120,6 +126,8 @@ private:
     QSet<QString> m_changedProfiles;
     bool m_behaviorDirty = false;
     bool m_additionDirty = false;
+    QStandardItemModel *m_watchedFoldersModel = nullptr;
+    QJsonObject m_watchedFolders;
     QList<RemoteField> m_remoteFields;
     bool m_remotePreferencesLoaded = false;
     bool m_loadingRemotePreferences = false;

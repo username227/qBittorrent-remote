@@ -37,6 +37,9 @@
 #include <QSpinBox>
 #include <QSplitter>
 #include <QStackedWidget>
+#include <QStandardItemModel>
+#include <QItemSelectionModel>
+#include <QTreeView>
 #include <QTableWidget>
 #include <QTreeWidget>
 #include <QTextEdit>
@@ -159,6 +162,7 @@ RemotePreferencesDialog::RemotePreferencesDialog(QSettings &settings,
     bindServerBehaviorControls();
     bindDownloadsSavingControls();
     bindTorrentAdditionDefaults();
+    bindBackupAndWatchedFolders();
     populateAdvancedPlaceholders();
     buildRemotePathsPage(preferredProfileId);
 
@@ -642,6 +646,174 @@ void RemotePreferencesDialog::bindTorrentAdditionDefaults()
         });
 }
 
+void RemotePreferencesDialog::bindBackupAndWatchedFolders()
+{
+    bindRemoteControl("torrent_files_backup_enabled", m_ui->backupDirCheckBox);
+    bindRemotePath("torrent_files_backup_dir", m_ui->backupDirPathEdit, [this]() {
+        return remoteFieldAvailable("torrent_files_backup_enabled") && m_ui->backupDirCheckBox->isChecked();
+    });
+    bindRemoteControl("torrent_files_finished_backup_dir_enabled", m_ui->finishedBackupDirCheckBox);
+    bindRemotePath("torrent_files_finished_backup_dir", m_ui->finishedBackupDirPathEdit, [this]() {
+        return remoteFieldAvailable("torrent_files_finished_backup_dir_enabled")
+            && m_ui->finishedBackupDirCheckBox->isChecked();
+    });
+    bindRemoteControl("remove_torrent_file_backup", m_ui->removeBackupTorrentFileCheckBox, {},
+        tr("Remove the server's backup .torrent metadata when a torrent is removed."));
+
+    auto *view = m_ui->scanFoldersView;
+    m_watchedFoldersModel = new QStandardItemModel(this);
+    view->setModel(m_watchedFoldersModel);
+    view->setRootIsDecorated(false);
+    view->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    view->setSelectionBehavior(QAbstractItemView::SelectRows);
+    view->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    view->header()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    bindRemoteField(RemoteField{
+        QStringLiteral("scan_dirs"), view,
+        [this]() { return QJsonValue(m_watchedFolders); },
+        [this](const QJsonValue &value) { m_watchedFolders = value.toObject(); displayWatchedFolders(); },
+        [](const QJsonValue &value) {
+            if (!value.isObject()) return false;
+            const auto folders = value.toObject();
+            const auto validPath = [](const QString &path) {
+                return path.startsWith(QLatin1Char('/')) && !path.contains(QLatin1Char('\\'))
+                    && !path.contains(QLatin1Char('\n')) && !path.contains(QLatin1Char('\r'))
+                    && !path.contains(QChar::Null);
+            };
+            for (auto it = folders.begin(); it != folders.end(); ++it)
+                if (!validPath(it.key()) || !(it.value() == QJsonValue(0) || it.value() == QJsonValue(1)
+                    || (it.value().isString() && validPath(it.value().toString()))))
+                    return false;
+            return true;
+        }, {},
+        tr("Server watched folders. The Web API exposes only monitored directories and save destinations.")
+    });
+    displayWatchedFolders();
+    connect(view->selectionModel(), &QItemSelectionModel::selectionChanged,
+            this, [this]() { refreshWatchedFolderButtons(); });
+    connect(m_ui->addWatchedFolderButton, &QPushButton::clicked, this, [this]() { editWatchedFolder(false); });
+    connect(m_ui->editWatchedFolderButton, &QPushButton::clicked, this, [this]() { editWatchedFolder(true); });
+    connect(view, &QTreeView::doubleClicked, this, [this](const QModelIndex &) { editWatchedFolder(true); });
+    connect(m_ui->removeWatchedFolderButton, &QPushButton::clicked, this, [this]() {
+        if (!m_ui->removeWatchedFolderButton->isEnabled()) return;
+        const auto selected = m_ui->scanFoldersView->selectionModel()->selectedRows();
+        for (const auto &index : selected)
+            m_watchedFolders.remove(index.data().toString());
+        displayWatchedFolders();
+        remoteFieldChanged();
+    });
+}
+
+void RemotePreferencesDialog::displayWatchedFolders()
+{
+    m_watchedFoldersModel->clear();
+    m_watchedFoldersModel->setHorizontalHeaderLabels({tr("Watched Folder"), tr("Download destination")});
+    for (auto it = m_watchedFolders.begin(); it != m_watchedFolders.end(); ++it)
+    {
+        const auto value = it.value();
+        const QString destination = value == QJsonValue(0) ? tr("Watched folder")
+            : value == QJsonValue(1) ? tr("Default save path") : value.toString();
+        m_watchedFoldersModel->appendRow({new QStandardItem(it.key()), new QStandardItem(destination)});
+    }
+    refreshWatchedFolderButtons();
+}
+
+void RemotePreferencesDialog::refreshWatchedFolderButtons()
+{
+    if (!m_watchedFoldersModel) return;
+    const bool available = remoteFieldAvailable("scan_dirs") && !m_remoteBusy;
+    const int count = m_ui->scanFoldersView->selectionModel()->selectedRows().size();
+    m_ui->addWatchedFolderButton->setEnabled(available);
+    m_ui->editWatchedFolderButton->setEnabled(available && count == 1);
+    m_ui->removeWatchedFolderButton->setEnabled(available && count > 0);
+    for (auto *button : {m_ui->addWatchedFolderButton, m_ui->editWatchedFolderButton, m_ui->removeWatchedFolderButton})
+        button->setToolTip(available ? tr("Only server paths and download destinations are available through the Web API.")
+            : tr("Watched folder settings are unavailable from the selected server."));
+}
+
+void RemotePreferencesDialog::editWatchedFolder(bool existing)
+{
+    if (!remoteFieldAvailable("scan_dirs") || m_remoteBusy) return;
+    const auto selected = m_ui->scanFoldersView->selectionModel()->selectedRows();
+    if (existing && selected.size() != 1) return;
+    const QString original = existing ? selected.first().data().toString() : QString();
+    const QJsonValue previous = existing ? m_watchedFolders.value(original) : QJsonValue(1);
+
+    QDialog dialog(this);
+    dialog.setObjectName(QStringLiteral("watchedFolderOptionsDialog"));
+    dialog.setWindowTitle(existing ? tr("Watched folder options") : tr("Select folder to monitor"));
+    auto *layout = new QFormLayout(&dialog);
+    auto *folder = new QLineEdit(original, &dialog);
+    folder->setObjectName(QStringLiteral("watchedFolderPath"));
+    folder->setReadOnly(existing);
+    auto *mode = new QComboBox(&dialog);
+    mode->setObjectName(QStringLiteral("watchedFolderDestinationMode"));
+    mode->addItem(tr("Default save path"), 1);
+    mode->addItem(tr("Watched folder"), 0);
+    mode->addItem(tr("Custom save path"), 2);
+    auto *destination = new QLineEdit(previous.toString(), &dialog);
+    destination->setObjectName(QStringLiteral("watchedFolderDestinationPath"));
+    const auto addBrowse = [this](QLineEdit *line) {
+        auto *action = line->addAction(style()->standardIcon(QStyle::SP_DirOpenIcon), QLineEdit::TrailingPosition);
+        action->setToolTip(tr("Choose mapped local NAS directory"));
+        connect(action, &QAction::triggered, this, [this, line]() {
+            if (line->isEnabled() && !line->isReadOnly()) browseRemotePath(line);
+        });
+    };
+    if (!existing) addBrowse(folder);
+    addBrowse(destination);
+    mode->setCurrentIndex(previous == QJsonValue(1) ? 0 : previous == QJsonValue(0) ? 1 : 2);
+    // In upstream's deprecated setter, 1 does not clear an existing custom
+    // save path. Never silently promise a reset the API cannot perform.
+    if (existing && previous != QJsonValue(1))
+    {
+        auto *model = qobject_cast<QStandardItemModel *>(mode->model());
+        model->item(0)->setEnabled(false);
+        mode->setToolTip(tr("The server's legacy Web API cannot reset an existing explicit destination to the default save path."));
+    }
+    destination->setEnabled(mode->currentData().toInt() == 2);
+    connect(mode, QOverload<int>::of(&QComboBox::currentIndexChanged), &dialog,
+        [mode, destination]() { destination->setEnabled(mode->currentData().toInt() == 2); });
+    layout->addRow(tr("Watched folder:"), folder);
+    layout->addRow(tr("Download destination:"), mode);
+    layout->addRow(tr("Custom save path:"), destination);
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    layout->addRow(buttons);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    const auto cleanPath = [](QString path) {
+        while (path.size() > 1 && path.endsWith(QLatin1Char('/'))) path.chop(1);
+        return path;
+    };
+    const auto valid = [](const QString &path) {
+        return path.startsWith(QLatin1Char('/')) && !path.contains(QLatin1Char('\\'))
+            && !path.contains(QLatin1Char('\n')) && !path.contains(QLatin1Char('\r'))
+            && !path.contains(QChar::Null)
+            && QDir::cleanPath(path) == path;
+    };
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, [&]() {
+        const QString path = existing ? original : cleanPath(folder->text());
+        const QString custom = cleanPath(destination->text());
+        const int choice = mode->currentData().toInt();
+        if ((!existing && (!valid(path) || m_watchedFolders.contains(path)))
+            || (choice == 2 && !valid(custom)))
+        {
+            QMessageBox::warning(&dialog, tr("Invalid server directory"),
+                tr("Enter an absolute POSIX directory without relative components, and do not duplicate an existing watched folder."));
+            return;
+        }
+        if (existing && previous != QJsonValue(1) && choice == 1) return;
+        if (!remoteFieldAvailable("scan_dirs")) { dialog.reject(); return; }
+        m_watchedFolders.insert(path, choice == 2
+            ? (custom == path ? QJsonValue(0) : QJsonValue(custom)) : QJsonValue(choice));
+        dialog.accept();
+    });
+    if (dialog.exec() == QDialog::Accepted)
+    {
+        displayWatchedFolders();
+        remoteFieldChanged();
+    }
+}
+
 void RemotePreferencesDialog::bindRemotePath(const char *key, QLineEdit *line,
     std::function<bool()> dependency)
 {
@@ -723,7 +895,8 @@ bool RemotePreferencesDialog::validateDownloadChanges(const QJsonObject &changes
 {
     // This client supports absolute POSIX NAS paths. Do not resolve relative
     // text against the desktop filesystem, guess a mapping, or require a mount.
-    for (const QString &key : {QStringLiteral("save_path"), QStringLiteral("temp_path")})
+    for (const QString &key : {QStringLiteral("save_path"), QStringLiteral("temp_path"),
+         QStringLiteral("torrent_files_backup_dir"), QStringLiteral("torrent_files_finished_backup_dir")})
     {
         if (!changes.contains(key))
             continue;
@@ -738,6 +911,31 @@ bool RemotePreferencesDialog::validateDownloadChanges(const QJsonObject &changes
             return false;
         }
     }
+    if (changes.contains(QStringLiteral("scan_dirs")))
+    {
+        QJsonObject oldFolders;
+        for (const auto &field : m_remoteFields)
+            if (field.key == QLatin1String("scan_dirs")) oldFolders = field.baseline.toObject();
+        const auto newFolders = changes.value(QStringLiteral("scan_dirs")).toObject();
+        for (auto it = newFolders.begin(); it != newFolders.end(); ++it)
+        {
+            if (oldFolders.contains(it.key()) && oldFolders.value(it.key()) != QJsonValue(1)
+                && it.value() == QJsonValue(1))
+            {
+                QMessageBox::warning(this, tr("Unsupported watched folder change"),
+                    tr("The legacy server API cannot reset an existing explicit destination to the default save path."));
+                return false;
+            }
+        }
+    }
+    if (changes.contains(QStringLiteral("scan_dirs"))
+        && QMessageBox::question(this, tr("Change watched folders"),
+            tr("The selected server will start monitoring new folders and stop monitoring removed folders. "
+               "Existing .torrent files in monitored folders may be added automatically. "
+               "Only folder paths and save destinations are exposed by the Web API. Apply these changes?"),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
+        return false;
+
     // Upstream's path setters can relocate Auto TMM torrents or switch
     // them to Manual Mode. Existing Manual Mode torrents retain their paths;
     // use_category_paths_in_manual_mode only changes suggested paths.
@@ -793,6 +991,7 @@ void RemotePreferencesDialog::refreshRemoteControls()
             combo->view()->setEnabled(supported);
     }
     m_ui->stopConditionLabel->setEnabled(m_ui->stopConditionComboBox->isEnabled());
+    refreshWatchedFolderButtons();
 }
 
 void RemotePreferencesDialog::populateRemoteFields(const QJsonObject &values,
@@ -834,7 +1033,9 @@ QJsonObject RemotePreferencesDialog::remoteChanges() const
         const auto value = field.read();
         if (value == field.baseline)
             continue;
-        if ((field.key == QLatin1String("save_path") || field.key == QLatin1String("temp_path"))
+        if ((field.key == QLatin1String("save_path") || field.key == QLatin1String("temp_path")
+            || field.key == QLatin1String("torrent_files_backup_dir")
+            || field.key == QLatin1String("torrent_files_finished_backup_dir"))
             && value.isString() && field.baseline.isString()
             && value.toString().startsWith(QLatin1Char('/'))
             && field.baseline.toString().startsWith(QLatin1Char('/'))
@@ -878,6 +1079,7 @@ void RemotePreferencesDialog::setRemoteBusy(bool busy)
     m_ui->tabOption->setEnabled(!busy);
     m_ui->tabSelection->setEnabled(!busy);
     m_ui->buttonBox->setEnabled(!busy);
+    refreshWatchedFolderButtons();
     updateButtons();
 }
 
@@ -920,7 +1122,9 @@ void RemotePreferencesDialog::verifyRemoteChanges(const QJsonObject &changes)
                 // example, remove a trailing slash). Accept equivalent POSIX
                 // paths without claiming that the remote filesystem exists.
                 const bool pathKey = it.key() == QLatin1String("save_path")
-                    || it.key() == QLatin1String("temp_path");
+                    || it.key() == QLatin1String("temp_path")
+                    || it.key() == QLatin1String("torrent_files_backup_dir")
+                    || it.key() == QLatin1String("torrent_files_finished_backup_dir");
                 const bool equivalentPath = pathKey && returned.isString() && it.value().isString()
                     && returned.toString().startsWith(QLatin1Char('/'))
                     && it.value().toString().startsWith(QLatin1Char('/'))
@@ -1343,6 +1547,37 @@ void RemotePreferencesDialog::applyChanges(bool closeAfter)
         return;
     }
     setRemoteBusy(true);
+    const QPointer<RemotePreferencesDialog> dialog(this);
+    // scan_dirs is a replacement map rather than a per-folder update.
+    // Refuse to overwrite visible changes made by another client since load.
+    if (changes.contains(QStringLiteral("scan_dirs")))
+    {
+        QJsonValue baseline;
+        for (const auto &field : m_remoteFields)
+            if (field.key == QLatin1String("scan_dirs")) baseline = field.baseline;
+        m_remoteSession->requestPreferences([dialog, changes, baseline](const QJsonObject &values) {
+            if (!dialog || !dialog->m_remoteBusy) return;
+            if (values.value(QStringLiteral("scan_dirs")) != baseline)
+            {
+                dialog->remoteSaveFailed(dialog->tr("Watched folders changed on the server. Reopen Preferences to review the new list before editing."));
+                return;
+            }
+            dialog->sendRemoteChanges(changes);
+        }, [dialog](const QString &reason) {
+            if (dialog && dialog->m_remoteBusy) dialog->remoteSaveFailed(reason);
+        });
+        return;
+    }
+    sendRemoteChanges(changes);
+}
+
+void RemotePreferencesDialog::sendRemoteChanges(const QJsonObject &changes)
+{
+    if (!m_remoteSession || !m_remoteSession->isConnected())
+    {
+        remoteDisconnected();
+        return;
+    }
     const QPointer<RemotePreferencesDialog> dialog(this);
     m_remoteSession->setPreferences(changes,
         [dialog, changes]() {
