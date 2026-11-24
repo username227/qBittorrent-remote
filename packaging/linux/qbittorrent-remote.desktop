@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=qBittorrent Remote
+GenericName=BitTorrent Client
+Comment=Control remote qBittorrent servers
+Exec=qbittorrent-remote %U
+TryExec=qbittorrent-remote
+Icon=qbittorrent-remote
+Terminal=false
+Categories=Network;FileTransfer;P2P;Qt;
+MimeType=application/x-bittorrent;x-scheme-handler/magnet;
+Keywords=BitTorrent;Torrent;Magnet;Remote;Download;
+StartupNotify=true
+StartupWMClass=qBittorrent Remote
