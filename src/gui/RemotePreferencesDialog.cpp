@@ -911,6 +911,23 @@ bool RemotePreferencesDialog::validateDownloadChanges(const QJsonObject &changes
             return false;
         }
     }
+    if (changes.contains(QStringLiteral("scan_dirs")))
+    {
+        QJsonObject oldFolders;
+        for (const auto &field : m_remoteFields)
+            if (field.key == QLatin1String("scan_dirs")) oldFolders = field.baseline.toObject();
+        const auto newFolders = changes.value(QStringLiteral("scan_dirs")).toObject();
+        for (auto it = newFolders.begin(); it != newFolders.end(); ++it)
+        {
+            if (oldFolders.contains(it.key()) && oldFolders.value(it.key()) != QJsonValue(1)
+                && it.value() == QJsonValue(1))
+            {
+                QMessageBox::warning(this, tr("Unsupported watched folder change"),
+                    tr("The legacy server API cannot reset an existing explicit destination to the default save path."));
+                return false;
+            }
+        }
+    }
     if (changes.contains(QStringLiteral("scan_dirs"))
         && QMessageBox::question(this, tr("Change watched folders"),
             tr("The selected server will start monitoring new folders and stop monitoring removed folders. "
