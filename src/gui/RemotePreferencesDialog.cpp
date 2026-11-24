@@ -224,7 +224,17 @@ RemotePreferencesDialog::RemotePreferencesDialog(QSettings &settings,
     m_remoteTargetLabel->setText(m_remoteSession
         ? tr("Server settings: %1").arg(m_remoteTargetName.isEmpty() ? tr("Connected server") : m_remoteTargetName)
         : tr("No connected server — local settings only"));
-    static_cast<QVBoxLayout *>(layout())->insertWidget(0, m_remoteTargetLabel);
+    // Keep the full height of the native navigation column. The target
+    // belongs above the settings pages, not above the entire splitter.
+    auto *settingsPane = new QWidget;
+    auto *settingsLayout = new QVBoxLayout(settingsPane);
+    settingsLayout->setContentsMargins(0, 0, 0, 0);
+    auto *pages = m_ui->hsplitter->replaceWidget(
+        m_ui->hsplitter->indexOf(m_ui->tabOption), settingsPane);
+    settingsLayout->addWidget(m_remoteTargetLabel);
+    settingsLayout->addWidget(pages, 1);
+    m_ui->hsplitter->setCollapsible(1, false);
+    m_ui->hsplitter->setSizes({140, 660});
 
     m_applyButton = m_ui->buttonBox->button(QDialogButtonBox::Apply);
     m_applyButton->setObjectName(QStringLiteral("preferencesApply"));
