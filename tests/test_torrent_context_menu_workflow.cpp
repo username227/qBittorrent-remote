@@ -1071,5 +1071,9 @@ void TorrentContextMenuWorkflowTest::remainingNativeContextActionsRespectSelecti
              ServerPane::TorrentContextAction::TorrentOptions);
 }
 
+// Preserve QtTest's native QApplication and test setup for this suite.
+// The shared dispatcher selects this entry point before Qt is initialized.
+#define main runTorrentContextMenuWorkflow
 QTEST_MAIN(TorrentContextMenuWorkflowTest)
+#undef main
 #include "test_torrent_context_menu_workflow.moc"

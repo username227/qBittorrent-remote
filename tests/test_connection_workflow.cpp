@@ -5349,5 +5349,9 @@ void ConnectionWorkflowTest::remoteTorrentExportReturnsActualMetadata()
     QCOMPARE(saved.readAll(), server.exportedTorrent());
 }
 
+// Preserve QtTest's native QApplication and test setup for this suite.
+// The shared dispatcher selects this entry point before Qt is initialized.
+#define main runConnectionWorkflow
 QTEST_MAIN(ConnectionWorkflowTest)
+#undef main
 #include "test_connection_workflow.moc"

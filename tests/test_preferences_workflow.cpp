@@ -547,5 +547,9 @@ private slots:
     }
 };
 
+// Preserve QtTest's native QApplication and test setup for this suite.
+// The shared dispatcher selects this entry point before Qt is initialized.
+#define main runPreferencesWorkflow
 QTEST_MAIN(PreferencesWorkflowTest)
+#undef main
 #include "test_preferences_workflow.moc"

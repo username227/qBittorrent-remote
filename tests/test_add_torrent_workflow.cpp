@@ -422,5 +422,9 @@ private slots:
     }
 };
 
+// Preserve QtTest's native QApplication and test setup for this suite.
+// The shared dispatcher selects this entry point before Qt is initialized.
+#define main runAddTorrentWorkflow
 QTEST_MAIN(AddTorrentWorkflowTest)
+#undef main
 #include "test_add_torrent_workflow.moc"

@@ -586,5 +586,9 @@ void SidebarWorkflowTest::locationTreeFiltersTogetherWithNativeSidebarAndPersist
     QCOMPARE(restoredMusic->text(0), QStringLiteral("Music (3)"));
 }
 
+// Preserve QtTest's native QApplication and test setup for this suite.
+// The shared dispatcher selects this entry point before Qt is initialized.
+#define main runSidebarFilterWorkflow
 QTEST_MAIN(SidebarWorkflowTest)
+#undef main
 #include "test_sidebar_filter_workflow.moc"

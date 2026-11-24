@@ -2,7 +2,7 @@
 # Registration integrity check, not a substitute for any functional test.
 cmake_minimum_required(VERSION 3.21)
 execute_process(
-    COMMAND "${TEST_EXECUTABLE}" -functions
+    COMMAND "${TEST_EXECUTABLE}" connection -functions
     RESULT_VARIABLE result
     OUTPUT_VARIABLE output
     ERROR_VARIABLE error

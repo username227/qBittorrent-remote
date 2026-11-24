@@ -155,89 +155,36 @@ if(BUILD_TESTING)
 
     # Tests exercise user-visible workflows, not implementation units
     # or hard-coded protocol inputs. All tests run through CTest.
-    add_executable(test_window_workflow
+    # One linked executable; each CTest entry starts its own process and
+    # selects the original QtTest suite (and optional test methods).
+    add_executable(qbittorrent_remote_tests
+        tests/workflow_main.cpp
         tests/test_window_workflow.cpp
-    )
-    target_link_libraries(test_window_workflow PRIVATE
-        qbittorrent_remote_gui
-        Qt6::Test
-    )
-
-    add_test(NAME window_open_and_quit COMMAND test_window_workflow)
-
-    add_executable(test_profile_workflow
         tests/test_profile_workflow.cpp
-    )
-    target_link_libraries(test_profile_workflow PRIVATE
-        qbittorrent_remote_gui
-        Qt6::Test
-    )
-    add_test(NAME server_profile_management COMMAND test_profile_workflow)
-
-    add_executable(test_preferences_workflow
         tests/test_preferences_workflow.cpp
-    )
-    target_link_libraries(test_preferences_workflow PRIVATE
-        qbittorrent_remote_gui
-        Qt6::Test
-    )
-    add_test(NAME native_preferences_and_remote_paths COMMAND test_preferences_workflow)
-
-    add_executable(test_add_torrent_workflow
         tests/test_add_torrent_workflow.cpp
-    )
-    target_link_libraries(test_add_torrent_workflow PRIVATE
-        qbittorrent_remote_gui
-        Qt6::Test
-    )
-    add_test(NAME native_add_torrent_and_path_mapping COMMAND test_add_torrent_workflow)
-    # Unexpected modal dialogs must not stall CI indefinitely.
-    set_tests_properties(native_add_torrent_and_path_mapping PROPERTIES TIMEOUT 75)
-
-    # Native click-through coverage for Status, Categories, Tags and
-    # Trackers; keep the Add Torrent workflows merged from PR #10.
-    add_executable(test_sidebar_filter_workflow
         tests/test_sidebar_filter_workflow.cpp
-    )
-    target_link_libraries(test_sidebar_filter_workflow PRIVATE
-        qbittorrent_remote_gui
-        Qt6::Test
-    )
-    add_test(NAME combined_sidebar_filter_workflow COMMAND test_sidebar_filter_workflow)
-
-    # Interactive Content, Peers and Trackers sorting must work in the actual
-    # Qt detail widgets, including hierarchy and numeric raw-value ordering.
-    add_executable(test_details_sorting_workflow
         tests/test_details_sorting_workflow.cpp
-    )
-    target_link_libraries(test_details_sorting_workflow PRIVATE
-        qbittorrent_remote_gui
-        Qt6::Test
-    )
-    add_test(NAME detail_tables_sorting_workflow COMMAND test_details_sorting_workflow)
-
-    # Right-click actions and multi-selection on the native torrent list.
-    # Copy operates only on data supplied by the selected remote server.
-    add_executable(test_torrent_context_menu_workflow
         tests/test_torrent_context_menu_workflow.cpp
-    )
-    target_link_libraries(test_torrent_context_menu_workflow PRIVATE
-        qbittorrent_remote_gui
-        Qt6::Test
-    )
-    add_test(NAME torrent_context_menu_workflow COMMAND test_torrent_context_menu_workflow)
-
-    add_executable(test_connection_workflow
         tests/test_connection_workflow.cpp
+        tests/test_tls_trust_workflow.cpp
     )
-    target_link_libraries(test_connection_workflow PRIVATE
+    target_link_libraries(qbittorrent_remote_tests PRIVATE
         qbittorrent_remote_gui
         Qt6::Test
         Qt6::Network
     )
-    # Keep one compiled QtTest executable and the shared authenticated HTTP
-    # fixture, but run each logical workflow group in an independent process.
-    # A stalled modal dialog must not prevent other groups from being tested.
+    add_test(NAME window_open_and_quit COMMAND qbittorrent_remote_tests window)
+    add_test(NAME server_profile_management COMMAND qbittorrent_remote_tests profile)
+    add_test(NAME native_preferences_and_remote_paths COMMAND qbittorrent_remote_tests preferences)
+    add_test(NAME native_add_torrent_and_path_mapping COMMAND qbittorrent_remote_tests add_torrent)
+    set_tests_properties(native_add_torrent_and_path_mapping PROPERTIES TIMEOUT 75)
+    add_test(NAME combined_sidebar_filter_workflow COMMAND qbittorrent_remote_tests sidebar_filter)
+    add_test(NAME detail_tables_sorting_workflow COMMAND qbittorrent_remote_tests details_sorting)
+    add_test(NAME torrent_context_menu_workflow COMMAND qbittorrent_remote_tests torrent_context_menu)
+
+    # Keep the shared authenticated HTTP fixture and its independent
+    # logical groups; a stalled dialog must not block other groups.
     set(remote_workflow_methods "")
     function(add_remote_workflow_group name timeout)
         foreach(method IN LISTS ARGN)
@@ -247,7 +194,7 @@ if(BUILD_TESTING)
             list(APPEND remote_workflow_methods "${method}")
         endforeach()
         set(remote_workflow_methods "${remote_workflow_methods}" PARENT_SCOPE)
-        add_test(NAME ${name} COMMAND test_connection_workflow ${ARGN})
+        add_test(NAME ${name} COMMAND qbittorrent_remote_tests connection ${ARGN})
         set_tests_properties(${name} PROPERTIES
             TIMEOUT ${timeout}
             LABELS "remote;functional"
@@ -337,7 +284,7 @@ if(BUILD_TESTING)
     # group rather than silently falling out of the CTest suite.
     add_test(NAME remote_workflow_registration
         COMMAND ${CMAKE_COMMAND}
-            "-DTEST_EXECUTABLE=$<TARGET_FILE:test_connection_workflow>"
+            "-DTEST_EXECUTABLE=$<TARGET_FILE:qbittorrent_remote_tests>"
             "-DREGISTERED_METHODS=${remote_workflow_methods}"
             -P "${PROJECT_SOURCE_DIR}/tests/check_remote_workflow_registration.cmake"
     )
@@ -349,15 +296,7 @@ if(BUILD_TESTING)
 
     # Tests start local TLS endpoints with ephemeral certificates and drive
     # real certificate-decision GUI workflows; no production server involved.
-    add_executable(test_tls_trust_workflow
-        tests/test_tls_trust_workflow.cpp
-    )
-    target_link_libraries(test_tls_trust_workflow PRIVATE
-        qbittorrent_remote_gui
-        Qt6::Test
-        Qt6::Network
-    )
-    add_test(NAME certificate_trust_workflow COMMAND test_tls_trust_workflow)
+    add_test(NAME certificate_trust_workflow COMMAND qbittorrent_remote_tests tls_trust)
     # A stalled TLS handshake or modal UI must not hang the complete CTest run.
     set_tests_properties(certificate_trust_workflow PROPERTIES TIMEOUT 90)
 
