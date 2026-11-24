@@ -75,6 +75,9 @@ add_library(qbittorrent_remote_gui STATIC
     src/gui/ConnectionDialog.h
     src/gui/RemotePreferencesDialog.cpp
     src/gui/RemotePreferencesDialog.h
+    src/gui/RemoteCategoryDialog.cpp
+    src/gui/RemoteCategoryDialog.h
+    src/gui/remotetorrentcategorydialog.ui
     src/gui/RemoteSpeedLimitsDialog.cpp
     src/gui/RemoteSpeedLimitsDialog.h
     src/gui/upstream/layouts/speedlimitdialog.ui
