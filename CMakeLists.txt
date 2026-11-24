@@ -319,6 +319,10 @@ if(BUILD_TESTING)
         privateTrackerAdditionPolicyThroughEditor
     )
 
+    add_remote_workflow_group(remote_sidebar_management_workflow 75
+        nativeSidebarMenusManageSelectedServerAndVisibleTorrents
+    )
+
     add_remote_workflow_group(remote_preferences_workflow 60
         remotePreferencesReadApplyVerifyAndCancelOnSelectedServer
         rejectedAndIgnoredRemotePreferenceWritesKeepEditsStaged
