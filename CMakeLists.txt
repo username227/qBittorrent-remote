@@ -341,6 +341,10 @@ if(BUILD_TESTING)
         bitTorrentSeedingLimitsFollowSelectedServer
     )
 
+    add_remote_workflow_group(remote_bittorrent_automatic_trackers_workflow 60
+        bitTorrentAutomaticTrackersFollowSelectedServer
+    )
+
     # Check the registration against the actual QtTest-discovered functions.
     # Future additions (including remote Preferences) must be assigned to a
     # group rather than silently falling out of the CTest suite.

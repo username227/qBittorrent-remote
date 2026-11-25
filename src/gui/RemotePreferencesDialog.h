@@ -65,6 +65,9 @@ private:
     void bindBitTorrentPrivacyControls();
     void bindBitTorrentQueueingControls();
     void bindBitTorrentSeedingLimits();
+    void bindBitTorrentAutomaticTrackers();
+    void refreshAutomaticTrackerControls();
+    bool validateAutomaticTrackerChanges(const QJsonObject &changes);
     void refreshSeedingLimitControls();
     bool validateSeedingLimitChanges(const QJsonObject &changes);
     bool validateSpeedChanges(const QJsonObject &changes);
@@ -161,6 +164,7 @@ private:
     bool m_i2pVersionSupportsConfig = false;
     bool m_i2pVersionSupportsPeX = false;
     QString m_i2pLibtorrentVersion;
+    bool m_fetchedTrackersAvailable = false;
     bool m_remotePreferencesLoaded = false;
     bool m_loadingRemotePreferences = false;
     bool m_remoteBusy = false;

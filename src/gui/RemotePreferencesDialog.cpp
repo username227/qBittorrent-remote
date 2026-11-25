@@ -236,6 +236,7 @@ RemotePreferencesDialog::RemotePreferencesDialog(QSettings &settings,
     bindBitTorrentPrivacyControls();
     bindBitTorrentQueueingControls();
     bindBitTorrentSeedingLimits();
+    bindBitTorrentAutomaticTrackers();
     populateAdvancedPlaceholders();
     buildRemotePathsPage(preferredProfileId);
 
@@ -921,6 +922,74 @@ bool RemotePreferencesDialog::validateSeedingLimitChanges(const QJsonObject &cha
                "These actions can occur even when qBittorrent Remote is closed. Apply changes?")
                 .arg(index == 2 ? tr(" and delete their downloaded files") : QString()),
             QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes;
+    }
+    return true;
+}
+
+void RemotePreferencesDialog::bindBitTorrentAutomaticTrackers()
+{
+    // The daemon owns both tracker lists, including their parsing and
+    // application to future downloads. Never issue tracker-list HTTP
+    // requests or append these trackers from the desktop client.
+    bindRemoteControl("add_trackers_enabled", m_ui->checkEnableAddTrackers, {},
+        tr("Append trackers to new downloads on the connected server. "
+           "Known private torrents are excluded by the server, but trackers "
+           "may be contacted during magnet metadata retrieval before privacy is known."));
+    bindRemoteControl("add_trackers", m_ui->textTrackers, [this]() {
+        return remoteFieldAvailable("add_trackers_enabled") && m_ui->checkEnableAddTrackers->isChecked();
+    }, tr("One tracker URL per line. Preserve blank lines separating tiers."));
+
+    bindRemoteControl("add_trackers_from_url_enabled", m_ui->checkAddTrackersFromURL, {},
+        tr("The connected server fetches this list and appends trackers to new downloads."));
+    auto *url = m_ui->textTrackersURL;
+    bindRemoteField(RemoteField{
+        QStringLiteral("add_trackers_url"), url,
+        [url]() { return QJsonValue(url->text().trimmed()); },
+        [url](const QJsonValue &value) { url->setText(value.toString()); },
+        [](const QJsonValue &value) { return value.isString(); },
+        [this]() {
+            return remoteFieldAvailable("add_trackers_from_url_enabled")
+                && m_ui->checkAddTrackersFromURL->isChecked();
+        },
+        tr("Tracker-list source fetched by the connected server, not this desktop.")
+    });
+    connect(url, &QLineEdit::textChanged, this, [this]() { remoteFieldChanged(); });
+
+    // add_trackers_url_list is GET-only in both supported generations.
+    // Keep it outside m_remoteFields so it can never become a write.
+    m_ui->textTrackersFromURL->setReadOnly(true);
+    m_ui->labeltrackersFromURL->setText(tr("Fetched trackers (last reported by server)"));
+}
+
+void RemotePreferencesDialog::refreshAutomaticTrackerControls()
+{
+    const bool available = m_remotePreferencesLoaded && m_fetchedTrackersAvailable;
+    auto *preview = m_ui->textTrackersFromURL;
+    preview->setEnabled(available && remoteFieldAvailable("add_trackers_from_url_enabled")
+        && m_ui->checkAddTrackersFromURL->isChecked());
+    if (!available)
+        preview->clear();
+    preview->setToolTip(available
+        ? tr("Read-only list from the last server preferences response. "
+             "The server fetches asynchronously; reopen Preferences for a fresh snapshot.")
+        : tr("The connected server has not supplied a fetched tracker list."));
+    m_ui->labeltrackersFromURL->setEnabled(preview->isEnabled());
+    m_ui->labelCustomizeTrackersListUrl->setEnabled(m_ui->textTrackersURL->isEnabled());
+}
+
+bool RemotePreferencesDialog::validateAutomaticTrackerChanges(const QJsonObject &changes)
+{
+    // An explicitly empty list or URL is valid upstream; a missing or
+    // unrepresentable field is not an empty setting.
+    if ((changes.value(QStringLiteral("add_trackers_enabled")).toBool()
+            && !remoteFieldAvailable("add_trackers"))
+        || (changes.value(QStringLiteral("add_trackers_from_url_enabled")).toBool()
+            && !remoteFieldAvailable("add_trackers_url")))
+    {
+        m_ui->tabSelection->setCurrentRow(5);
+        QMessageBox::warning(this, tr("Unavailable tracker settings"),
+            tr("The connected server has not provided the associated tracker list or source URL."));
+        return false;
     }
     return true;
 }
@@ -1894,6 +1963,7 @@ void RemotePreferencesDialog::refreshRemoteControls()
     refreshBackupControls();
     refreshConnectionLimitControls();
     refreshSeedingLimitControls();
+    refreshAutomaticTrackerControls();
     refreshI2PControls();
     refreshProxyControls();
     const bool portAvailable = remoteFieldAvailable("listen_port");
@@ -1908,6 +1978,9 @@ void RemotePreferencesDialog::populateRemoteFields(const QJsonObject &values,
 {
     m_loadingRemotePreferences = true;
     m_remotePreferencesLoaded = true;
+    const auto fetchedTrackers = values.value(QStringLiteral("add_trackers_url_list"));
+    m_fetchedTrackersAvailable = fetchedTrackers.isString();
+    m_ui->textTrackersFromURL->setPlainText(fetchedTrackers.toString());
     QJsonObject availableValues = values;
     // A missing or contradictory flag/value pair is not editable. Do not
     // silently substitute a Designer threshold or overwrite unknown state.
@@ -2527,7 +2600,8 @@ void RemotePreferencesDialog::applyChanges(bool closeAfter)
         return;
     }
     if (!validateDownloadChanges(changes) || !validateIPFilterChanges(changes)
-        || !validateSpeedChanges(changes) || !validateSeedingLimitChanges(changes))
+        || !validateSpeedChanges(changes) || !validateSeedingLimitChanges(changes)
+        || !validateAutomaticTrackerChanges(changes))
     {
         m_closeAfterApply = false;
         return;
