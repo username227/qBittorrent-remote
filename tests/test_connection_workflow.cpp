@@ -257,7 +257,7 @@ public:
                                 // Authenticated sync/maindata drives the actual
                                 // visible Qt torrent table; no local torrent data.
                                 if (rid == 0)
-                                    response = R"({"rid":1,"full_update":true,"torrents":{"0000000000000000000000000000000000000001":{"name":"Complete seed","size":1024,"progress":1.0,"state":"stalledUP","availability":-1,"num_seeds":0,"num_complete":3,"num_leechs":0,"num_incomplete":0},"0000000000000000000000000000000000000002":{"name":"Partial download","size":1024,"progress":0.5,"state":"downloading","availability":2.5,"num_seeds":2,"num_complete":5,"num_leechs":4,"num_incomplete":8}},"server_state":{"dl_info_speed":0,"up_info_speed":0}})";
+                                    response = R"({"rid":1,"full_update":true,"torrents":{"0000000000000000000000000000000000000001":{"name":"Complete seed","size":2460000,"total_size":4194304,"progress":1.0,"state":"stalledUP","availability":-1,"num_seeds":0,"num_complete":3,"num_leechs":0,"num_incomplete":0},"0000000000000000000000000000000000000002":{"name":"Partial download","size":1024,"progress":0.5,"state":"downloading","availability":2.5,"num_seeds":2,"num_complete":5,"num_leechs":4,"num_incomplete":8}},"server_state":{"dl_info_speed":0,"up_info_speed":0}})";
                                 else if (m_pendingSwarmCountsUpdate)
                                 {
                                     m_pendingSwarmCountsUpdate = false;
@@ -6015,6 +6015,22 @@ private slots:
                     return table->model()->index(row, column);
             return QModelIndex();
         };
+
+        // The live Size column rounds to two places, retaining raw bytes
+        // for sorting; Total Size deliberately keeps its existing precision.
+        const QModelIndex seedSize = indexFor(QStringLiteral("Complete seed"), 1);
+        const QModelIndex partialSize = indexFor(QStringLiteral("Partial download"), 1);
+        QVERIFY(seedSize.isValid() && partialSize.isValid());
+        QCOMPARE(seedSize.data().toString(),
+                 QLocale().toString(2.35, 'f', 2) + QStringLiteral(" MiB"));
+        QCOMPARE(partialSize.data().toString(),
+                 QLocale().toString(1.0, 'f', 2) + QStringLiteral(" KiB"));
+        QCOMPARE(seedSize.data(Qt::UserRole).toLongLong(), qint64(2460000));
+        QCOMPARE(partialSize.data(Qt::UserRole).toLongLong(), qint64(1024));
+        QCOMPARE(indexFor(QStringLiteral("Complete seed"), 31).data().toString(),
+                 QLocale().toString(4.0, 'f', 1) + QStringLiteral(" MiB"));
+        QCOMPARE(table->model()->index(0, 0).data().toString(),
+                 QStringLiteral("Complete seed")); // Descending raw-byte sort.
 
         const QModelIndex seed = indexFor(QStringLiteral("Complete seed"), 2);
         const QModelIndex partial = indexFor(QStringLiteral("Partial download"), 2);
