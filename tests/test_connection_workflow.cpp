@@ -674,7 +674,11 @@ public:
                                         QJsonObject row = item.toObject();
                                         if (row.value(QStringLiteral("url")).toString() == before)
                                         {
-                                            row.insert(QStringLiteral("url"), after);
+                                            if (form.hasQueryItem(QStringLiteral("newUrl")))
+                                                row.insert(QStringLiteral("url"), after);
+                                            if (form.hasQueryItem(QStringLiteral("tier")))
+                                                row.insert(QStringLiteral("tier"), form.queryItemValue(
+                                                    QStringLiteral("tier")).toInt());
                                             item = row;
                                             found = true;
                                         }
@@ -8274,6 +8278,102 @@ private slots:
                  QStringLiteral("false"));
     }
 
+
+    void nativeTrackerTierArrowsFollowServerCapability()
+    {
+        DemoQbittorrentServer modern(true), legacy(true);
+        modern.enableModernResponses();
+        modern.setReportedVersions(QStringLiteral("v5.3.0"), QStringLiteral("2.13.0"));
+        const QString hash = QStringLiteral("0000000000000000000000000000000000000001");
+        const QString first = QStringLiteral("https://tracker.example/announce?key=a+b%2Fc");
+        const QString second = QStringLiteral("udp://backup.example:6969/announce");
+        const QJsonArray initial{
+            QJsonObject{{"url", "** [DHT] **"}, {"tier", -1}},
+            QJsonObject{{"url", first}, {"tier", 0}, {"endpoints", QJsonArray{
+                QJsonObject{{"name", "tracker.example:443"}}}}},
+            QJsonObject{{"url", second}, {"tier", 2}}
+        };
+        for (auto *server : {&modern, &legacy})
+        {
+            server->enableNativePresentationDemo();
+            server->enableDetailsDemo();
+            server->enableStatefulTrackerEditingDemo();
+            server->setTrackerEntries(hash, initial);
+            QVERIFY(server->start());
+        }
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("tiers.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, modern.url(), false, true, false, QStringLiteral("Modern"));
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(
+            QStringLiteral("Connected to Modern")), 6000);
+        openConnectDialog(window, legacy.url(), false, true, true, QStringLiteral("Legacy"));
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(
+            QStringLiteral("Connected to Legacy")), 6000);
+        auto *tabs = window.findChild<QTabWidget *>(QStringLiteral("serverTabs"));
+        QVERIFY(tabs);
+        QTRY_COMPARE(tabs->count(), 2);
+        for (int index : {1, 0})
+        {
+            tabs->setCurrentIndex(index);
+            auto *pane = tabs->currentWidget();
+            auto *table = pane->findChild<QTableView *>(QStringLiteral("torrentList"));
+            auto *bar = pane->findChild<PropTabBar *>();
+            auto *tree = pane->findChild<QTreeWidget *>(QStringLiteral("torrentTrackers"));
+            auto *up = pane->findChild<QPushButton *>(QStringLiteral("trackerUpButton"));
+            auto *down = pane->findChild<QPushButton *>(QStringLiteral("trackerDownButton"));
+            QVERIFY(table && bar && tree && up && down);
+            QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 2, 6000);
+            int target = -1;
+            for (int row = 0; row < table->model()->rowCount(); ++row)
+                if (table->model()->index(row, 0).data().toString() == QStringLiteral("Complete seed"))
+                    target = row;
+            QVERIFY(target >= 0);
+            table->selectRow(target);
+            bar->setCurrentIndex(1);
+            QTRY_COMPARE_WITH_TIMEOUT(tree->topLevelItemCount(), 3, 6000);
+            const auto find = [&](const QString &url) -> QTreeWidgetItem * {
+                for (int row = 0; row < tree->topLevelItemCount(); ++row)
+                    if (tree->topLevelItem(row)->text(0) == url)
+                        return tree->topLevelItem(row);
+                return nullptr;
+            };
+            QVERIFY(find(first) && find(second) && find("** [DHT] **"));
+            find("** [DHT] **")->setSelected(true);
+            QVERIFY(!up->isEnabled() && !down->isEnabled());
+            tree->clearSelection();
+            find(first)->setSelected(true);
+            QVERIFY(!up->isEnabled());
+            if (index == 1)
+            {
+                QVERIFY(!down->isEnabled());
+                QCOMPARE(legacy.trackerEntries(hash), initial);
+                continue;
+            }
+            QTRY_VERIFY(down->isEnabled());
+            find(second)->setSelected(true);
+            QTRY_VERIFY(up->isEnabled());
+            QTest::mouseClick(down, Qt::LeftButton);
+            QVERIFY(!up->isEnabled() && !down->isEnabled());
+            QTRY_VERIFY_WITH_TIMEOUT(find(first) && find(second)
+                && find(first)->text(1) == QStringLiteral("1")
+                && find(second)->text(1) == QStringLiteral("3")
+                && up->isEnabled(), 7000);
+            QCOMPARE(modern.trackerEntries(hash).at(1).toObject().value("url").toString(), first);
+            QCOMPARE(modern.trackerEntries(hash).at(1).toObject().value("tier").toInt(), 1);
+            QCOMPARE(modern.trackerEntries(hash).at(2).toObject().value("tier").toInt(), 3);
+            QTest::mouseClick(up, Qt::LeftButton);
+            QTRY_VERIFY_WITH_TIMEOUT(find(first) && find(second)
+                && find(first)->text(1) == QStringLiteral("0")
+                && find(second)->text(1) == QStringLiteral("2"), 7000);
+            QCOMPARE(modern.trackerEntries(hash), initial);
+            QCOMPARE(legacy.trackerEntries(hash), initial);
+            QCOMPARE(legacy.commandsFor("/api/v2/torrents/editTracker"), 0);
+        }
+    }
 
     void nativeTrackerListEditorReplacesAllSelectedTorrents();
     void privateTrackerAdditionPolicyThroughEditor();

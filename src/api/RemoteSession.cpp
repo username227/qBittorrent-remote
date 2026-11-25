@@ -14,6 +14,8 @@
 #include <QNetworkCookieJar>
 #include <QSslConfiguration>
 #include <QUrlQuery>
+#include <QVersionNumber>
+#include <memory>
 
 #include <algorithm>
 #include <utility>
@@ -421,6 +423,10 @@ void RemoteSession::requestApiVersion(const QString &version)
                 fail(tr("The server returned an empty Web API version."));
                 return;
             }
+            static const QRegularExpression numericVersion(
+                QStringLiteral("^\\d+\\.\\d+\\.\\d+$"));
+            m_trackerTierEditing = numericVersion.match(apiVersion).hasMatch()
+                && QVersionNumber::fromString(apiVersion) >= QVersionNumber(2, 13, 0);
             m_connected = true;
             emit connected(version, apiVersion);
             // The first request uses rid=0 for the full server snapshot.
@@ -1401,6 +1407,62 @@ void RemoteSession::editTorrentTracker(const QString &hash, const QString &oldUr
                    [this, hash, oldUrl](const QString &reason) {
                        emit torrentTrackerEditFinished(hash, oldUrl, false, reason);
                    });
+}
+
+void RemoteSession::setTrackerTiers(const QString &hash, const QJsonObject &tiers)
+{
+    static const QRegularExpression validHash(
+        QStringLiteral("^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$"));
+    const auto reject = [this, hash](const QString &reason) {
+        emit trackerTierEditFinished(hash);
+        emit operationFailed(tr("Change tracker tiers"), reason);
+    };
+    if (!supportsTrackerTierEditing() || !validHash.match(hash).hasMatch()
+        || tiers.isEmpty())
+    {
+        reject(tr("Tracker tier editing is unavailable or the selection is invalid."));
+        return;
+    }
+    for (auto it = tiers.constBegin(); it != tiers.constEnd(); ++it)
+    {
+        const int tier = it.value().toInt(-1);
+        if (!validEditableTrackerUrl(it.key()) || tier < 0 || tier > 255)
+        {
+            reject(tr("Invalid tracker URL or tier."));
+            return;
+        }
+    }
+
+    // The Web API edits one tracker per request; it has no atomic batch
+    // endpoint. Retain the explicit hash/URL, serialize with the existing
+    // queue, report partial failure, and refresh only after the whole batch.
+    struct Batch { qsizetype remaining; qsizetype failed = 0; };
+    auto batch = std::make_shared<Batch>(Batch{tiers.size()});
+    const auto finish = [this, hash, batch](bool ok) {
+        if (!ok) ++batch->failed;
+        if (--batch->remaining != 0) return;
+        emit torrentTrackersChanged(hash);
+        emit trackerTierEditFinished(hash);
+        if (batch->failed)
+            emit operationFailed(tr("Change tracker tiers"),
+                tr("%1 tracker edit(s) failed. The server's current tiers will be refreshed.")
+                    .arg(batch->failed));
+        else
+            emit operationSucceeded(tr("Change tracker tiers"));
+    };
+    for (auto it = tiers.constBegin(); it != tiers.constEnd(); ++it)
+    {
+        // Encode each value exactly once, including literal plus signs and
+        // existing percent escapes in private tracker passkeys.
+        const QByteArray body = QByteArrayLiteral("hash=") + QUrl::toPercentEncoding(hash)
+            + QByteArrayLiteral("&url=") + QUrl::toPercentEncoding(it.key())
+            + QByteArrayLiteral("&tier=") + QByteArray::number(it.value().toInt());
+        queueOperation(QStringLiteral("api/v2/torrents/editTracker"), body,
+            QByteArrayLiteral("application/x-www-form-urlencoded"),
+            tr("Change tracker tiers"), true,
+            [finish]() { finish(true); },
+            [finish](const QString &) { finish(false); }, false);
+    }
 }
 
 void RemoteSession::removeTorrentTrackers(const QString &hash, const QStringList &urls)

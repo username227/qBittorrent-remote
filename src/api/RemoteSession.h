@@ -84,6 +84,7 @@ public:
     void connectToServer(const ServerProfile &profile, const QString &password);
     void disconnectFromServer();
     bool isConnected() const noexcept;
+    bool supportsTrackerTierEditing() const noexcept { return m_connected && m_trackerTierEditing; }
 
     void commandTorrents(TorrentCommand command, const QStringList &hashes,
                          bool deleteFiles = false);
@@ -131,6 +132,7 @@ public:
     void editTorrentTracker(const QString &hash, const QString &oldUrl,
                             const QString &newUrl);
     void removeTorrentTrackers(const QString &hash, const QStringList &urls);
+    void setTrackerTiers(const QString &hash, const QJsonObject &tiers);
     // Native Edit trackers: replace the complete list, preserving blank-line tiers.
     // The Web API implements this as a checked remove followed by add.
     void replaceTorrentTrackers(const QString &hash, const QString &previousEntries,
@@ -149,6 +151,7 @@ signals:
     void operationFailed(const QString &description, const QString &reason);
     void torrentDetailsReceived(const QString &hash, int tab, const QJsonValue &data);
     void torrentTrackersChanged(const QString &hash);
+    void trackerTierEditFinished(const QString &hash);
     // Identifies the exact edit for bulk progress and rejected requests.
     void torrentTrackerEditFinished(const QString &hash, const QString &oldUrl,
                                     bool success, const QString &reason);
@@ -210,6 +213,7 @@ private:
     QString m_tlsFailure;
     CertificateConfirmation m_confirmation;
     bool m_connected = false;
+    bool m_trackerTierEditing = false;
     qint64 m_syncRid = 0;
     QTimer m_syncTimer;
 };
