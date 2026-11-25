@@ -6127,6 +6127,56 @@ private slots:
         QCOMPARE(server.commandsFor("/api/v2/app/setPreferences"), 0);
     }
 
+    void nearCompleteTorrentNeverDisplaysFullProgress()
+    {
+        DemoQbittorrentServer server(true);
+        server.enableDetailsDemo();
+        const QString hash(40, QLatin1Char('a'));
+        const QString completeHash(40, QLatin1Char('b'));
+        const auto record = [](const QString &name, double progress, const QString &state) {
+            return QJsonObject{{QStringLiteral("name"), name},
+                {QStringLiteral("progress"), progress},
+                {QStringLiteral("state"), state},
+                {QStringLiteral("size"), 1000000}};
+        };
+        server.setCompletionSnapshot({{QStringLiteral("torrents"), QJsonObject{
+            {hash, record(QStringLiteral("Almost complete"), 0.99999, QStringLiteral("stoppedDL"))},
+            {completeHash, record(QStringLiteral("Complete"), 1.0, QStringLiteral("stoppedUP"))}
+        }}});
+        QVERIFY(server.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("progress.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, server.url());
+        auto *table = window.findChild<QTableView *>(QStringLiteral("torrentList"));
+        auto *bar = window.findChild<QProgressBar *>(QStringLiteral("detailsProgressBar"));
+        auto *label = window.findChild<QLabel *>(QStringLiteral("labelProgressVal"));
+        QVERIFY(table && bar && label);
+        QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 2, 6000);
+        table->sortByColumn(2, Qt::AscendingOrder);
+        QTRY_COMPARE(table->model()->index(0, 0).data().toString(), QStringLiteral("Almost complete"));
+        const QString partial = QLocale().toString(99.9, 'f', 1) + QLatin1Char('%');
+        const QString complete = QLocale().toString(100.0, 'f', 1) + QLatin1Char('%');
+        QCOMPARE(table->model()->index(0, 2).data().toString(), partial);
+        QCOMPARE(table->model()->index(1, 2).data().toString(), complete);
+        table->selectRow(0);
+        QTRY_COMPARE(label->text(), partial);
+        QVERIFY(bar->value() < bar->maximum());
+        QVERIFY(bar->value() > 0);
+        // The live server's final delta, not display rounding, marks completion.
+        server.queueCompletionPatch({{QStringLiteral("torrents"), QJsonObject{
+            {hash, QJsonObject{{QStringLiteral("progress"), 1.0},
+                               {QStringLiteral("state"), QStringLiteral("stoppedUP")}}}
+        }}});
+        QTRY_COMPARE_WITH_TIMEOUT(label->text(), complete, 6000);
+        QCOMPARE(bar->value(), bar->maximum());
+        QCOMPARE(table->model()->index(0, 2).data().toString(), complete);
+        QCOMPARE(table->model()->index(1, 2).data().toString(), complete);
+    }
+
     void contentRefreshPreservesUserFolderExpansion()
     {
         DemoQbittorrentServer server(true);
@@ -6233,12 +6283,14 @@ private slots:
 
         // A deliberately collapsed nested folder must stay collapsed too.
         tree->collapseItem(root(album)->child(0));
-        track.insert(QStringLiteral("progress"), 0.875);
+        track.insert(QStringLiteral("progress"), 0.99999);
         updated.replace(0, track);
         server.setContentEntries(first, updated);
         pane->refreshSelectedDetails();
         QTRY_COMPARE_WITH_TIMEOUT(root(album)->child(0)->child(0)
-            ->data(2, Qt::UserRole).toDouble(), 0.875, 6000);
+            ->data(2, Qt::UserRole).toDouble(), 0.99999, 6000);
+        QCOMPARE(root(album)->child(0)->child(0)->text(2),
+                 QLocale().toString(99.0, 'f', 0) + QLatin1Char('%'));
         QVERIFY(!root(album)->child(0)->isExpanded());
         QVERIFY(!root(bonus)->isExpanded());
 

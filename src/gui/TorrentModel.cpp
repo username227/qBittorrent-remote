@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/TorrentModel.h"
+#include "gui/ProgressDisplay.h"
 
 #include <QDateTime>
 #include <QIcon>
@@ -262,7 +263,7 @@ QVariant TorrentModel::data(const QModelIndex &index, int role) const
 
     const double number = value.toDouble();
     if (col == 2)
-        return QLocale().toString(number * 100.0, 'f', 1) + QLatin1Char('%');
+        return ProgressDisplay::percent(number);
     // As in native qBittorrent: the Web API's "availability" is the
     // number of distributed copies, not a percentage. -1 means unknown.
     if (col == 12)
