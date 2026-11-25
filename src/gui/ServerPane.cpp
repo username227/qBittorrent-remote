@@ -283,6 +283,8 @@ ServerPane::ServerPane(QWidget *parent) : QWidget(parent)
             [this](int) { requestSelectedDetails(); });
     connect(m_details, &TorrentDetailsWidget::filePriorityRequested,
             this, &ServerPane::filePriorityRequested);
+    connect(m_details, &TorrentDetailsWidget::trackerTiersRequested,
+            this, &ServerPane::trackerTiersRequested);
     m_detailTabs->setCurrentIndex(0);
 
     connect(m_table->selectionModel(), &QItemSelectionModel::selectionChanged,
@@ -958,6 +960,17 @@ void ServerPane::requestSelectedDetails()
     if (!m_selectedHash.isEmpty() && m_details->isVisible()
         && m_details->currentTab() >= 0 && m_details->currentTab() < 5)
         emit torrentDetailsRequested(m_selectedHash, m_details->currentTab());
+}
+
+void ServerPane::setTrackerTierEditingSupported(bool supported)
+{
+    m_details->setTrackerTierEditingSupported(supported);
+}
+
+void ServerPane::finishTrackerTierEdit(const QString &hash)
+{
+    m_details->finishTrackerTierEdit(hash);
+    requestSelectedDetails();
 }
 
 void ServerPane::refreshSelectedDetails()

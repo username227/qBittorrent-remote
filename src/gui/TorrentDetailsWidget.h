@@ -33,13 +33,19 @@ public:
     void appendRates(double downloadBytesPerSec, double uploadBytesPerSec);
     void setContentPathMappings(const QList<Remote::PathMapping> &mappings);
     void setContentDragEnabled(bool enabled);
+    void setTrackerTierEditingSupported(bool supported);
+    void finishTrackerTierEdit(const QString &hash);
 
 signals:
     void filePriorityRequested(const QString &hash, const QList<int> &ids, int priority);
+    void trackerTiersRequested(const QString &hash, const QJsonObject &tiers);
 
 private:
     void displayGeneral(const QJsonObject &properties);
     void displayTrackers(const QJsonArray &trackers);
+    QJsonObject adjustedTrackerTiers(int delta) const;
+    void updateTrackerTierButtons();
+    void changeTrackerTiers(int delta);
     void displayPeers(const QJsonObject &peers);
     void displayWebSeeds(const QJsonArray &sources);
     void displayFiles(const QJsonArray &files);
@@ -55,6 +61,9 @@ private:
     QProgressBar *m_progressBar = nullptr;
     QLabel *m_error = nullptr;
     QString m_hash;
+    QString m_pendingTrackerTierHash;
+    bool m_trackerTierSupported = false;
+    bool m_trackerTiersKnown = false;
     QJsonObject m_summary;
     int m_currentTab = 0;
 };

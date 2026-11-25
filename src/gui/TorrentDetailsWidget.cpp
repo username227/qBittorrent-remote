@@ -493,16 +493,15 @@ TorrentDetailsWidget::TorrentDetailsWidget(QWidget *parent)
     m_trackers->setColumnWidth(9, 115);
     m_trackers->setColumnWidth(10, 105);
     m_ui->hBoxLayoutTrackers->insertWidget(0, m_trackers, 1);
-    // Upstream's arrow buttons adjust tracker tiers through its local
-    // BitTorrent engine; the standard Web API exposes no tier-reordering
-    // endpoint. Keep the native controls visually, but explicitly disabled.
     m_ui->trackerUpButton->setIcon(style()->standardIcon(QStyle::SP_ArrowUp));
     m_ui->trackerDownButton->setIcon(style()->standardIcon(QStyle::SP_ArrowDown));
-    m_ui->trackerUpButton->setEnabled(false);
-    m_ui->trackerDownButton->setEnabled(false);
-    const QString tierMessage = tr("Changing tracker tiers is not supported by the remote Web API.");
-    m_ui->trackerUpButton->setToolTip(tierMessage);
-    m_ui->trackerDownButton->setToolTip(tierMessage);
+    connect(m_trackers, &QTreeWidget::itemSelectionChanged,
+            this, &TorrentDetailsWidget::updateTrackerTierButtons);
+    connect(m_ui->trackerUpButton, &QPushButton::clicked, this,
+            [this]() { changeTrackerTiers(-1); });
+    connect(m_ui->trackerDownButton, &QPushButton::clicked, this,
+            [this]() { changeTrackerTiers(1); });
+    updateTrackerTierButtons();
 
     m_peers = new QTableWidget(this);
     m_peers->setObjectName(QStringLiteral("torrentPeers"));
@@ -680,8 +679,11 @@ void TorrentDetailsWidget::showTab(int tab)
 {
     if (tab < 0 || tab > 5)
         return;
+    if (m_currentTab != tab && tab == 1)
+        m_trackerTiersKnown = false;
     m_currentTab = tab;
     m_ui->stackedProperties->setCurrentIndex(tab);
+    updateTrackerTierButtons();
     m_error->hide();
 }
 
@@ -717,7 +719,9 @@ void TorrentDetailsWidget::resetPages()
     })
         setValue(name, QStringLiteral("—"));
     m_progressBar->setValue(0);
+    m_trackerTiersKnown = false;
     m_trackers->clear();
+    updateTrackerTierButtons();
     m_peers->setRowCount(0);
     m_ui->listWebSeeds->clear();
     m_ui->filesList->clear();
@@ -783,6 +787,61 @@ void TorrentDetailsWidget::displayGeneral(const QJsonObject &p)
     setValue("labelCommentVal", p.value(QStringLiteral("comment")).toString(QStringLiteral("—")));
     // The native UI also has a separate per-piece availability strip. This
     // is deliberately hidden until piece-level data is implemented.
+}
+
+void TorrentDetailsWidget::setTrackerTierEditingSupported(bool supported)
+{
+    m_trackerTierSupported = supported;
+    updateTrackerTierButtons();
+}
+
+QJsonObject TorrentDetailsWidget::adjustedTrackerTiers(int delta) const
+{
+    QJsonObject changes;
+    if (!m_trackerTierSupported || !m_trackerTiersKnown || m_hash.isEmpty()
+        || !m_pendingTrackerTierHash.isEmpty() || m_currentTab != 1)
+        return changes;
+    for (auto *item : m_trackers->selectedItems())
+    {
+        // Fixed DHT/PeX/LSD and individual announce endpoints are not
+        // trackers. Only selected real top-level URL rows are editable.
+        if (item->parent() || isPseudoTracker(item->text(0))) continue;
+        const QUrl url(item->text(0));
+        if (!url.isValid() || url.host().isEmpty()) continue;
+        bool ok = false;
+        const int tier = item->text(1).toInt(&ok);
+        if (ok && tier >= 0 && tier <= 255 && tier + delta >= 0 && tier + delta <= 255)
+            changes.insert(item->text(0), tier + delta);
+    }
+    return changes;
+}
+
+void TorrentDetailsWidget::updateTrackerTierButtons()
+{
+    m_ui->trackerUpButton->setEnabled(!adjustedTrackerTiers(-1).isEmpty());
+    m_ui->trackerDownButton->setEnabled(!adjustedTrackerTiers(1).isEmpty());
+    const QString unavailable = tr("Changing tracker tiers requires remote Web API 2.13.0 or later.");
+    m_ui->trackerUpButton->setToolTip(m_trackerTierSupported
+        ? tr("Decrease selected tracker tiers") : unavailable);
+    m_ui->trackerDownButton->setToolTip(m_trackerTierSupported
+        ? tr("Increase selected tracker tiers") : unavailable);
+}
+
+void TorrentDetailsWidget::changeTrackerTiers(int delta)
+{
+    const auto changes = adjustedTrackerTiers(delta);
+    if (changes.isEmpty()) return;
+    m_pendingTrackerTierHash = m_hash;
+    updateTrackerTierButtons();
+    emit trackerTiersRequested(m_hash, changes);
+}
+
+void TorrentDetailsWidget::finishTrackerTierEdit(const QString &hash)
+{
+    if (m_pendingTrackerTierHash != hash) return;
+    m_pendingTrackerTierHash.clear();
+    m_trackerTiersKnown = false; // Re-enable only on authoritative readback.
+    updateTrackerTierButtons();
 }
 
 void TorrentDetailsWidget::displayTrackers(const QJsonArray &trackers)
@@ -868,6 +927,8 @@ void TorrentDetailsWidget::displayTrackers(const QJsonArray &trackers)
     }
     m_trackers->setSortingEnabled(true);
     m_trackers->setUpdatesEnabled(true);
+    m_trackerTiersKnown = true;
+    updateTrackerTierButtons();
 }
 
 void TorrentDetailsWidget::displayPeers(const QJsonObject &reply)
@@ -1277,6 +1338,11 @@ void TorrentDetailsWidget::displayError(const QString &hash, int tab, const QStr
 {
     if (hash != m_hash || tab != m_currentTab)
         return;
+    if (tab == 1)
+    {
+        m_trackerTiersKnown = false;
+        updateTrackerTierButtons();
+    }
     m_error->setText(tr("Could not load torrent details: %1").arg(reason));
     m_error->show();
 }

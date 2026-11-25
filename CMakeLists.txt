@@ -293,6 +293,7 @@ if(BUILD_TESTING)
 
     add_remote_workflow_group(remote_tracker_workflow 60
         nativeTrackerListEditorReplacesAllSelectedTorrents
+        nativeTrackerTierArrowsFollowServerCapability
         privateTrackerAdditionPolicyThroughEditor
     )
 
