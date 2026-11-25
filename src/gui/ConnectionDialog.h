@@ -22,6 +22,10 @@ public:
     Remote::ServerProfile selectedProfile() const;
     QString password() const;
     bool rememberPassword() const;
+    void selectProfile(const QString &id);
+
+signals:
+    void profileSaved(const Remote::ServerProfile &profile);
 
 protected:
     void done(int result) override;
