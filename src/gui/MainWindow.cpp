@@ -6,6 +6,7 @@
 #include "gui/FilterSidebar.h"
 #include "gui/ConnectionDialog.h"
 #include "gui/RemotePreferencesDialog.h"
+#include "gui/RemoteRssDialog.h"
 #include "gui/RemoteCategoryDialog.h"
 #include "gui/RemoteSpeedLimitsDialog.h"
 #include "gui/RemoteAddTorrentDialog.h"
@@ -672,6 +673,16 @@ void MainWindow::setupActions()
     m_ui->menuView->addAction(m_ui->actionTopToolBar);
     m_ui->menuView->addAction(m_ui->actionShowStatusbar);
     m_ui->menuView->addAction(m_ui->actionShowFiltersSidebar);
+    m_rssAction = m_ui->menuView->addAction(tr("RSS..."));
+    m_rssAction->setObjectName(QStringLiteral("actionRemoteRSS"));
+    m_rssAction->setEnabled(false);
+    connect(m_rssAction, &QAction::triggered, this, [this]() {
+        const auto server = activeConnection();
+        if (!server || !server->connected || !server->session) return;
+        RemoteRssDialog dialog(server->session, server->profile.name, this);
+        trackDialogGeometry(dialog, QStringLiteral("RSS"));
+        dialog.exec();
+    });
     m_ui->menuView->addSeparator();
 
     // Local usability enhancement, absent from upstream qBittorrent.
@@ -1887,6 +1898,7 @@ void MainWindow::updateActiveUi()
     }
 
     const bool ready = connection && connection->connected;
+    if (m_rssAction) m_rssAction->setEnabled(ready);
     m_searchEdit->setEnabled(ready);
     m_searchBy->setEnabled(ready);
     m_disconnectAction->setEnabled(connection && connection->session);

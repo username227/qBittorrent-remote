@@ -559,6 +559,59 @@ void RemoteSession::requestBuildInfo(PreferencesResult received, PreferencesErro
     pumpOperations();
 }
 
+namespace
+{
+QByteArray rssForm(const QMap<QString, QString> &params)
+{
+    QByteArray result;
+    for (auto it = params.cbegin(); it != params.cend(); ++it)
+    {
+        if (!result.isEmpty()) result += '&';
+        result += QUrl::toPercentEncoding(it.key()) + '=' + QUrl::toPercentEncoding(it.value());
+    }
+    return result;
+}
+}
+
+void RemoteSession::requestRss(const QString &action, const QMap<QString, QString> &params,
+                               PreferencesResult received, PreferencesError rejected)
+{
+    if (!m_connected || !m_address
+        || !QStringList{QStringLiteral("items"), QStringLiteral("rules"),
+                         QStringLiteral("matchingArticles")}.contains(action))
+    {
+        if (rejected) rejected(tr("RSS request is unavailable."));
+        return;
+    }
+    QueuedOperation request;
+    request.endpoint = QStringLiteral("api/v2/rss/") + action;
+    if (!params.isEmpty()) request.endpoint += QLatin1Char('?') + QString::fromLatin1(rssForm(params));
+    request.description = tr("Read RSS data");
+    request.jsonObjectRequest = true;
+    request.reportOperation = false;
+    request.onJsonObject = std::move(received);
+    request.onRejected = std::move(rejected);
+    m_operations.enqueue(std::move(request));
+    pumpOperations();
+}
+
+void RemoteSession::changeRss(const QString &action, const QMap<QString, QString> &params,
+                              std::function<void()> accepted, PreferencesError rejected)
+{
+    const QStringList allowed{QStringLiteral("addFeed"), QStringLiteral("addFolder"),
+        QStringLiteral("setFeedURL"), QStringLiteral("moveItem"), QStringLiteral("removeItem"),
+        QStringLiteral("refreshItem"), QStringLiteral("markAsRead"), QStringLiteral("setRule"),
+        QStringLiteral("renameRule"), QStringLiteral("removeRule"), QStringLiteral("setFeedRefreshInterval")};
+    if (!allowed.contains(action))
+    {
+        if (rejected) rejected(tr("Unsupported RSS operation."));
+        return;
+    }
+    queueOperation(QStringLiteral("api/v2/rss/") + action, rssForm(params),
+        QByteArrayLiteral("application/x-www-form-urlencoded"), tr("Update RSS"),
+        true, std::move(accepted), std::move(rejected), false);
+}
+
 void RemoteSession::setPreferences(const QJsonObject &changes,
                                    std::function<void()> accepted, PreferencesError rejected)
 {
@@ -626,7 +679,9 @@ void RemoteSession::pumpOperations()
                 {
                     const QString reason = operation.endpoint == QLatin1String("api/v2/app/buildInfo")
                         ? tr("Invalid build information returned by the server.")
-                        : tr("Invalid preferences returned by the server.");
+                        : operation.endpoint.startsWith(QLatin1String("api/v2/rss/"))
+                            ? tr("Invalid RSS data returned by the server.")
+                            : tr("Invalid preferences returned by the server.");
                     if (operation.onRejected)
                         operation.onRejected(reason);
                     else if (operation.reportOperation)
@@ -1318,10 +1373,11 @@ void RemoteSession::addTorrentUrls(const QString &urls, const AddTorrentOptions 
         return;
     }
     QUrlQuery form;
-    form.addQueryItem(QStringLiteral("urls"), checked.join(QLatin1Char('\n')));
     appendAddOptions(form, options);
+    QByteArray body = QByteArrayLiteral("urls=") + QUrl::toPercentEncoding(checked.join(QLatin1Char('\n')));
+    if (!form.isEmpty()) body += '&' + form.toString(QUrl::FullyEncoded).toUtf8();
     queueOperation(QStringLiteral("api/v2/torrents/add"),
-                   form.toString(QUrl::FullyEncoded).toUtf8(),
+                   body,
                    QByteArrayLiteral("application/x-www-form-urlencoded"),
                    tr("Add torrent links"), true);
 }

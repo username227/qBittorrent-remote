@@ -8,6 +8,7 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QJsonObject>
+#include <QMap>
 #include <QJsonValue>
 #include <QQueue>
 #include <QByteArray>
@@ -111,6 +112,12 @@ public:
     using PreferencesError = std::function<void(const QString &)>;
     void requestPreferences(PreferencesResult received = {}, PreferencesError failed = {});
     void requestBuildInfo(PreferencesResult received, PreferencesError failed);
+    // RSS stays on the authenticated server. Only these fixed RSS endpoints
+    // are permitted; values are encoded once as form/query parameters.
+    void requestRss(const QString &action, const QMap<QString, QString> &params,
+                    PreferencesResult received, PreferencesError failed);
+    void changeRss(const QString &action, const QMap<QString, QString> &params,
+                   std::function<void()> accepted, PreferencesError failed);
     // Session-wide operations affect only this authenticated NAS connection.
     void setAlternativeSpeedLimitsEnabled(bool enabled);
     void sendTestEmail(std::function<void()> accepted, PreferencesError rejected);

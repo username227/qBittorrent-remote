@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/RemotePreferencesDialog.h"
 #include "gui/RemoteBanListDialog.h"
+#include "gui/RemoteRssDialog.h"
 #include <QFileInfo>
 #include <QToolButton>
 #include "gui/DesktopAutostart.h"
@@ -655,10 +656,14 @@ void RemotePreferencesDialog::bindRSSControls()
     bindRemoteControl("rss_smart_episode_filters", m_ui->textSmartEpisodeFilters, {},
         tr("Server smart episode filter patterns, one per line. Preserve the server's text format."));
 
-    // Editing RSS rules is an independent remote collection workflow, not
-    // a preference key. Do not open a local or nonfunctional rule editor.
+    // Rule mutations are independent of staged global preferences.
     m_ui->btnEditRules->setEnabled(false);
-    m_ui->btnEditRules->setToolTip(tr("Requires the native remote RSS rule editor, not yet implemented."));
+    m_ui->btnEditRules->setToolTip(tr("Edit server RSS rules. Rule changes take effect immediately, independently of Preferences Apply/Cancel."));
+    connect(m_ui->btnEditRules, &QPushButton::clicked, this, [this]() {
+        if (!m_remoteSession || !m_remoteSession->isConnected() || m_remoteBusy) return;
+        RemoteRssDialog dialog(m_remoteSession, m_remoteTargetName, this, true);
+        dialog.exec();
+    });
 }
 
 bool RemotePreferencesDialog::validateRSSChanges(const QJsonObject &changes)
@@ -2001,6 +2006,7 @@ void RemotePreferencesDialog::refreshRemoteControls()
         if (auto *combo = qobject_cast<QComboBox *>(field.widget))
             combo->view()->setEnabled(supported);
     }
+    m_ui->btnEditRules->setEnabled(m_remotePreferencesLoaded && m_remoteSession && m_remoteSession->isConnected());
     m_ui->label_111->setEnabled(m_ui->spinRSSRefreshInterval->isEnabled());
     m_ui->labelRSSFetchDelay->setEnabled(m_ui->spinRSSFetchDelay->isEnabled());
     m_ui->label_12->setEnabled(m_ui->spinRSSMaxArticlesPerFeed->isEnabled());
