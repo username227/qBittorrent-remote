@@ -142,6 +142,7 @@ private:
     QPushButton *m_addMapping = nullptr;
     QPushButton *m_editMapping = nullptr;
     QPushButton *m_removeMapping = nullptr;
+    QPushButton *m_preferMapping = nullptr;
     QPushButton *m_checkMount = nullptr;
     QPushButton *m_applyButton = nullptr;
     QHash<QString, QList<Remote::PathMapping>> m_staged;

@@ -3009,7 +3009,11 @@ private slots:
         }
         QVERIFY(!firstId.isEmpty() && !secondId.isEmpty());
         Remote::PathMappingStore mappings(settings);
-        QVERIFY(mappings.replace(firstId, {{mount, QStringLiteral("/share/First")}}));
+        // Browsing must use the first of equally specific local aliases.
+        QVERIFY(mappings.replace(firstId, {
+            {mount, QStringLiteral("/share/First")},
+            {mount, QStringLiteral("/share/FirstAlias")}
+        }));
         QVERIFY(mappings.replace(secondId, {{mount, QStringLiteral("/share/Second")}}));
         tabs->setCurrentIndex(0);
         QTRY_VERIFY(window.statusBar()->currentMessage().contains(QStringLiteral("Connected to Demo seedbox")));
@@ -7521,7 +7525,12 @@ private slots:
         const auto saved = Remote::ProfileStore(settings).profiles();
         QCOMPARE(saved.size(), 1);
         Remote::PathMappingStore mapping(settings);
-        QVERIFY(mapping.replace(saved.first().id, {{root, QStringLiteral("/share/NAS")}}));
+        // The preferred destination differs from the torrent's existing
+        // server path. Opening must still resolve the secondary alias.
+        QVERIFY(mapping.replace(saved.first().id, {
+            {root, QStringLiteral("/share/Public/NAS")},
+            {root, QStringLiteral("/share/NAS")}
+        }));
 
         table->selectRow(0);
         const QModelIndex row = table->selectionModel()->selectedRows(0).value(0);
