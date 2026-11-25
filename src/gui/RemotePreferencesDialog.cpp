@@ -217,6 +217,7 @@ RemotePreferencesDialog::RemotePreferencesDialog(QSettings &settings,
         && version >= QVersionNumber(5, 3, 0);
     bindIPFilterControls();
     bindSpeedControls();
+    bindBitTorrentPrivacyControls();
     populateAdvancedPlaceholders();
     buildRemotePathsPage(preferredProfileId);
 
@@ -713,6 +714,22 @@ bool RemotePreferencesDialog::validateSpeedChanges(const QJsonObject &changes)
         return false;
     }
     return true;
+}
+
+void RemotePreferencesDialog::bindBitTorrentPrivacyControls()
+{
+    bindRemoteControl("dht", m_ui->checkDHT, {}, m_ui->checkDHT->toolTip().section(QLatin1Char('\n'), 0, 0));
+    bindRemoteControl("pex", m_ui->checkPeX, {}, m_ui->checkPeX->toolTip().section(QLatin1Char('\n'), 0, 0));
+    bindRemoteControl("lsd", m_ui->checkLSD, {}, m_ui->checkLSD->toolTip().section(QLatin1Char('\n'), 0, 0));
+    // Both supported upstream generations use the native combo indices:
+    // 0 = allow, 1 = require, 2 = disable protocol encryption.
+    bindRemoteControl("encryption", m_ui->comboEncryption, {},
+        tr("Allow encryption: Connect to peers regardless of setting\n"
+           "Require encryption: Only connect to peers with protocol encryption\n"
+           "Disable encryption: Only connect to peers without protocol encryption"));
+    bindRemoteControl("anonymous_mode", m_ui->checkAnonymousMode, {},
+        tr("Reduce identifying information sent by the connected server. "
+           "This does not enable a VPN or proxy or hide its IP address."));
 }
 
 void RemotePreferencesDialog::bindConnectionListeningControls()
@@ -1671,6 +1688,7 @@ void RemotePreferencesDialog::refreshRemoteControls()
             combo->view()->setEnabled(supported);
     }
     m_ui->stopConditionLabel->setEnabled(m_ui->stopConditionComboBox->isEnabled());
+    m_ui->lbl_encryption->setEnabled(m_ui->comboEncryption->isEnabled());
     refreshWatchedFolderButtons();
     refreshNotificationControls();
     refreshBackupControls();

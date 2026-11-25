@@ -4410,6 +4410,172 @@ private slots:
         });
     }
 
+    void bitTorrentPrivacyFollowsSelectedServer()
+    {
+        DemoQbittorrentServer legacy(true), modern(true);
+        modern.enableModernResponses();
+        const QJsonObject initialLegacy{
+            {QStringLiteral("dht"), true},
+            {QStringLiteral("pex"), false},
+            {QStringLiteral("lsd"), true},
+            {QStringLiteral("encryption"), 0},
+            {QStringLiteral("anonymous_mode"), false},
+            {QStringLiteral("max_active_checking_torrents"), 1}
+        };
+        const QJsonObject initialModern{
+            {QStringLiteral("dht"), false},
+            {QStringLiteral("pex"), true},
+            {QStringLiteral("lsd"), false},
+            {QStringLiteral("encryption"), 1},
+            {QStringLiteral("anonymous_mode"), true},
+            {QStringLiteral("max_active_checking_torrents"), 2}
+        };
+        legacy.setServerPreferences(initialLegacy);
+        modern.setServerPreferences(initialModern);
+        QVERIFY(legacy.start() && modern.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("prefs.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, legacy.url());
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(QStringLiteral("v5.1.4")), 6000);
+        openConnectDialog(window, modern.url(), false, true, true, QStringLiteral("Modern seedbox"));
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(QStringLiteral("v5.3.0")), 6000);
+        auto *tabs = window.findChild<QTabWidget *>(QStringLiteral("serverTabs"));
+        auto *prefs = window.findChild<QAction *>(QStringLiteral("actionOptions"));
+        QVERIFY(tabs && prefs);
+
+        struct Controls
+        {
+            QCheckBox *dht, *pex, *lsd, *anonymous;
+            QComboBox *encryption;
+            QPushButton *apply;
+        };
+        const auto withPrivacy = [&](auto exercise) {
+            bool finished = false;
+            QTimer::singleShot(0, &window, [&]() {
+                auto *dlg = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget());
+                QVERIFY(dlg);
+                const auto cleanup = qScopeGuard([dlg]() { if (dlg->isVisible()) dlg->reject(); });
+                auto *sections = dlg->findChild<QListWidget *>(QStringLiteral("preferencesSections"));
+                const Controls c{
+                    dlg->findChild<QCheckBox *>(QStringLiteral("checkDHT")),
+                    dlg->findChild<QCheckBox *>(QStringLiteral("checkPeX")),
+                    dlg->findChild<QCheckBox *>(QStringLiteral("checkLSD")),
+                    dlg->findChild<QCheckBox *>(QStringLiteral("checkAnonymousMode")),
+                    dlg->findChild<QComboBox *>(QStringLiteral("comboEncryption")),
+                    dlg->findChild<QPushButton *>(QStringLiteral("preferencesApply"))
+                };
+                auto *info = dlg->findChild<QLabel *>(QStringLiteral("label_anonymous"));
+                auto *checking = dlg->findChild<QSpinBox *>(QStringLiteral("spinBoxMaxActiveCheckingTorrents"));
+                QVERIFY(sections && c.dht && c.pex && c.lsd && c.anonymous
+                    && c.encryption && c.apply && info && checking);
+                sections->setCurrentRow(5);
+                // Anonymous mode is present and valid even in the malformed fixture.
+                QTRY_VERIFY_WITH_TIMEOUT(c.anonymous->isEnabled(), 6000);
+                QCOMPARE(c.encryption->count(), 3);
+                QVERIFY(info->openExternalLinks());
+                exercise(c);
+                finished = true;
+            });
+            prefs->trigger();
+            QVERIFY(finished);
+        };
+        const auto delta = [](DemoQbittorrentServer &server) {
+            const QUrlQuery form(QString::fromUtf8(server.lastCommandBody("/api/v2/app/setPreferences")));
+            return QJsonDocument::fromJson(form.queryItemValue(
+                QStringLiteral("json"), QUrl::FullyDecoded).toUtf8()).object();
+        };
+        tabs->setCurrentIndex(0);
+        for (bool save : {false, true})
+        {
+            withPrivacy([&](const Controls &c) {
+                QVERIFY(c.dht->isEnabled() && c.pex->isEnabled() && c.lsd->isEnabled()
+                    && c.encryption->isEnabled());
+                QVERIFY(c.dht->isChecked() && !c.pex->isChecked() && c.lsd->isChecked()
+                    && !c.anonymous->isChecked());
+                QCOMPARE(c.encryption->currentIndex(), 0);
+                QVERIFY(!c.apply->isEnabled());
+                c.encryption->setCurrentIndex(1);
+                QVERIFY(c.apply->isEnabled());
+                c.encryption->setCurrentIndex(0);
+                QVERIFY(!c.apply->isEnabled());
+                c.dht->click();
+                c.pex->click();
+                c.lsd->click();
+                c.anonymous->click();
+                c.encryption->setCurrentIndex(2);
+                QVERIFY(c.apply->isEnabled());
+                QCOMPARE(legacy.commandsFor("/api/v2/app/setPreferences"), 0);
+                if (save)
+                {
+                    c.apply->click();
+                    QTRY_VERIFY_WITH_TIMEOUT(c.anonymous->isEnabled() && !c.apply->isEnabled(), 6000);
+                }
+            });
+            if (!save)
+                QCOMPARE(legacy.serverPreferences(), initialLegacy);
+        }
+        const QJsonObject expectedDelta{
+            {QStringLiteral("dht"), false},
+            {QStringLiteral("pex"), true},
+            {QStringLiteral("lsd"), false},
+            {QStringLiteral("encryption"), 2},
+            {QStringLiteral("anonymous_mode"), true}
+        };
+        QJsonObject expectedLegacy = expectedDelta;
+        expectedLegacy.insert(QStringLiteral("max_active_checking_torrents"), 1);
+        QCOMPARE(delta(legacy), expectedDelta);
+        QCOMPARE(legacy.serverPreferences(), expectedLegacy);
+        QCOMPARE(modern.serverPreferences(), initialModern);
+        withPrivacy([](const Controls &c) {
+            QVERIFY(!c.dht->isChecked() && c.pex->isChecked() && !c.lsd->isChecked()
+                && c.anonymous->isChecked());
+            QCOMPARE(c.encryption->currentIndex(), 2);
+            QVERIFY(!c.apply->isEnabled());
+        });
+
+        tabs->setCurrentIndex(1);
+        withPrivacy([&](const Controls &c) {
+            QCOMPARE(c.encryption->currentIndex(), 1);
+            QVERIFY(!c.dht->isChecked() && c.pex->isChecked() && !c.lsd->isChecked()
+                && c.anonymous->isChecked());
+            c.encryption->setCurrentIndex(0);
+            c.apply->click();
+            QTRY_VERIFY_WITH_TIMEOUT(c.encryption->isEnabled() && !c.apply->isEnabled(), 6000);
+        });
+        const QJsonObject onlyEncryption{{QStringLiteral("encryption"), 0}};
+        QCOMPARE(delta(modern), onlyEncryption);
+        QJsonObject expectedModern = initialModern;
+        expectedModern.insert(QStringLiteral("encryption"), 0);
+        QCOMPARE(modern.serverPreferences(), expectedModern);
+        QCOMPARE(legacy.serverPreferences(), expectedLegacy);
+
+        // Missing, mistyped and out-of-range settings must never be sent
+        // as native Designer defaults when another valid field changes.
+        QJsonObject malformed = expectedModern;
+        malformed.remove(QStringLiteral("dht"));
+        malformed.insert(QStringLiteral("pex"), 1);
+        malformed.insert(QStringLiteral("lsd"), QStringLiteral("true"));
+        malformed.insert(QStringLiteral("encryption"), 3);
+        modern.setServerPreferences(malformed);
+        withPrivacy([&](const Controls &c) {
+            QVERIFY(!c.dht->isEnabled() && !c.pex->isEnabled() && !c.lsd->isEnabled()
+                && !c.encryption->isEnabled());
+            QVERIFY(c.anonymous->isChecked() && !c.apply->isEnabled());
+            c.anonymous->click();
+            c.apply->click();
+            QTRY_VERIFY_WITH_TIMEOUT(c.anonymous->isEnabled() && !c.apply->isEnabled(), 6000);
+        });
+        const QJsonObject onlyAnonymous{{QStringLiteral("anonymous_mode"), false}};
+        QCOMPARE(delta(modern), onlyAnonymous);
+        malformed.insert(QStringLiteral("anonymous_mode"), false);
+        QCOMPARE(modern.serverPreferences(), malformed);
+        QCOMPARE(legacy.serverPreferences(), expectedLegacy);
+    }
+
     void speedPreferencesFollowSelectedServer()
     {
         DemoQbittorrentServer legacy(true), modern(true);
