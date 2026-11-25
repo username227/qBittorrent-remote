@@ -286,6 +286,64 @@ private slots:
         QCOMPARE(pane.proxy()->sortColumn(), 1);
     }
 
+    void queueStatesRemainInNativeSidebarFilters()
+    {
+        ServerPane pane;
+        pane.resize(1300, 840);
+        pane.show();
+        QTRY_VERIFY(pane.isVisible());
+        pane.applySync(payload(R"JSON({
+          "full_update":true,
+          "torrents":{
+            "a":{"name":"Idle seed","state":"stalledUP","progress":1},
+            "b":{"name":"Queued seed","state":"queuedUP","progress":1},
+            "c":{"name":"Checking seed","state":"checkingUP","progress":1},
+            "d":{"name":"Stopped seed","state":"stoppedUP","progress":1},
+            "e":{"name":"Queued download","state":"queuedDL","progress":0.5},
+            "f":{"name":"Checking download","state":"checkingDL","progress":0.5},
+            "g":{"name":"Stopped download","state":"stoppedDL","progress":0.5},
+            "h":{"name":"Forced metadata","state":"forcedMetaDL","progress":0},
+            "i":{"name":"Active seed","state":"uploading","progress":1,"upspeed":4096},
+            "j":{"name":"Moving torrent","state":"moving","progress":1},
+            "k":{"name":"Legacy paused download","state":"pausedDL","progress":0.2},
+            "l":{"name":"Legacy paused seed","state":"pausedUP","progress":1},
+            "m":{"name":"Checking resume data","state":"checkingResumeData","progress":1},
+            "n":{"name":"Active download","state":"downloading","progress":0.2,"dlspeed":2048}
+          }
+        })JSON"));
+        auto *status = list(pane, "filterList");
+        QVERIFY(status);
+        const auto check = [&](const QString &key, const QString &label, const QStringList &hashes) {
+            const int index = row(status, key);
+            QVERIFY(index >= 0);
+            QCOMPARE(status->item(index)->text(),
+                QStringLiteral("%1 (%2)").arg(label).arg(hashes.size()));
+            click(status, key);
+            QTRY_COMPARE(visible(pane), hashes);
+        };
+        check("seeding", "Seeding", {"a","b","c","i"});
+        check("downloading", "Downloading", {"e","f","g","h","k","n"});
+        check("running", "Running", {"a","b","c","e","f","h","i","j","m","n"});
+        check("stopped", "Stopped", {"d","g","k","l"});
+        check("active", "Active", {"i","n"});
+        check("inactive", "Inactive", {"a","b","c","d","e","f","g","h","j","k","l","m"});
+        check("stalledUP", "Stalled Uploading", {"a"});
+        check("checking", "Checking", {"c","f","m"});
+
+        // Queueing an idle seed must not remove it from the Seeding
+        // filter; stopping it must. Verify counts and the selected table
+        // both react to ordinary incremental synchronization.
+        check("seeding", "Seeding", {"a","b","c","i"});
+        pane.applySync(payload(R"JSON({"torrents":{"a":{"state":"queuedUP"}}})JSON"));
+        QTRY_COMPARE(visible(pane), (QStringList{"a","b","c","i"}));
+        QCOMPARE(status->item(row(status,"seeding"))->text(), QStringLiteral("Seeding (4)"));
+        QCOMPARE(status->item(row(status,"stalledUP"))->text(), QStringLiteral("Stalled Uploading (0)"));
+        pane.applySync(payload(R"JSON({"torrents":{"a":{"state":"stoppedUP"}}})JSON"));
+        QTRY_COMPARE(visible(pane), (QStringList{"b","c","i"}));
+        QCOMPARE(status->item(row(status,"seeding"))->text(), QStringLiteral("Seeding (3)"));
+        check("running", "Running", {"b","c","e","f","h","i","j","m","n"});
+    }
+
     void combineStatusCategoryTagTrackerAndSearch();
     void independentServerTabsKeepIndependentSidebarStates();
     void locationTreeFiltersTogetherWithNativeSidebarAndPersists();
