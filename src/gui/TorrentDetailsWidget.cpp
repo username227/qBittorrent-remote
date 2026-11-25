@@ -2,6 +2,7 @@
 #include "gui/TorrentDetailsWidget.h"
 #include "gui/MappedContentTreeWidget.h"
 #include "gui/NaturalNameSort.h"
+#include "gui/ProgressDisplay.h"
 #include "ui_remotepropertieswidget.h"
 #include "gui/upstream/progressbarpainter.h"
 
@@ -243,7 +244,7 @@ public:
         {
             const double fraction = index.data(Qt::UserRole).toDouble();
             m_painter.paint(painter, option, index.data(Qt::DisplayRole).toString(),
-                            qBound(0, qRound(fraction * 100), 100));
+                            ProgressDisplay::roundedValue(fraction, 100));
             return;
         }
         QStyledItemDelegate::paint(painter, option, index);
@@ -738,9 +739,8 @@ void TorrentDetailsWidget::setSelection(const QString &hash, const QJsonObject &
     if (hash.isEmpty())
         return;
     const double progress = summary.value(QStringLiteral("progress")).toDouble();
-    m_progressBar->setValue(qBound(0, qRound(progress * 1000.0), 1000));
-    setValue("labelProgressVal",
-             QLocale().toString(progress * 100.0, 'f', 1) + QLatin1Char('%'));
+    m_progressBar->setValue(ProgressDisplay::roundedValue(progress, 1000));
+    setValue("labelProgressVal", ProgressDisplay::percent(progress));
     setValue("labelInfohash1Val",
              summary.value(QStringLiteral("infohash_v1")).toString(hash));
     setValue("labelInfohash2Val",
@@ -884,7 +884,7 @@ void TorrentDetailsWidget::displayPeers(const QJsonObject &reply)
             it.key(), p.value(QStringLiteral("country_code")).toString(),
             p.value(QStringLiteral("client")).toString(),
             progress < 0 ? QStringLiteral("—")
-                         : QLocale().toString(progress * 100, 'f', 1) + QLatin1Char('%'),
+                         : ProgressDisplay::percent(progress),
             speedText(p.value(QStringLiteral("dl_speed"))),
             speedText(p.value(QStringLiteral("up_speed"))),
             p.value(QStringLiteral("flags")).toString(),
@@ -1052,8 +1052,7 @@ void TorrentDetailsWidget::displayFiles(const QJsonArray &files)
         const int priority = file.value(QStringLiteral("priority")).toInt(1);
         item->setText(1, bytesText(size));
         item->setData(1, Qt::UserRole, size);
-        item->setText(2, QLocale().toString(fraction * 100.0, 'f', 0)
-                             + QLatin1Char('%'));
+        item->setText(2, ProgressDisplay::percent(fraction, 0));
         item->setData(2, Qt::UserRole, fraction);
         item->setText(3, priorityText(priority));
         item->setData(3, Qt::UserRole, priority);
@@ -1177,8 +1176,7 @@ void TorrentDetailsWidget::updateFileFolders()
             ? qBound(0.0, summary.completed / summary.size, 1.0) : 0.0;
         node->setText(1, bytesText(summary.size));
         node->setData(1, Qt::UserRole, summary.size);
-        node->setText(2, QLocale().toString(fraction * 100.0, 'f', 0)
-                             + QLatin1Char('%'));
+        node->setText(2, ProgressDisplay::percent(fraction, 0));
         node->setData(2, Qt::UserRole, fraction);
         node->setText(3, summary.commonPriority >= 0
                          ? priorityText(summary.commonPriority) : QStringLiteral("Mixed"));

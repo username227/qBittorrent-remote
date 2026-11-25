@@ -258,6 +258,7 @@ if(BUILD_TESTING)
         liveTorrentRowsFollowFullUpdatesPatchesAndRemovals
         liveTorrentSwarmCountsHonorHideZeroAndIncrementalSync
         nativeTransferPresentationShowsUpstreamProgressAndAvailability
+        nearCompleteTorrentNeverDisplaysFullProgress
         upstreamTorrentStateColorsSurviveStalledAndQueuedStates
     )
 

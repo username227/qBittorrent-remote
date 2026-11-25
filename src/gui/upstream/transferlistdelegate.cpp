@@ -29,6 +29,7 @@
 
 #include "gui/upstream/transferlistdelegate.h"
 #include "gui/TorrentModel.h"
+#include "gui/ProgressDisplay.h"
 
 #include <QModelIndex>
 #include <QtMath>
@@ -66,7 +67,7 @@ void TransferListDelegate::paint(QPainter *painter, const QStyleOptionViewItem &
 
     // sync/maindata progress is a fraction [0, 1]; native qBittorrent's
     // painter takes an integer [0, 100]. Never infer local torrent state.
-    const int progress = qBound(0, qRound(index.data(Qt::UserRole).toDouble() * 100.0), 100);
+    const int progress = ProgressDisplay::roundedValue(index.data(Qt::UserRole).toDouble(), 100);
     const QString state = index.siblingAtColumn(3).data(Qt::UserRole).toString();
     const bool enabled = !state.isEmpty()
         && state != QLatin1String("error")
