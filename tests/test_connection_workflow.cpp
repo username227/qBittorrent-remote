@@ -54,6 +54,7 @@
 #include <QPushButton>
 #include <QSettings>
 #include <QScopeGuard>
+#include <QScrollBar>
 #include <QShortcut>
 #include <QStatusBar>
 #include <QTabWidget>
@@ -877,6 +878,10 @@ public:
     QJsonArray contentEntries(const QString &hash) const
     {
         return m_contentEntries.value(hash);
+    }
+    void setContentEntries(const QString &hash, const QJsonArray &files)
+    {
+        m_contentEntries.insert(hash, files);
     }
     QJsonObject optionState(const QString &hash) const
     {
@@ -5789,6 +5794,134 @@ private slots:
         QVERIFY(nameIndex().data(Qt::ForegroundRole).value<QColor>().isValid());
         QCOMPARE(paintProgress(progressIndex()), partialBar);
         QCOMPARE(server.commandsFor("/api/v2/app/setPreferences"), 0);
+    }
+
+    void contentRefreshPreservesUserFolderExpansion()
+    {
+        DemoQbittorrentServer server(true);
+        server.enableNativePresentationDemo();
+        server.enableDetailsDemo();
+        server.enableRemoteContentAndOptionsDemo();
+        const QString first = QStringLiteral("0000000000000000000000000000000000000001");
+        const QString second = QStringLiteral("0000000000000000000000000000000000000002");
+        QJsonArray files = QJsonDocument::fromJson(R"JSON([
+          {"index":0,"name":"Album/Disc/song.flac","size":1024,"progress":0.25,"priority":1},
+          {"index":1,"name":"Bonus/Disc/song.flac","size":2048,"progress":0.5,"priority":1}
+        ])JSON").array();
+        // A long file tree must remain scrollable throughout a recheck.
+        for (int i = 2; i < 160; ++i)
+            files.append(QJsonObject{
+                {QStringLiteral("index"), i},
+                {QStringLiteral("name"), QStringLiteral("Album/Disc/track-%1.flac").arg(i, 3, 10, QLatin1Char('0'))},
+                {QStringLiteral("size"), 1024},
+                {QStringLiteral("progress"), 0.25},
+                {QStringLiteral("priority"), 1}
+            });
+        server.setContentEntries(first, files);
+        server.setContentEntries(second, files);
+        QVERIFY(server.start());
+
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("prefs.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, server.url());
+        auto *table = window.findChild<QTableView *>(QStringLiteral("torrentList"));
+        auto *tabs = window.findChild<PropTabBar *>();
+        auto *tree = window.findChild<MappedContentTreeWidget *>(QStringLiteral("torrentContent"));
+        auto *pane = window.findChild<ServerPane *>();
+        QVERIFY(table && tabs && tree && pane);
+        QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 2, 6000);
+        const auto selectTorrent = [&](const QString &name) {
+            for (int i = 0; i < table->model()->rowCount(); ++i)
+            {
+                if (table->model()->index(i, 0).data().toString() == name)
+                {
+                    table->selectRow(i);
+                    return;
+                }
+            }
+            QFAIL("Torrent not found");
+        };
+        selectTorrent(QStringLiteral("Complete seed"));
+        tabs->setCurrentIndex(4);
+        QTRY_COMPARE_WITH_TIMEOUT(tree->topLevelItemCount(), 2, 6000);
+        const auto root = [tree](const QString &name) -> QTreeWidgetItem * {
+            for (int i = 0; i < tree->topLevelItemCount(); ++i)
+                if (tree->topLevelItem(i)->text(0) == name)
+                    return tree->topLevelItem(i);
+            return nullptr;
+        };
+        const QString album = QStringLiteral("Album");
+        const QString bonus = QStringLiteral("Bonus");
+        QVERIFY(root(album) && root(bonus));
+        QVERIFY(root(album)->isExpanded() && root(bonus)->isExpanded());
+        QVERIFY(!root(album)->child(0)->isExpanded());
+        tree->expandItem(root(album)->child(0));
+        tree->collapseItem(root(bonus));
+        auto *selected = root(album)->child(0)->child(0);
+        tree->setCurrentItem(selected);
+        selected->setSelected(true);
+        tree->doItemsLayout();
+        QTRY_VERIFY(tree->verticalScrollBar()->maximum() > 20);
+        tree->verticalScrollBar()->setValue(tree->verticalScrollBar()->maximum() / 2);
+        const int scrollPosition = tree->verticalScrollBar()->value();
+        auto *anchor = tree->itemAt(0, 0);
+        QVERIFY(anchor && anchor != selected);
+        bool anchorIdValid = false;
+        const int anchorId = anchor->data(0, Qt::UserRole).toInt(&anchorIdValid);
+        QVERIFY(anchorIdValid && anchorId >= 0);
+        const int anchorOffset = tree->visualItemRect(anchor).top();
+
+        // Drive the actual periodic-refresh request path, not displayFiles
+        // directly. Changing progress proves the new reply reached the UI.
+        QJsonArray updated = files;
+        QJsonObject track = updated.at(0).toObject();
+        track.insert(QStringLiteral("progress"), 0.75);
+        updated.replace(0, track);
+        server.setContentEntries(first, updated);
+        pane->refreshSelectedDetails();
+        QTRY_COMPARE_WITH_TIMEOUT(root(album)->child(0)->child(0)
+            ->data(2, Qt::UserRole).toDouble(), 0.75, 6000);
+        QVERIFY(root(album)->isExpanded() && root(album)->child(0)->isExpanded());
+        QVERIFY(!root(bonus)->isExpanded() && !root(bonus)->child(0)->isExpanded());
+        QCOMPARE(tree->selectedItems().size(), 1);
+        QCOMPARE(tree->selectedItems().first(), root(album)->child(0)->child(0));
+        QCOMPARE(tree->currentItem(), root(album)->child(0)->child(0));
+        // Let queued view/layout events run before checking the position.
+        QTest::qWait(50);
+        QCOMPARE(tree->verticalScrollBar()->value(), scrollPosition);
+        QVERIFY(tree->itemAt(0, 0));
+        bool restoredIdValid = false;
+        const int restoredId = tree->itemAt(0, 0)->data(0, Qt::UserRole).toInt(&restoredIdValid);
+        QVERIFY(restoredIdValid);
+        QCOMPARE(restoredId, anchorId);
+        QCOMPARE(tree->visualItemRect(tree->itemAt(0, 0)).top(), anchorOffset);
+
+        // A deliberately collapsed nested folder must stay collapsed too.
+        tree->collapseItem(root(album)->child(0));
+        track.insert(QStringLiteral("progress"), 0.875);
+        updated.replace(0, track);
+        server.setContentEntries(first, updated);
+        pane->refreshSelectedDetails();
+        QTRY_COMPARE_WITH_TIMEOUT(root(album)->child(0)->child(0)
+            ->data(2, Qt::UserRole).toDouble(), 0.875, 6000);
+        QVERIFY(!root(album)->child(0)->isExpanded());
+        QVERIFY(!root(bonus)->isExpanded());
+
+        // Identical names/file IDs on another torrent must not inherit the
+        // prior torrent's expansion or selected file.
+        selectTorrent(QStringLiteral("Partial download"));
+        QTRY_COMPARE_WITH_TIMEOUT(tree->topLevelItemCount(), 2, 6000);
+        QVERIFY(root(album) && root(bonus));
+        QTRY_COMPARE_WITH_TIMEOUT(root(album)->child(0)->child(0)
+            ->data(2, Qt::UserRole).toDouble(), 0.25, 6000);
+        QVERIFY(root(album)->isExpanded() && root(bonus)->isExpanded());
+        QVERIFY(!root(album)->child(0)->isExpanded());
+        QVERIFY(tree->selectedItems().isEmpty());
+        QCOMPARE(server.commandsFor("/api/v2/torrents/filePrio"), 0);
     }
 
     void nativeTorrentDetailsUseSelectedRemoteServerAndFilePriorityApis()
