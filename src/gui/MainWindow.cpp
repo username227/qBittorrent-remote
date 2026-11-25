@@ -1559,8 +1559,9 @@ void MainWindow::applyLocalBehaviorPreferences()
 
     const bool hideZeroStatus = m_settings->value(
         QStringLiteral("Preferences/Behavior/HideZeroStatusFilters"), false).toBool();
+    const bool rssImages = m_settings->value(QStringLiteral("Preferences/RSS/LoadExternalImages"), false).toBool();
     const auto apply = [alternating, hideZero, mode, hideZeroStatus,
-                        stateColors, progressColor, separateTracker, contentDrag](ServerPane *pane) {
+                        stateColors, progressColor, separateTracker, contentDrag, rssImages](ServerPane *pane) {
         if (!pane)
             return;
         pane->table()->setAlternatingRowColors(alternating);
@@ -1569,6 +1570,7 @@ void MainWindow::applyLocalBehaviorPreferences()
         pane->model()->setUseStateColors(stateColors);
         pane->setProgressFollowsStateColors(progressColor);
         pane->setContentDragEnabled(contentDrag);
+        pane->setRssLoadExternalImages(rssImages);
         pane->setSeparateTrackerStatusFilter(separateTracker);
     };
     apply(m_emptyPane);
@@ -2173,6 +2175,7 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
     auto connection = std::make_shared<SessionContext>();
     connection->profile = profile;
     connection->pane = new ServerPane(m_views);
+    connection->pane->setRssLoadExternalImages(m_settings->value(QStringLiteral("Preferences/RSS/LoadExternalImages"), false).toBool());
     connection->pane->setContentDragEnabled(m_settings->value(
         QStringLiteral("Preferences/Behavior/TorrentContentDragEnabled"), true).toBool());
     connection->pane->setContentPathMappings(

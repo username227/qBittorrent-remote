@@ -4563,7 +4563,7 @@ private slots:
         modern.enableModernResponses();
         const QString feedUrl = QStringLiteral("https://feed.example/rss?key=a+b%2Fc&x=1");
         const QJsonObject article{{"id", "article-id"}, {"title", "Example article"},
-            {"date", "Wed, 25 Nov 2026 12:00:00 +0000"}, {"description", "<b>Example description</b>"},
+            {"date", "Wed, 25 Nov 2026 12:00:00 +0000"}, {"description", "<b>Example description</b><img src='https://feed.example/image.png' width='1200' height='900'><img src='file:///tmp/private.png'>"},
             {"link", "https://feed.example/news/story"}, {"torrentURL", "https://feed.example/download?key=a+b%2Fc&x=1"}, {"isRead", false}};
         const QJsonObject feed{{"uid", "id1"}, {"url", feedUrl}, {"articles", QJsonArray{article}}};
         const QJsonObject rule{{"enabled", false}, {"priority", 0}, {"useRegex", false},
@@ -4620,6 +4620,7 @@ private slots:
             articles->setCurrentItem(articles->topLevelItem(0));
             QVERIFY(preview->toPlainText().contains(QStringLiteral("Example description")));
             QVERIFY(preview->toHtml().contains(QStringLiteral("href=\"https://feed.example/news/story\"")));
+            QVERIFY(!preview->toHtml().contains(QStringLiteral("<img"), Qt::CaseInsensitive));
             QVERIFY(!preview->openExternalLinks());
             QTRY_VERIFY_WITH_TIMEOUT(add->isEnabled(), 6000);
             QCOMPARE(legacy.commandsFor("/api/v2/rss/markAsRead"), 1);
@@ -4755,7 +4756,7 @@ private slots:
         QVERIFY(tabs && prefs);
 
         struct Controls {
-            QCheckBox *reader, *autoDownload, *repacks;
+            QCheckBox *reader, *autoDownload, *repacks, *images;
             QSpinBox *interval, *delay, *articles;
             QPlainTextEdit *filters;
             QPushButton *rules, *apply;
@@ -4771,6 +4772,7 @@ private slots:
                     dlg->findChild<QCheckBox *>("checkRSSEnable"),
                     dlg->findChild<QCheckBox *>("checkRSSAutoDownloaderEnable"),
                     dlg->findChild<QCheckBox *>("checkSmartFilterDownloadRepacks"),
+                    dlg->findChild<QCheckBox *>("checkRSSLoadExternalImages"),
                     dlg->findChild<QSpinBox *>("spinRSSRefreshInterval"),
                     dlg->findChild<QSpinBox *>("spinRSSFetchDelay"),
                     dlg->findChild<QSpinBox *>("spinRSSMaxArticlesPerFeed"),
@@ -4778,7 +4780,7 @@ private slots:
                     dlg->findChild<QPushButton *>("btnEditRules"),
                     dlg->findChild<QPushButton *>("preferencesApply")
                 };
-                QVERIFY(sections && c.reader && c.autoDownload && c.repacks && c.interval
+                QVERIFY(sections && c.reader && c.autoDownload && c.repacks && c.images && c.interval
                     && c.delay && c.articles && c.filters && c.rules && c.apply);
                 sections->setCurrentRow(7);
                 QTRY_VERIFY_WITH_TIMEOUT(c.reader->isEnabled(), 6000);
@@ -4796,6 +4798,32 @@ private slots:
                 QStringLiteral("json"), QUrl::FullyDecoded).toUtf8()).object();
         };
 
+        tabs->setCurrentIndex(0);
+        withRSS([&](const Controls &c) {
+            QVERIFY(c.images->isEnabled() && !c.images->isChecked());
+            c.images->setChecked(true);
+            QVERIFY(c.apply->isEnabled());
+            c.images->setChecked(false);
+            QVERIFY(!c.apply->isEnabled());
+            c.images->setChecked(true);
+        });
+        QVERIFY(!settings.value(QStringLiteral("Preferences/RSS/LoadExternalImages"), false).toBool());
+        withRSS([&](const Controls &c) {
+            c.images->setChecked(true);
+            c.apply->click();
+            QTRY_VERIFY_WITH_TIMEOUT(!c.apply->isEnabled(), 6000);
+        });
+        QVERIFY(settings.value(QStringLiteral("Preferences/RSS/LoadExternalImages")).toBool());
+        QCOMPARE(legacy.commandsFor("/api/v2/app/setPreferences"), 0);
+        tabs->setCurrentIndex(1);
+        withRSS([&](const Controls &c) {
+            QVERIFY(c.images->isChecked());
+            c.images->setChecked(false);
+            c.apply->click();
+            QTRY_VERIFY_WITH_TIMEOUT(!c.apply->isEnabled(), 6000);
+        });
+        QVERIFY(!settings.value(QStringLiteral("Preferences/RSS/LoadExternalImages")).toBool());
+        QCOMPARE(modern.commandsFor("/api/v2/app/setPreferences"), 0);
         tabs->setCurrentIndex(0);
         for (bool save : {false, true})
         {

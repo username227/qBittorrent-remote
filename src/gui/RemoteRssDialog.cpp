@@ -38,6 +38,15 @@
 #include <QStyle>
 #include <QTabBar>
 #include <QTextBrowser>
+#include <QTextBlock>
+#include <QTextFragment>
+#include <QTextCursor>
+#include <QTextImageFormat>
+#include <QImageReader>
+#include <QBuffer>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 #include <QTreeWidgetItemIterator>
 #include <limits>
 
@@ -47,14 +56,144 @@ constexpr int PathRole = Qt::UserRole;
 constexpr int ArticleRole = Qt::UserRole + 1;
 constexpr int DateRole = Qt::UserRole + 2;
 
-// The article body is untrusted HTML. Never retrieve any embedded resources,
-// and route only explicitly clicked HTTP(S) links to the user's browser.
+// The document itself never retrieves resources. Optional raster images are
+// fetched explicitly, with a separate unauthenticated desktop network manager.
 class ArticleBrowser final : public QTextBrowser
 {
 public:
-    using QTextBrowser::QTextBrowser;
+    explicit ArticleBrowser(QWidget *parent) : QTextBrowser(parent), m_network(this) {}
+
+    void render(const QString &html, const QUrl &base, bool loadImages)
+    {
+        ++m_generation;
+        const auto pending = m_pending;
+        m_pending.clear();
+        for (auto *reply : pending) reply->abort();
+
+        setUpdatesEnabled(false);
+        setHtml(html);
+        struct Embedded { int position; int length; QTextImageFormat format; };
+        QList<Embedded> images;
+        for (QTextBlock block = document()->begin(); block.isValid(); block = block.next())
+            for (auto it = block.begin(); !it.atEnd(); ++it)
+            {
+                const auto fragment = it.fragment();
+                if (fragment.isValid() && fragment.charFormat().isImageFormat())
+                    images.append({fragment.position(), fragment.length(), fragment.charFormat().toImageFormat()});
+            }
+
+        // Walk backwards so removing objects never shifts an earlier cursor.
+        // Even malformed HTML is handled by Qt's parser, not by a tag regex.
+        int count = 0;
+        for (auto it = images.crbegin(); it != images.crend(); ++it)
+        {
+            QTextCursor cursor(document());
+            cursor.setPosition(it->position);
+            cursor.setPosition(it->position + it->length, QTextCursor::KeepAnchor);
+            QUrl url(it->format.name(), QUrl::StrictMode);
+            if (url.isRelative() && base.isValid()) url = base.resolved(url);
+            const bool allowed = loadImages && url.isValid() && !url.host().isEmpty()
+                && url.userInfo().isEmpty()
+                && (url.scheme() == QLatin1String("https") || url.scheme() == QLatin1String("http"))
+                && count < 16;
+            if (!allowed)
+            {
+                cursor.removeSelectedText();
+                continue;
+            }
+            // Never retain the feed's arbitrary image dimensions or source.
+            // A tiny transparent placeholder expands only after a valid image
+            // is received. Synthetic names isolate old document resources.
+            const QString key = QStringLiteral("rss-image:%1/%2").arg(m_generation).arg(++count);
+            QImage blank(1, 1, QImage::Format_ARGB32);
+            blank.fill(Qt::transparent);
+            document()->addResource(QTextDocument::ImageResource, QUrl(key), blank);
+            auto format = it->format;
+            format.setName(key);
+            format.setWidth(1);
+            format.setHeight(1);
+            cursor.setCharFormat(format);
+            fetchImage(url, key);
+        }
+        setUpdatesEnabled(true);
+        viewport()->update();
+    }
+
 protected:
-    QVariant loadResource(int, const QUrl &) override { return {}; }
+    QVariant loadResource(int type, const QUrl &) override
+    {
+        // Qt may ask for images, stylesheets, local files or other resources.
+        // No implicit request is ever permitted, even when images are enabled.
+        if (type == QTextDocument::ImageResource)
+        {
+            QImage blank(1, 1, QImage::Format_ARGB32);
+            blank.fill(Qt::transparent);
+            return blank;
+        }
+        return {};
+    }
+
+private:
+    void fetchImage(const QUrl &url, const QString &key)
+    {
+        QNetworkRequest request(url);
+        request.setAttribute(QNetworkRequest::CookieLoadControlAttribute, QNetworkRequest::Manual);
+        request.setAttribute(QNetworkRequest::CookieSaveControlAttribute, QNetworkRequest::Manual);
+        request.setAttribute(QNetworkRequest::AuthenticationReuseAttribute, QNetworkRequest::Manual);
+        // Never forward a request to a different origin or insecure redirect.
+        request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
+        request.setTransferTimeout(10000);
+        auto *reply = m_network.get(request);
+        m_pending.insert(reply);
+        const auto generation = m_generation;
+        constexpr qint64 limit = 4 * 1024 * 1024;
+        connect(reply, &QNetworkReply::readyRead, this, [reply] {
+            if (reply->bytesAvailable() > limit) reply->abort();
+        });
+        connect(reply, &QNetworkReply::finished, this, [this, reply, key, generation] {
+            m_pending.remove(reply);
+            const auto cleanup = [reply] { reply->deleteLater(); };
+            if (generation != m_generation || reply->error() != QNetworkReply::NoError
+                || reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() != 200
+                || reply->bytesAvailable() > limit)
+            { cleanup(); return; }
+            QByteArray data = reply->readAll();
+            cleanup();
+            QBuffer buffer(&data);
+            buffer.open(QIODevice::ReadOnly);
+            QImageReader reader(&buffer);
+            const auto format = reader.format().toLower();
+            if (!QList<QByteArray>{"png", "jpeg", "jpg", "gif", "webp", "bmp"}.contains(format)) return;
+            const QSize size = reader.size();
+            if (!size.isValid() || qint64(size.width()) * size.height() > 20000000) return;
+            const QSize scaled = size.scaled(QSize(800, 600), Qt::KeepAspectRatio);
+            reader.setScaledSize(size.width() > 800 || size.height() > 600 ? scaled : size);
+            const QImage image = reader.read();
+            if (image.isNull()) return;
+            document()->addResource(QTextDocument::ImageResource, QUrl(key), image);
+            // Locate the still-current object by its synthetic identifier.
+            for (QTextBlock block = document()->begin(); block.isValid(); block = block.next())
+                for (auto it = block.begin(); !it.atEnd(); ++it)
+                {
+                    const auto fragment = it.fragment();
+                    if (!fragment.isValid() || !fragment.charFormat().isImageFormat()) continue;
+                    auto imageFormat = fragment.charFormat().toImageFormat();
+                    if (imageFormat.name() != key) continue;
+                    imageFormat.setWidth(image.width());
+                    imageFormat.setHeight(image.height());
+                    QTextCursor cursor(document());
+                    cursor.setPosition(fragment.position());
+                    cursor.setPosition(fragment.position() + fragment.length(), QTextCursor::KeepAnchor);
+                    cursor.setCharFormat(imageFormat);
+                    document()->markContentsDirty(fragment.position(), fragment.length());
+                    return;
+                }
+        });
+    }
+
+    QNetworkAccessManager m_network;
+    QSet<QNetworkReply *> m_pending;
+    quint64 m_generation = 0;
 };
 
 class ArticleItem final : public QTreeWidgetItem
@@ -283,7 +422,9 @@ void RemoteRssWidget::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
     QTimer::singleShot(0, this, [this] {
-        if (isVisible() && !m_busy && !m_loaded && m_session && m_session->isConnected())
+        if (!isVisible()) return;
+        showArticle();
+        if (!m_busy && !m_loaded && m_session && m_session->isConnected())
             reload();
     });
 }
@@ -460,6 +601,16 @@ void RemoteRssWidget::showArticles()
     m_articles->verticalScrollBar()->setValue(scroll);
     showArticle();
 }
+void RemoteRssWidget::setLoadExternalImages(bool enabled)
+{
+    if (m_loadExternalImages == enabled) return;
+    m_loadExternalImages = enabled;
+    m_displayedArticle = {};
+    // Disabling immediately cancels requests and strips rendered images;
+    // enabling only fetches images in the currently visible article.
+    if (!enabled || isVisible()) showArticle();
+}
+
 void RemoteRssWidget::showArticle()
 {
     const auto a = selectedArticle();
@@ -469,7 +620,7 @@ void RemoteRssWidget::showArticle()
     if (visible != m_displayedArticle)
     {
         m_displayedArticle = visible;
-        if (a.isEmpty()) m_article->clear();
+        if (a.isEmpty()) static_cast<ArticleBrowser *>(m_article)->render({}, {}, false);
         else
         {
             const QString link = stringValue(a, "link");
@@ -479,7 +630,8 @@ void RemoteRssWidget::showArticle()
                 html += QStringLiteral("<p><a href=\"%1\">%2</a></p>")
                     .arg(link.toHtmlEscaped(), tr("Open original article").toHtmlEscaped());
             html += stringValue(a, "description");
-            m_article->setHtml(html);
+            static_cast<ArticleBrowser *>(m_article)->render(html, validUrl(link) ? QUrl(link) : QUrl(),
+                m_loadExternalImages && isVisible());
         }
     }
     updateActions();

@@ -366,6 +366,7 @@ void ServerPane::setRssAvailable(Remote::RemoteSession *session, bool visible)
     if (visible && !m_rssWidget && session)
     {
         m_rssWidget = new RemoteRssWidget(session, m_sectionTabs);
+        m_rssWidget->setLoadExternalImages(m_rssLoadExternalImages);
         if (m_layoutSettings && !m_layoutPrefix.isEmpty())
             m_rssWidget->restoreLayout(*m_layoutSettings, m_layoutPrefix);
         m_sectionTabs->addTab(m_rssWidget, tr("RSS"));
@@ -377,6 +378,12 @@ void ServerPane::setRssAvailable(Remote::RemoteSession *session, bool visible)
         m_sectionTabs->setTabVisible(m_sectionTabs->indexOf(m_rssWidget), visible);
     }
     m_sectionTabs->tabBar()->setVisible(visible && m_rssWidget);
+}
+
+void ServerPane::setRssLoadExternalImages(bool enabled)
+{
+    m_rssLoadExternalImages = enabled;
+    if (m_rssWidget) m_rssWidget->setLoadExternalImages(enabled);
 }
 
 void ServerPane::showRss()

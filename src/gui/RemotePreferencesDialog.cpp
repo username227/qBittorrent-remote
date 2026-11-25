@@ -630,6 +630,11 @@ void RemotePreferencesDialog::bindRemoteControl(const char *key, QWidget *widget
 
 void RemotePreferencesDialog::bindRSSControls()
 {
+    m_rssImageBaseline = m_settings.value(QStringLiteral("Preferences/RSS/LoadExternalImages"), false).toBool();
+    m_ui->checkRSSLoadExternalImages->setEnabled(true);
+    m_ui->checkRSSLoadExternalImages->setChecked(m_rssImageBaseline);
+    m_ui->checkRSSLoadExternalImages->setToolTip(tr("Local setting for all servers. Images are fetched directly by this desktop, which may reveal your IP address to their hosts. Disabled by default."));
+    connect(m_ui->checkRSSLoadExternalImages, &QCheckBox::toggled, this, [this] { updateButtons(); });
     // The native RSS page permits editing dormant reader and downloader
     // settings independently. Both upstream API generations use the same
     // keys and units: refresh minutes, same-host delay seconds, article count.
@@ -2641,7 +2646,9 @@ void RemotePreferencesDialog::updateButtons()
     m_checkMount->setEnabled(selected);
     if (m_applyButton)
         m_applyButton->setEnabled(!m_remoteBusy && (!m_changedProfiles.isEmpty()
-                                  || m_behaviorDirty || m_additionDirty || !remoteChanges().isEmpty()));
+                                  || m_behaviorDirty || m_additionDirty
+                                  || m_ui->checkRSSLoadExternalImages->isChecked() != m_rssImageBaseline
+                                  || !remoteChanges().isEmpty()));
     refreshNotificationControls();
 }
 
@@ -2845,6 +2852,12 @@ bool RemotePreferencesDialog::applyLocalChanges()
         m_settings.setValue(QStringLiteral("Preferences/Behavior/HideZeroStatusFilters"),
             m_ui->checkBoxHideZeroStatusFilters->isChecked());
         m_behaviorDirty = false;
+        emit localBehaviorApplied();
+    }
+    if (m_ui->checkRSSLoadExternalImages->isChecked() != m_rssImageBaseline)
+    {
+        m_rssImageBaseline = m_ui->checkRSSLoadExternalImages->isChecked();
+        m_settings.setValue(QStringLiteral("Preferences/RSS/LoadExternalImages"), m_rssImageBaseline);
         emit localBehaviorApplied();
     }
     updateButtons();

@@ -49,6 +49,7 @@ public:
     QSortFilterProxyModel *proxy() const noexcept { return m_proxy; }
 
     void setRssAvailable(Remote::RemoteSession *session, bool visible);
+    void setRssLoadExternalImages(bool enabled);
     void showRss();
     bool isRssSelected() const;
     void applySync(const QJsonObject &payload);
@@ -100,6 +101,7 @@ private:
     QTabWidget *m_sectionTabs = nullptr;
     QWidget *m_transfers = nullptr;
     RemoteRssWidget *m_rssWidget = nullptr;
+    bool m_rssLoadExternalImages = false;
     FilterSidebar *m_sidebar = nullptr;
     QTableView *m_table = nullptr;
     TorrentModel *m_model = nullptr;

@@ -24,6 +24,7 @@ class RemoteRssWidget final : public QWidget
 public:
     explicit RemoteRssWidget(Remote::RemoteSession *session, QWidget *parent = nullptr,
                              bool rulesFirst = false);
+    void setLoadExternalImages(bool enabled);
     void saveLayout(QSettings &settings, const QString &prefix) const;
     void restoreLayout(QSettings &settings, const QString &prefix);
 protected:
@@ -64,6 +65,7 @@ private:
     QSplitter *m_split = nullptr, *m_right = nullptr;
     QPushButton *m_downloader = nullptr;
     bool m_rulesOnly = false;
+    bool m_loadExternalImages = false;
     QJsonObject m_displayedArticle;
     QListWidget *m_ruleList = nullptr;
     QPlainTextEdit *m_ruleSummary = nullptr;
