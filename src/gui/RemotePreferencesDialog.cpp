@@ -232,6 +232,7 @@ RemotePreferencesDialog::RemotePreferencesDialog(QSettings &settings,
     m_banRangesSupported = version.segmentCount() >= 3
         && version >= QVersionNumber(5, 3, 0);
     bindIPFilterControls();
+    bindRSSControls();
     bindSpeedControls();
     bindBitTorrentPrivacyControls();
     bindBitTorrentQueueingControls();
@@ -624,6 +625,57 @@ void RemotePreferencesDialog::bindRemoteControl(const char *key, QWidget *widget
     else
         return;
     bindRemoteField(std::move(field));
+}
+
+void RemotePreferencesDialog::bindRSSControls()
+{
+    // The native RSS page permits editing dormant reader and downloader
+    // settings independently. Both upstream API generations use the same
+    // keys and units: refresh minutes, same-host delay seconds, article count.
+    bindRemoteControl("rss_processing_enabled", m_ui->checkRSSEnable, {},
+        tr("Fetch RSS feeds on the connected server, even when this application is closed."));
+    const auto bindSpin = [this](const char *key, QSpinBox *spin, const QString &tip) {
+        if (auto *editor = spin->findChild<QLineEdit *>())
+        {
+            editor->setEnabled(true);
+            editor->setToolTip(QString());
+        }
+        bindRemoteControl(key, spin, {}, tip);
+    };
+    bindSpin("rss_refresh_interval", m_ui->spinRSSRefreshInterval,
+        tr("Default feed refresh interval in minutes on the connected server."));
+    bindSpin("rss_fetch_delay", m_ui->spinRSSFetchDelay,
+        tr("Delay between requests to the same host in seconds."));
+    bindSpin("rss_max_articles_per_feed", m_ui->spinRSSMaxArticlesPerFeed,
+        tr("Maximum number of stored articles per feed on the connected server."));
+    bindRemoteControl("rss_auto_downloading_enabled", m_ui->checkRSSAutoDownloaderEnable, {},
+        tr("Automatically add torrents matching existing RSS rules on the connected server."));
+    bindRemoteControl("rss_download_repack_proper_episodes", m_ui->checkSmartFilterDownloadRepacks, {},
+        tr("Allow REPACK and PROPER releases when a rule uses the smart episode filter."));
+    bindRemoteControl("rss_smart_episode_filters", m_ui->textSmartEpisodeFilters, {},
+        tr("Server smart episode filter patterns, one per line. Preserve the server's text format."));
+
+    // Editing RSS rules is an independent remote collection workflow, not
+    // a preference key. Do not open a local or nonfunctional rule editor.
+    m_ui->btnEditRules->setEnabled(false);
+    m_ui->btnEditRules->setToolTip(tr("Requires the native remote RSS rule editor, not yet implemented."));
+}
+
+bool RemotePreferencesDialog::validateRSSChanges(const QJsonObject &changes)
+{
+    // Enabling processing can immediately evaluate existing server rules;
+    // enabling the reader can also feed an already-enabled auto downloader.
+    const bool startsAuto = changes.value(QStringLiteral("rss_auto_downloading_enabled")).toBool();
+    const bool startsReader = changes.value(QStringLiteral("rss_processing_enabled")).toBool();
+    const bool autoMayBeEnabled = !remoteFieldAvailable("rss_auto_downloading_enabled")
+        || m_ui->checkRSSAutoDownloaderEnable->isChecked();
+    if (!startsAuto && !(startsReader && autoMayBeEnabled))
+        return true;
+    return QMessageBox::question(this, tr("Enable server RSS downloads"),
+        tr("The connected server may immediately evaluate existing RSS auto-download rules "
+           "and add matching torrents. This can continue when qBittorrent Remote is closed. "
+           "Apply these settings?"), QMessageBox::Yes | QMessageBox::No, QMessageBox::No)
+        == QMessageBox::Yes;
 }
 
 void RemotePreferencesDialog::bindSpeedControls()
@@ -1949,6 +2001,10 @@ void RemotePreferencesDialog::refreshRemoteControls()
         if (auto *combo = qobject_cast<QComboBox *>(field.widget))
             combo->view()->setEnabled(supported);
     }
+    m_ui->label_111->setEnabled(m_ui->spinRSSRefreshInterval->isEnabled());
+    m_ui->labelRSSFetchDelay->setEnabled(m_ui->spinRSSFetchDelay->isEnabled());
+    m_ui->label_12->setEnabled(m_ui->spinRSSMaxArticlesPerFeed->isEnabled());
+    m_ui->label_5->setEnabled(m_ui->textSmartEpisodeFilters->isEnabled());
     m_ui->stopConditionLabel->setEnabled(m_ui->stopConditionComboBox->isEnabled());
     m_ui->lbl_encryption->setEnabled(m_ui->comboEncryption->isEnabled());
     m_ui->labelMaxActiveCheckingTorrents->setEnabled(m_ui->spinBoxMaxActiveCheckingTorrents->isEnabled());
@@ -2601,7 +2657,7 @@ void RemotePreferencesDialog::applyChanges(bool closeAfter)
     }
     if (!validateDownloadChanges(changes) || !validateIPFilterChanges(changes)
         || !validateSpeedChanges(changes) || !validateSeedingLimitChanges(changes)
-        || !validateAutomaticTrackerChanges(changes))
+        || !validateAutomaticTrackerChanges(changes) || !validateRSSChanges(changes))
     {
         m_closeAfterApply = false;
         return;

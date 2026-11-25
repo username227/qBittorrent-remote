@@ -62,6 +62,8 @@ private:
     void refreshProxyControls();
     void bindIPFilterControls();
     void bindSpeedControls();
+    void bindRSSControls();
+    bool validateRSSChanges(const QJsonObject &changes);
     void bindBitTorrentPrivacyControls();
     void bindBitTorrentQueueingControls();
     void bindBitTorrentSeedingLimits();

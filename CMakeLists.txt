@@ -325,6 +325,10 @@ if(BUILD_TESTING)
         ipFilteringFollowsSelectedServer
     )
 
+    add_remote_workflow_group(remote_rss_preferences_workflow 60
+        rssPreferencesFollowSelectedServer
+    )
+
     add_remote_workflow_group(remote_speed_preferences_workflow 60
         speedPreferencesFollowSelectedServer
     )
