@@ -218,6 +218,7 @@ RemotePreferencesDialog::RemotePreferencesDialog(QSettings &settings,
     bindIPFilterControls();
     bindSpeedControls();
     bindBitTorrentPrivacyControls();
+    bindBitTorrentQueueingControls();
     populateAdvancedPlaceholders();
     buildRemotePathsPage(preferredProfileId);
 
@@ -730,6 +731,47 @@ void RemotePreferencesDialog::bindBitTorrentPrivacyControls()
     bindRemoteControl("anonymous_mode", m_ui->checkAnonymousMode, {},
         tr("Reduce identifying information sent by the connected server. "
            "This does not enable a VPN or proxy or hide its IP address."));
+}
+
+void RemotePreferencesDialog::bindBitTorrentQueueingControls()
+{
+    // Unlike connection limits, zero is a distinct queue limit; only -1
+    // is represented by the native infinity symbol. Slow-rate preferences
+    // already use KiB/s, unlike the global and alternative speed limits.
+    const auto bindSpin = [this](const char *key, QSpinBox *spin,
+        std::function<bool()> dependency = {}, QString tooltip = {}) {
+        // The placeholder setup separately disables spin-box editors.
+        if (auto *editor = spin->findChild<QLineEdit *>())
+        {
+            editor->setEnabled(true);
+            editor->setToolTip(QString());
+        }
+        bindRemoteControl(key, spin, std::move(dependency), std::move(tooltip));
+    };
+    const QString limitTip = tr("Limit on the connected server; -1 means unlimited.");
+    bindSpin("max_active_checking_torrents", m_ui->spinBoxMaxActiveCheckingTorrents,
+        {}, limitTip);
+    bindRemoteControl("queueing_enabled", m_ui->checkEnableQueueing);
+    const auto queueing = [this]() {
+        return remoteFieldAvailable("queueing_enabled") && m_ui->checkEnableQueueing->isChecked();
+    };
+    bindSpin("max_active_downloads", m_ui->spinMaxActiveDownloads, queueing, limitTip);
+    bindSpin("max_active_uploads", m_ui->spinMaxActiveUploads, queueing, limitTip);
+    bindSpin("max_active_torrents", m_ui->spinMaxActiveTorrents, queueing, limitTip);
+    bindRemoteControl("dont_count_slow_torrents",
+        m_ui->checkIgnoreSlowTorrentsForQueueing, queueing,
+        tr("Slow torrents are excluded from the active download and upload limits. "
+           "The maximum active torrents limit remains a hard cap."));
+    const auto ignoreSlow = [this, queueing]() {
+        return queueing() && remoteFieldAvailable("dont_count_slow_torrents")
+            && m_ui->checkIgnoreSlowTorrentsForQueueing->isChecked();
+    };
+    bindSpin("slow_torrent_dl_rate_threshold", m_ui->spinDownloadRateForSlowTorrents,
+        ignoreSlow, tr("Download threshold in KiB/s on the connected server."));
+    bindSpin("slow_torrent_ul_rate_threshold", m_ui->spinUploadRateForSlowTorrents,
+        ignoreSlow, tr("Upload threshold in KiB/s on the connected server."));
+    bindSpin("slow_torrent_inactive_timer", m_ui->spinSlowTorrentsInactivityTimer,
+        ignoreSlow, tr("Inactivity timer in seconds on the connected server."));
 }
 
 void RemotePreferencesDialog::bindConnectionListeningControls()
@@ -1689,6 +1731,13 @@ void RemotePreferencesDialog::refreshRemoteControls()
     }
     m_ui->stopConditionLabel->setEnabled(m_ui->stopConditionComboBox->isEnabled());
     m_ui->lbl_encryption->setEnabled(m_ui->comboEncryption->isEnabled());
+    m_ui->labelMaxActiveCheckingTorrents->setEnabled(m_ui->spinBoxMaxActiveCheckingTorrents->isEnabled());
+    m_ui->label_max_active_dl->setEnabled(m_ui->spinMaxActiveDownloads->isEnabled());
+    m_ui->label_max_active_up->setEnabled(m_ui->spinMaxActiveUploads->isEnabled());
+    m_ui->maxActiveTorrents_lbl->setEnabled(m_ui->spinMaxActiveTorrents->isEnabled());
+    m_ui->labelDownloadRateForSlowTorrents->setEnabled(m_ui->spinDownloadRateForSlowTorrents->isEnabled());
+    m_ui->labelUploadRateForSlowTorrents->setEnabled(m_ui->spinUploadRateForSlowTorrents->isEnabled());
+    m_ui->labelSlowTorrentInactivityTimer->setEnabled(m_ui->spinSlowTorrentsInactivityTimer->isEnabled());
     refreshWatchedFolderButtons();
     refreshNotificationControls();
     refreshBackupControls();

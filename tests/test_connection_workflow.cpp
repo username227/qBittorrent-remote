@@ -4581,6 +4581,252 @@ private slots:
         QCOMPARE(legacy.serverPreferences(), expectedLegacy);
     }
 
+    void bitTorrentQueueingFollowsSelectedServer()
+    {
+        DemoQbittorrentServer legacy(true), modern(true);
+        modern.enableModernResponses();
+        const QJsonObject initialLegacy{
+            {QStringLiteral("max_active_checking_torrents"), 1},
+            {QStringLiteral("queueing_enabled"), false},
+            {QStringLiteral("max_active_downloads"), 3},
+            {QStringLiteral("max_active_uploads"), 4},
+            {QStringLiteral("max_active_torrents"), 5},
+            {QStringLiteral("dont_count_slow_torrents"), false},
+            {QStringLiteral("slow_torrent_dl_rate_threshold"), 2},
+            {QStringLiteral("slow_torrent_ul_rate_threshold"), 3},
+            {QStringLiteral("slow_torrent_inactive_timer"), 60}
+        };
+        const QJsonObject initialModern{
+            {QStringLiteral("max_active_checking_torrents"), -1},
+            {QStringLiteral("queueing_enabled"), true},
+            {QStringLiteral("max_active_downloads"), 0},
+            {QStringLiteral("max_active_uploads"), -1},
+            {QStringLiteral("max_active_torrents"), 8},
+            {QStringLiteral("dont_count_slow_torrents"), true},
+            {QStringLiteral("slow_torrent_dl_rate_threshold"), 12},
+            {QStringLiteral("slow_torrent_ul_rate_threshold"), 0},
+            {QStringLiteral("slow_torrent_inactive_timer"), 120}
+        };
+        legacy.setServerPreferences(initialLegacy);
+        modern.setServerPreferences(initialModern);
+        QVERIFY(legacy.start() && modern.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("prefs.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, legacy.url());
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(QStringLiteral("v5.1.4")), 6000);
+        openConnectDialog(window, modern.url(), false, true, true, QStringLiteral("Modern seedbox"));
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(QStringLiteral("v5.3.0")), 6000);
+        auto *tabs = window.findChild<QTabWidget *>(QStringLiteral("serverTabs"));
+        auto *prefs = window.findChild<QAction *>(QStringLiteral("actionOptions"));
+        QVERIFY(tabs && prefs);
+
+        struct Controls
+        {
+            QSpinBox *checking, *downloads, *uploads, *total, *dlRate, *ulRate, *timer;
+            QGroupBox *queue, *slow;
+            QPushButton *apply;
+        };
+        const auto withQueue = [&](auto exercise) {
+            bool finished = false;
+            QTimer::singleShot(0, &window, [&]() {
+                auto *dlg = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget());
+                QVERIFY(dlg);
+                const auto cleanup = qScopeGuard([dlg]() { if (dlg->isVisible()) dlg->reject(); });
+                auto *sections = dlg->findChild<QListWidget *>(QStringLiteral("preferencesSections"));
+                const Controls c{
+                    dlg->findChild<QSpinBox *>(QStringLiteral("spinBoxMaxActiveCheckingTorrents")),
+                    dlg->findChild<QSpinBox *>(QStringLiteral("spinMaxActiveDownloads")),
+                    dlg->findChild<QSpinBox *>(QStringLiteral("spinMaxActiveUploads")),
+                    dlg->findChild<QSpinBox *>(QStringLiteral("spinMaxActiveTorrents")),
+                    dlg->findChild<QSpinBox *>(QStringLiteral("spinDownloadRateForSlowTorrents")),
+                    dlg->findChild<QSpinBox *>(QStringLiteral("spinUploadRateForSlowTorrents")),
+                    dlg->findChild<QSpinBox *>(QStringLiteral("spinSlowTorrentsInactivityTimer")),
+                    dlg->findChild<QGroupBox *>(QStringLiteral("checkEnableQueueing")),
+                    dlg->findChild<QGroupBox *>(QStringLiteral("checkIgnoreSlowTorrentsForQueueing")),
+                    dlg->findChild<QPushButton *>(QStringLiteral("preferencesApply"))
+                };
+                QVERIFY(sections && c.checking && c.downloads && c.uploads && c.total
+                    && c.dlRate && c.ulRate && c.timer && c.queue && c.slow && c.apply);
+                sections->setCurrentRow(5);
+                QTRY_VERIFY_WITH_TIMEOUT(c.checking->isEnabled(), 6000);
+                auto *editor = c.checking->findChild<QLineEdit *>();
+                QVERIFY(editor && editor->isEnabled());
+                exercise(c);
+                finished = true;
+            });
+            prefs->trigger();
+            QVERIFY(finished);
+        };
+        const auto delta = [](DemoQbittorrentServer &server) {
+            const QUrlQuery form(QString::fromUtf8(server.lastCommandBody("/api/v2/app/setPreferences")));
+            return QJsonDocument::fromJson(form.queryItemValue(
+                QStringLiteral("json"), QUrl::FullyDecoded).toUtf8()).object();
+        };
+
+        tabs->setCurrentIndex(0);
+        for (bool save : {false, true})
+        {
+            withQueue([&](const Controls &c) {
+                QVERIFY(c.queue->isEnabled() && !c.queue->isChecked());
+                QVERIFY(!c.downloads->isEnabled() && !c.uploads->isEnabled()
+                    && !c.total->isEnabled() && !c.slow->isEnabled());
+                QCOMPARE(c.checking->value(), 1);
+                QCOMPARE(c.downloads->value(), 3);
+                QCOMPARE(c.uploads->value(), 4);
+                QCOMPARE(c.total->value(), 5);
+                QCOMPARE(c.dlRate->value(), 2);
+                QCOMPARE(c.ulRate->value(), 3);
+                QCOMPARE(c.timer->value(), 60);
+                QVERIFY(!c.apply->isEnabled());
+                c.queue->setChecked(true);
+                QVERIFY(c.downloads->isEnabled() && c.uploads->isEnabled()
+                    && c.total->isEnabled() && c.slow->isEnabled());
+                QVERIFY(c.slow->toolTip().contains(QStringLiteral("hard cap")));
+                QVERIFY(!c.dlRate->isEnabled() && !c.ulRate->isEnabled() && !c.timer->isEnabled());
+                c.queue->setChecked(false);
+                QVERIFY(!c.apply->isEnabled());
+                c.queue->setChecked(true);
+                c.slow->setChecked(true);
+                QVERIFY(c.dlRate->isEnabled() && c.ulRate->isEnabled() && c.timer->isEnabled());
+                for (auto *spin : {c.downloads, c.uploads, c.total, c.dlRate, c.ulRate, c.timer})
+                {
+                    auto *editor = spin->findChild<QLineEdit *>();
+                    QVERIFY(editor && editor->isEnabled());
+                }
+                c.checking->setValue(-1);
+                QCOMPARE(c.checking->text(), QStringLiteral("∞"));
+                c.downloads->setValue(0);
+                c.uploads->setValue(-1);
+                c.total->setValue(2147483647);
+                c.dlRate->setValue(2000000);
+                c.ulRate->setValue(0);
+                c.timer->setValue(999999);
+                c.slow->setChecked(false);
+                QVERIFY(!c.dlRate->isEnabled());
+                QCOMPARE(c.dlRate->value(), 2000000);
+                c.slow->setChecked(true);
+                c.queue->setChecked(false);
+                QVERIFY(!c.slow->isEnabled() && !c.dlRate->isEnabled());
+                QVERIFY(c.slow->isChecked());
+                c.queue->setChecked(true);
+                QVERIFY(c.slow->isEnabled() && c.dlRate->isEnabled());
+                QCOMPARE(c.timer->value(), 999999);
+                QVERIFY(c.apply->isEnabled());
+                QCOMPARE(legacy.commandsFor("/api/v2/app/setPreferences"), 0);
+                if (save)
+                {
+                    c.apply->click();
+                    QTRY_VERIFY_WITH_TIMEOUT(c.checking->isEnabled() && !c.apply->isEnabled(), 6000);
+                }
+            });
+            if (!save)
+                QCOMPARE(legacy.serverPreferences(), initialLegacy);
+        }
+        const QJsonObject expectedLegacy{
+            {QStringLiteral("max_active_checking_torrents"), -1},
+            {QStringLiteral("queueing_enabled"), true},
+            {QStringLiteral("max_active_downloads"), 0},
+            {QStringLiteral("max_active_uploads"), -1},
+            {QStringLiteral("max_active_torrents"), 2147483647},
+            {QStringLiteral("dont_count_slow_torrents"), true},
+            {QStringLiteral("slow_torrent_dl_rate_threshold"), 2000000},
+            {QStringLiteral("slow_torrent_ul_rate_threshold"), 0},
+            {QStringLiteral("slow_torrent_inactive_timer"), 999999}
+        };
+        QCOMPARE(delta(legacy), expectedLegacy);
+        QCOMPARE(legacy.serverPreferences(), expectedLegacy);
+        QCOMPARE(modern.serverPreferences(), initialModern);
+        withQueue([](const Controls &c) {
+            QVERIFY(c.queue->isChecked() && c.slow->isChecked() && c.timer->isEnabled());
+            QCOMPARE(c.checking->value(), -1);
+            QCOMPARE(c.downloads->value(), 0);
+            QCOMPARE(c.uploads->value(), -1);
+            QCOMPARE(c.total->value(), 2147483647);
+            QCOMPARE(c.dlRate->value(), 2000000);
+            QCOMPARE(c.ulRate->value(), 0);
+            QCOMPARE(c.timer->value(), 999999);
+            QVERIFY(!c.apply->isEnabled());
+        });
+
+        tabs->setCurrentIndex(1);
+        withQueue([&](const Controls &c) {
+            QVERIFY(c.queue->isChecked() && c.slow->isChecked());
+            QCOMPARE(c.total->value(), 8);
+            QCOMPARE(c.dlRate->value(), 12);
+            QCOMPARE(c.timer->value(), 120);
+            c.queue->setChecked(false);
+            QVERIFY(c.checking->isEnabled());
+            QVERIFY(!c.slow->isEnabled() && !c.downloads->isEnabled() && !c.timer->isEnabled());
+            c.apply->click();
+            QTRY_VERIFY_WITH_TIMEOUT(c.checking->isEnabled() && !c.apply->isEnabled(), 6000);
+        });
+        const QJsonObject disableQueue{{QStringLiteral("queueing_enabled"), false}};
+        QCOMPARE(delta(modern), disableQueue);
+        QJsonObject expectedModern = initialModern;
+        expectedModern.insert(QStringLiteral("queueing_enabled"), false);
+        QCOMPARE(modern.serverPreferences(), expectedModern);
+        withQueue([&](const Controls &c) {
+            QVERIFY(!c.queue->isChecked() && c.slow->isChecked());
+            QCOMPARE(c.dlRate->value(), 12);
+            c.queue->setChecked(true);
+            QVERIFY(c.timer->isEnabled());
+            c.slow->setChecked(false);
+            QVERIFY(!c.timer->isEnabled());
+            c.apply->click();
+            QTRY_VERIFY_WITH_TIMEOUT(c.checking->isEnabled() && !c.apply->isEnabled(), 6000);
+        });
+        const QJsonObject enableQueueDisableSlow{
+            {QStringLiteral("queueing_enabled"), true},
+            {QStringLiteral("dont_count_slow_torrents"), false}
+        };
+        QCOMPARE(delta(modern), enableQueueDisableSlow);
+        expectedModern.insert(QStringLiteral("queueing_enabled"), true);
+        expectedModern.insert(QStringLiteral("dont_count_slow_torrents"), false);
+        QCOMPARE(modern.serverPreferences(), expectedModern);
+
+        // Missing and unrepresentable settings must not leak defaults.
+        QJsonObject malformed = expectedModern;
+        malformed.remove(QStringLiteral("queueing_enabled"));
+        malformed.insert(QStringLiteral("max_active_downloads"), -2);
+        malformed.insert(QStringLiteral("slow_torrent_dl_rate_threshold"), 2000001);
+        malformed.insert(QStringLiteral("slow_torrent_ul_rate_threshold"), QStringLiteral("2"));
+        malformed.insert(QStringLiteral("slow_torrent_inactive_timer"), 0);
+        modern.setServerPreferences(malformed);
+        withQueue([&](const Controls &c) {
+            QVERIFY(!c.queue->isEnabled() && !c.slow->isEnabled() && !c.downloads->isEnabled());
+            QVERIFY(c.checking->isEnabled());
+            c.checking->setValue(2);
+            c.apply->click();
+            QTRY_VERIFY_WITH_TIMEOUT(c.checking->isEnabled() && !c.apply->isEnabled(), 6000);
+        });
+        const QJsonObject checkingOnly{{QStringLiteral("max_active_checking_torrents"), 2}};
+        QCOMPARE(delta(modern), checkingOnly);
+        malformed.insert(QStringLiteral("max_active_checking_torrents"), 2);
+        QCOMPARE(modern.serverPreferences(), malformed);
+        malformed.insert(QStringLiteral("queueing_enabled"), true);
+        malformed.insert(QStringLiteral("dont_count_slow_torrents"), true);
+        modern.setServerPreferences(malformed);
+        withQueue([&](const Controls &c) {
+            QVERIFY(c.queue->isEnabled() && c.queue->isChecked() && c.slow->isEnabled()
+                && c.slow->isChecked());
+            QVERIFY(!c.downloads->isEnabled() && !c.dlRate->isEnabled()
+                && !c.ulRate->isEnabled() && !c.timer->isEnabled());
+            QVERIFY(c.uploads->isEnabled());
+            c.uploads->setValue(7);
+            c.apply->click();
+            QTRY_VERIFY_WITH_TIMEOUT(c.checking->isEnabled() && !c.apply->isEnabled(), 6000);
+        });
+        const QJsonObject uploadsOnly{{QStringLiteral("max_active_uploads"), 7}};
+        QCOMPARE(delta(modern), uploadsOnly);
+        malformed.insert(QStringLiteral("max_active_uploads"), 7);
+        QCOMPARE(modern.serverPreferences(), malformed);
+        QCOMPARE(legacy.serverPreferences(), expectedLegacy);
+    }
+
     void speedPreferencesFollowSelectedServer()
     {
         DemoQbittorrentServer legacy(true), modern(true);
