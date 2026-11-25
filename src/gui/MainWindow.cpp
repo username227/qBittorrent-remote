@@ -75,6 +75,7 @@
 #include <QStatusBar>
 #include <QStyle>
 #include <QToolBar>
+#include <QToolButton>
 #include <QWidget>
 #include <QSignalBlocker>
 #include <QTimer>
@@ -321,6 +322,7 @@ struct MainWindow::SessionContext
     QString version;
     QString apiVersion;
     bool connected = false;
+    QString disconnectReason;
     bool altSpeedModeKnown = false;
     bool altSpeedMode = false;
     QList<PendingOriginalDeletion> pendingOriginalDeletions;
@@ -511,9 +513,21 @@ void MainWindow::setupMainArea()
             menu.addSeparator();
             auto *disconnect = menu.addAction(upstreamIcon("disconnected"), tr("Disconnect"));
             disconnect->setObjectName(QStringLiteral("serverTabDisconnect"));
+            disconnect->setEnabled(connection->session != nullptr);
             connect(disconnect, &QAction::triggered, this, [this, connection]() {
-                if (containsConnection(connection))
-                    removeConnection(connection);
+                disconnectConnection(connection, tr("Disconnected manually."));
+            });
+            auto *reconnect = menu.addAction(tr("Reconnect..."));
+            reconnect->setObjectName(QStringLiteral("serverTabReconnect"));
+            reconnect->setEnabled(!connection->session);
+            connect(reconnect, &QAction::triggered, this, [this, connection]() {
+                if (containsConnection(connection) && !connection->session)
+                    showConnectionDialog(connection->profile.id);
+            });
+            auto *close = menu.addAction(tr("Close Tab"));
+            close->setObjectName(QStringLiteral("serverTabClose"));
+            connect(close, &QAction::triggered, this, [this, connection]() {
+                removeConnection(connection);
             });
             menu.exec(tabBar->mapToGlobal(position));
         });
@@ -635,6 +649,12 @@ void MainWindow::setupActions()
     m_disconnectAction = m_ui->menuFile->addAction(tr("Disconnect"));
     m_disconnectAction->setObjectName(QStringLiteral("disconnectServer"));
     m_disconnectAction->setEnabled(false);
+    m_reconnectAction = m_ui->menuFile->addAction(tr("Reconnect..."));
+    m_reconnectAction->setObjectName(QStringLiteral("reconnectServer"));
+    m_reconnectAction->setEnabled(false);
+    m_closeTabAction = m_ui->menuFile->addAction(tr("Close Tab"));
+    m_closeTabAction->setObjectName(QStringLiteral("closeServerTab"));
+    m_closeTabAction->setEnabled(false);
     m_ui->menuFile->addSeparator();
     m_ui->menuFile->addAction(m_ui->actionOpen);
     m_ui->menuFile->addAction(m_ui->actionDownloadFromURL);
@@ -709,9 +729,15 @@ void MainWindow::setupActions()
         });
 
     connect(m_connectAction, &QAction::triggered, this, [this]() {
-        ConnectionDialog dialog(*m_settings, this, m_vault);
-        if (dialog.exec() == QDialog::Accepted)
-            connectToProfile(dialog.selectedProfile(), dialog.password());
+        showConnectionDialog();
+    });
+    connect(m_reconnectAction, &QAction::triggered, this, [this]() {
+        if (const auto connection = activeConnection(); connection && !connection->session)
+            showConnectionDialog(connection->profile.id);
+    });
+    connect(m_closeTabAction, &QAction::triggered, this, [this]() {
+        if (const auto connection = activeConnection())
+            removeConnection(connection);
     });
     connect(m_disconnectAction, &QAction::triggered, this,
         &MainWindow::disconnectCurrentServer);
@@ -730,7 +756,7 @@ void MainWindow::setupActions()
                                    Remote::RemoteSession::TorrentCommand command)
     {
         connect(action, &QAction::triggered, this, [this, command]() {
-            if (const auto server = activeConnection())
+            if (const auto server = activeConnection(); server && server->connected)
                 server->session->commandTorrents(command, selectedTorrentHashes());
         });
     };
@@ -1616,7 +1642,9 @@ void MainWindow::updateStatusBarIndicators()
     const char *connectionIcon = "disconnected";
     QString explanation;
     if (!ready)
-        explanation = tr("Not connected to a server");
+        explanation = server && !server->disconnectReason.isEmpty()
+            ? tr("Not connected to %1: %2").arg(server->profile.name, server->disconnectReason)
+            : tr("Not connected to a server");
     else if (status == QLatin1String("connected"))
     {
         connectionIcon = "connected";
@@ -1633,7 +1661,7 @@ void MainWindow::updateStatusBarIndicators()
         explanation = tr("BitTorrent connectivity has not been reported by the selected server.");
     m_connectionStatusLabel->setPixmap(upstreamIcon(connectionIcon).pixmap(
         m_alternativeSpeedButton->iconSize(), devicePixelRatioF()));
-    m_connectionStatusLabel->setToolTip(tr("<b>Connection Status:</b><br>%1").arg(explanation));
+    m_connectionStatusLabel->setToolTip(tr("<b>Connection Status:</b><br>%1").arg(explanation.toHtmlEscaped()));
     m_connectionStatusLabel->setAccessibleDescription(explanation);
 
     const bool known = ready && server->altSpeedModeKnown;
@@ -1663,7 +1691,7 @@ void MainWindow::refreshTrayDisconnectMenu()
         action->setData(profileId);
         connect(action, &QAction::triggered, this, [this, profileId]() {
             if (const auto live = connectedById(profileId))
-                removeConnection(live);
+                disconnectConnection(live, tr("Disconnected manually."));
             // This is strictly a client-side disconnect + Web API logout;
             // downloading and seeding on the server keep running.
         });
@@ -1861,7 +1889,9 @@ void MainWindow::updateActiveUi()
     const bool ready = connection && connection->connected;
     m_searchEdit->setEnabled(ready);
     m_searchBy->setEnabled(ready);
-    m_disconnectAction->setEnabled(static_cast<bool>(connection));
+    m_disconnectAction->setEnabled(connection && connection->session);
+    m_reconnectAction->setEnabled(connection && !connection->session);
+    m_closeTabAction->setEnabled(static_cast<bool>(connection));
     if (pane)
         pane->sidebar()->setVisible(m_ui->actionShowFiltersSidebar->isChecked());
     updateTorrentActionState();
@@ -1888,9 +1918,14 @@ void MainWindow::updateActiveUi()
             m_ui->statusBar->showMessage(
                 tr("Connected to %1 — qBittorrent %2 (Web API %3).")
                     .arg(connection->profile.name, connection->version, connection->apiVersion));
-        else
+        else if (connection->session)
             m_ui->statusBar->showMessage(
                 tr("Connecting to %1...").arg(connection->profile.name));
+        else
+        {
+            setWindowTitle(tr("qBittorrent Remote — %1 (Disconnected)").arg(connection->profile.name));
+            m_ui->statusBar->showMessage(disconnectedStatus(*connection));
+        }
     }
 }
 
@@ -1932,25 +1967,68 @@ void MainWindow::removeRemoteTorrents(const std::shared_ptr<SessionContext> &ser
         hashes, deleteFiles->isChecked());
 }
 
-void MainWindow::removeConnection(const std::shared_ptr<SessionContext> &connection)
+QString MainWindow::disconnectedStatus(const SessionContext &connection) const
+{
+    QString message = tr("Not connected to %1: %2")
+        .arg(connection.profile.name, connection.disconnectReason);
+    if (connection.pane->model()->hasFullSync())
+        message += tr(" Last known torrent data is stale.");
+    return message;
+}
+
+void MainWindow::updateServerTab(const std::shared_ptr<SessionContext> &connection)
+{
+    const int index = m_views->indexOf(connection->pane);
+    if (index < 0)
+        return;
+    m_views->setTabText(index, connection->profile.name);
+    const bool offline = !connection->session;
+    m_views->setTabIcon(index, upstreamIcon(offline ? "disconnected" : "folder-remote"));
+    m_views->setTabToolTip(index, offline ? disconnectedStatus(*connection).toHtmlEscaped()
+        : connection->profile.name.toHtmlEscaped());
+    if (auto *button = m_views->tabBar()->tabButton(index, QTabBar::RightSide))
+        button->setToolTip(offline ? tr("Close tab") : tr("Disconnect and close tab"));
+}
+
+void MainWindow::disconnectConnection(const std::shared_ptr<SessionContext> &connection,
+                                      const QString &reason)
+{
+    if (!containsConnection(connection) || !connection->session)
+        return;
+    auto *session = connection->session;
+    // Clear readiness BEFORE abort/logout: pending callbacks and modal
+    // operations must never treat a stale connection as authenticated.
+    connection->session = nullptr;
+    connection->connected = false;
+    connection->disconnectReason = reason;
+    connection->altSpeedModeKnown = false;
+    connection->pendingOriginalDeletions.clear();
+    connection->incompleteCompletionTimes.clear();
+    connection->pane->setEnabled(false);
+    QObject::disconnect(session, nullptr, this, nullptr);
+    QObject::disconnect(session, nullptr, connection->pane, nullptr);
+    QObject::disconnect(connection->pane, nullptr, session, nullptr);
+    session->disconnectFromServer(); // session owns its asynchronous logout/deletion
+    updateServerTab(connection);
+    updateActiveUi();
+}
+
+void MainWindow::removeConnection(const std::shared_ptr<SessionContext> &connection,
+                                  bool showPlaceholder)
 {
     if (!containsConnection(connection))
         return;
 
-    if (connection->pane)
-        connection->pane->saveLayout(*m_settings, connection->profile.id);
+    disconnectConnection(connection, tr("Disconnected manually."));
+    connection->pane->saveLayout(*m_settings, connection->profile.id);
     const int tabIndex = m_views->indexOf(connection->pane);
+    m_connections.removeOne(connection);
     if (tabIndex >= 0)
         m_views->removeTab(tabIndex);
+    connection->pane->deleteLater();
 
-    connection->pendingOriginalDeletions.clear();
-    m_connections.removeOne(connection);
-    if (connection->session)
-        connection->session->disconnectFromServer();
-    if (connection->pane)
-        connection->pane->deleteLater();
-
-    showEmptyPane();
+    if (showPlaceholder)
+        showEmptyPane();
     updateActiveUi();
 }
 
@@ -2015,22 +2093,54 @@ void MainWindow::observeTorrentCompletions(SessionContext &connection,
             m_settings->value(QStringLiteral("Preferences/Behavior/SoundTorrentCompletion"), false).toBool());
 }
 
+void MainWindow::showConnectionDialog(const QString &profileId)
+{
+    ConnectionDialog dialog(*m_settings, this, m_vault);
+    if (!profileId.isEmpty())
+        dialog.selectProfile(profileId);
+    connect(&dialog, &ConnectionDialog::profileSaved, this,
+        [this](const Remote::ServerProfile &profile) {
+            for (const auto &connection : m_connections)
+            {
+                if (connection->profile.id != profile.id)
+                    continue;
+                // Save-only rename updates presentation immediately. A
+                // changed endpoint must not relabel the session's identity.
+                connection->profile.name = profile.name;
+                if (connection->profile.url == profile.url
+                    && connection->profile.username == profile.username)
+                    connection->profile = profile;
+                updateServerTab(connection);
+                if (activeConnection() == connection)
+                    updateActiveUi();
+                break;
+            }
+        });
+    if (dialog.exec() == QDialog::Accepted)
+        connectToProfile(dialog.selectedProfile(), dialog.password());
+}
+
 void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
                                   const QString &password)
 {
-    // Re-selecting a live profile switches to its tab; edited endpoints must
-    // reconnect instead of retaining credentials/cookies from an old URL.
-    for (const auto &existing : m_connections)
+    // A live profile keeps its session; an offline profile or edited
+    // endpoint receives a fresh session/model at the same tab position.
+    int insertionIndex = m_views->count();
+    for (const auto existing : m_connections)
     {
         if (existing->profile.id != profile.id)
             continue;
-        if (existing->profile.url == profile.url
+        if (existing->session && existing->profile.url == profile.url
             && existing->profile.username == profile.username)
         {
+            existing->profile = profile;
+            updateServerTab(existing);
             m_views->setCurrentWidget(existing->pane);
+            updateActiveUi();
             return;
         }
-        removeConnection(existing);
+        insertionIndex = m_views->indexOf(existing->pane);
+        removeConnection(existing, false);
         break;
     }
 
@@ -2718,7 +2828,21 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
         connect(model, &QAbstractItemModel::layoutChanged, this, updateCount);
     }
 
-    m_views->addTab(connection->pane, upstreamIcon("folder-remote"), profile.name);
+    connection->pane->setEnabled(false);
+    const int tabIndex = m_views->insertTab(qBound(0, insertionIndex, m_views->count()),
+        connection->pane, upstreamIcon("folder-remote"), profile.name);
+    auto *closeButton = new QToolButton(m_views->tabBar());
+    closeButton->setObjectName(QStringLiteral("serverTabCloseButton"));
+    closeButton->setText(QStringLiteral("×"));
+    closeButton->setAccessibleName(tr("Close tab"));
+    closeButton->setAutoRaise(true);
+    closeButton->setFocusPolicy(Qt::NoFocus);
+    closeButton->setStyleSheet(QStringLiteral("QToolButton { color: #e53935; font-weight: bold; }"));
+    m_views->tabBar()->setTabButton(tabIndex, QTabBar::RightSide, closeButton);
+    connect(closeButton, &QToolButton::clicked, this, [this, connection]() {
+        removeConnection(connection);
+    });
+    updateServerTab(connection);
     m_views->setCurrentWidget(connection->pane);
     updateActiveUi();
 
@@ -2804,6 +2928,9 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
             if (!containsConnection(connection))
                 return;
             connection->connected = true;
+            connection->disconnectReason.clear();
+            connection->pane->setEnabled(true);
+            updateServerTab(connection);
             connection->version = version;
             connection->apiVersion = apiVersion;
             if (activeConnection() == connection)
@@ -2903,12 +3030,7 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
         [this, connection](const QString &reason) {
             if (!containsConnection(connection))
                 return;
-            const bool wasActive = activeConnection() == connection;
-            const QString name = connection->profile.name;
-            removeConnection(connection);
-            if (wasActive)
-                m_ui->statusBar->showMessage(
-                    tr("Connection to %1 failed: %2").arg(name, reason), 8000);
+            disconnectConnection(connection, reason);
         });
 
     if (profile.rememberPassword && password.isEmpty() && m_vault->available())
@@ -2919,17 +3041,12 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
             [safeWindow, weakConnection, profile](const QString &savedPassword,
                                                    bool found, const QString &error) {
                 const auto live = weakConnection.lock();
-                if (!safeWindow || !live || !safeWindow->containsConnection(live))
+                if (!safeWindow || !live || !safeWindow->containsConnection(live) || !live->session)
                     return;
                 if (!error.isEmpty())
                 {
-                    const bool wasActive = safeWindow->activeConnection() == live;
-                    const QString name = live->profile.name;
-                    safeWindow->removeConnection(live);
-                    if (wasActive)
-                        safeWindow->m_ui->statusBar->showMessage(
-                            QObject::tr("Connection to %1 failed: Could not read saved password: %2")
-                                .arg(name, error), 8000);
+                    safeWindow->disconnectConnection(live,
+                        QObject::tr("Could not read saved password: %1").arg(error));
                     return;
                 }
                 live->session->connectToServer(profile,
@@ -2943,7 +3060,7 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
 void MainWindow::disconnectCurrentServer()
 {
     if (auto connection = activeConnection())
-        removeConnection(connection);
+        disconnectConnection(connection, tr("Disconnected manually."));
 }
 
 void MainWindow::applyFontPointSize(int points)

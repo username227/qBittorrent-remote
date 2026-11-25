@@ -60,7 +60,11 @@ private:
     void quitCompletely();
     void connectToProfile(const Remote::ServerProfile &profile, const QString &password);
     void disconnectCurrentServer();
-    void removeConnection(const std::shared_ptr<SessionContext> &connection);
+    void showConnectionDialog(const QString &profileId = {});
+    QString disconnectedStatus(const SessionContext &connection) const;
+    void updateServerTab(const std::shared_ptr<SessionContext> &connection);
+    void disconnectConnection(const std::shared_ptr<SessionContext> &connection, const QString &reason);
+    void removeConnection(const std::shared_ptr<SessionContext> &connection, bool showPlaceholder = true);
     bool containsConnection(const std::shared_ptr<SessionContext> &connection) const;
     std::shared_ptr<SessionContext> activeConnection() const;
     std::shared_ptr<SessionContext> connectedById(const QString &id) const;
@@ -108,6 +112,8 @@ private:
     QComboBox *m_searchBy = nullptr;
     QAction *m_connectAction = nullptr;
     QAction *m_disconnectAction = nullptr;
+    QAction *m_reconnectAction = nullptr;
+    QAction *m_closeTabAction = nullptr;
     QAction *m_increaseFontAction = nullptr;
     QAction *m_decreaseFontAction = nullptr;
     QAction *m_resetFontAction = nullptr;

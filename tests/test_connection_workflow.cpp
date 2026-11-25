@@ -173,7 +173,12 @@ public:
                             ++m_syncRequests;
                             const QUrlQuery query(QString::fromLatin1(path.mid(path.indexOf('?') + 1)));
                             const int rid = query.queryItemValue(QStringLiteral("rid")).toInt();
-                            if (m_completionSyncDemo)
+                            if (m_rejectSync)
+                            {
+                                code = 403;
+                                response = "Forbidden";
+                            }
+                            else if (m_completionSyncDemo)
                             {
                                 QJsonObject snapshot;
                                 if (rid == 0)
@@ -780,6 +785,7 @@ public:
     QString url() const { return QStringLiteral("http://127.0.0.1:%1").arg(m_server.serverPort()); }
     int logouts() const noexcept { return m_logouts; }
     int syncRequests() const noexcept { return m_syncRequests; }
+    void rejectSync(bool reject) { m_rejectSync = reject; }
     void enableTorrentSyncDemo() { m_demoTorrents = true; }
     void setSidebarSnapshot(const QJsonObject &snapshot) { m_sidebarSnapshot = snapshot; }
     void setCompletionSnapshot(const QJsonObject &snapshot)
@@ -997,6 +1003,7 @@ private:
     bool m_keepDemoTorrents = false;
     bool m_rejectCommands = false;
     int m_syncRequests = 0;
+    bool m_rejectSync = false;
     QList<QPair<QByteArray, QByteArray>> m_commands;
 };
 
@@ -1619,8 +1626,11 @@ private slots:
         betaEntry->trigger();
         QTRY_COMPARE_WITH_TIMEOUT(beta.logouts(), 1, 7000);
         QCOMPARE(alpha.logouts(), 0);
-        QTRY_COMPARE(tabs->count(), 1);
+        QTRY_COMPARE(tabs->count(), 2);
         QCOMPARE(tabs->tabText(0), QStringLiteral("Alpha"));
+        QCOMPARE(tabs->tabText(1), QStringLiteral("Beta"));
+        QVERIFY(!tabs->widget(1)->isEnabled());
+        QVERIFY(tabs->tabToolTip(1).contains(QStringLiteral("Disconnected manually")));
         QVERIFY(disconnectMenu->isEnabled());
         QCOMPARE(alpha.commandsFor("/api/v2/transfer/pauseSession"), 0);
         QCOMPARE(beta.commandsFor("/api/v2/transfer/pauseSession"), 0);
@@ -1638,6 +1648,8 @@ private slots:
         QTRY_VERIFY(!disconnectMenu->isEnabled());
         QVERIFY(!speedMode->isEnabled());
         QVERIFY(connectionStatus->toolTip().contains(QStringLiteral("Not connected")));
+        QCOMPARE(tabs->count(), 2);
+        QVERIFY(!tabs->widget(0)->isEnabled() && !tabs->widget(1)->isEnabled());
         QVERIFY(!window.isVisible());
     }
 
@@ -1757,6 +1769,10 @@ private slots:
             auto *servers = window.findChild<QTabWidget *>(QStringLiteral("serverTabs"));
             QVERIFY(servers);
             QTRY_COMPARE_WITH_TIMEOUT(servers->count(), 2, 8000);
+            // Tabs are created before asynchronous authentication completes.
+            // A real header drag requires the pane to be enabled for input.
+            QTRY_VERIFY_WITH_TIMEOUT(servers->widget(0)->isEnabled()
+                && servers->widget(1)->isEnabled(), 8000);
 
             servers->setCurrentIndex(1);
             QVERIFY(qobject_cast<ServerPane *>(servers->currentWidget()));
@@ -1828,6 +1844,10 @@ private slots:
             auto *servers = window.findChild<QTabWidget *>(QStringLiteral("serverTabs"));
             QVERIFY(servers);
             QTRY_COMPARE_WITH_TIMEOUT(servers->count(), 2, 8000);
+            // Tabs are created before asynchronous authentication completes.
+            // A real header drag requires the pane to be enabled for input.
+            QTRY_VERIFY_WITH_TIMEOUT(servers->widget(0)->isEnabled()
+                && servers->widget(1)->isEnabled(), 8000);
             QCOMPARE(servers->tabText(servers->currentIndex()), QStringLiteral("Beta"));
 
             auto *pane = qobject_cast<ServerPane *>(servers->currentWidget());
@@ -1975,13 +1995,74 @@ private slots:
         QVERIFY(window.windowTitle().contains(QStringLiteral("Demo seedbox")));
         QTRY_COMPARE(count->text(), QStringLiteral("Torrents: 0 / 0"));
 
-        QAction *disconnect = window.findChild<QAction *>(QStringLiteral("disconnectServer"));
-        QVERIFY(disconnect && disconnect->isEnabled());
+        auto *tabs = window.findChild<QTabWidget *>(QStringLiteral("serverTabs"));
+        auto *connectAction = window.findChild<QAction *>(QStringLiteral("connectToServer"));
+        auto *disconnect = window.findChild<QAction *>(QStringLiteral("disconnectServer"));
+        auto *reconnect = window.findChild<QAction *>(QStringLiteral("reconnectServer"));
+        auto *close = window.findChild<QAction *>(QStringLiteral("closeServerTab"));
+        QVERIFY(tabs && connectAction && disconnect && reconnect && close);
+        QVERIFY(disconnect->isEnabled() && close->isEnabled() && !reconnect->isEnabled());
+
+        // Saving a rename without pressing Connect changes the live label
+        // immediately, even while the management dialog is still open.
+        bool renamed = false;
+        QTimer::singleShot(0, &window, [&]() {
+            auto *dialog = qobject_cast<ConnectionDialog *>(QApplication::activeModalWidget());
+            QVERIFY(dialog);
+            const auto cleanup = qScopeGuard([dialog]() { dialog->reject(); });
+            auto *name = dialog->findChild<QLineEdit *>(QStringLiteral("serverName"));
+            auto *save = dialog->findChild<QPushButton *>(QStringLiteral("saveServer"));
+            QVERIFY(name && save);
+            name->setText(QStringLiteral("Renamed seedbox"));
+            save->click();
+            QCOMPARE(tabs->tabText(0), QStringLiteral("Renamed seedbox"));
+            QVERIFY(window.windowTitle().contains(QStringLiteral("Renamed seedbox")));
+            QVERIFY(window.statusBar()->currentMessage().contains(QStringLiteral("Connected to Renamed seedbox")));
+            renamed = true;
+        });
+        connectAction->trigger();
+        QVERIFY(renamed);
+        QCOMPARE(server.logouts(), 0);
+
         disconnect->trigger();
         QTRY_VERIFY(window.statusBar()->currentMessage()
-            .contains(QStringLiteral("Not connected")));
+            .contains(QStringLiteral("Disconnected manually")));
+        QCOMPARE(tabs->count(), 1);
+        QCOMPARE(tabs->tabText(0), QStringLiteral("Renamed seedbox"));
+        QVERIFY(!tabs->widget(0)->isEnabled());
+        QVERIFY(!disconnect->isEnabled() && reconnect->isEnabled() && close->isEnabled());
         QCOMPARE(count->text(), QStringLiteral("Torrents: —"));
         QTRY_COMPARE_WITH_TIMEOUT(server.logouts(), 1, 6000);
+        auto *start = window.findChild<QAction *>(QStringLiteral("actionStart"));
+        QVERIFY(start && !start->isEnabled());
+
+        bool selectedProfile = false;
+        QTimer::singleShot(0, &window, [&]() {
+            auto *dialog = qobject_cast<ConnectionDialog *>(QApplication::activeModalWidget());
+            QVERIFY(dialog);
+            const auto cleanup = qScopeGuard([dialog]() { if (dialog->isVisible()) dialog->reject(); });
+            auto *profiles = dialog->findChild<QComboBox *>(QStringLiteral("savedServers"));
+            auto *password = dialog->findChild<QLineEdit *>(QStringLiteral("serverPassword"));
+            auto *button = dialog->findChild<QPushButton *>(QStringLiteral("connectServer"));
+            QVERIFY(profiles && password && button);
+            QCOMPARE(profiles->currentText(), QStringLiteral("Renamed seedbox"));
+            password->setText(QStringLiteral("demo-password"));
+            selectedProfile = true;
+            button->click();
+        });
+        reconnect->trigger();
+        QVERIFY(selectedProfile);
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage()
+            .contains(QStringLiteral("Connected to Renamed seedbox")), 6000);
+        QCOMPARE(tabs->count(), 1);
+        QVERIFY(tabs->widget(0)->isEnabled());
+        QVERIFY(disconnect->isEnabled() && !reconnect->isEnabled());
+        QTRY_COMPARE(count->text(), QStringLiteral("Torrents: 0 / 0"));
+        close->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(server.logouts(), 2, 6000);
+        QCOMPARE(tabs->count(), 1); // only the empty Transfers placeholder
+        QCOMPARE(tabs->tabText(0), QStringLiteral("Transfers"));
+        QVERIFY(!close->isEnabled() && !reconnect->isEnabled());
         // Manual login must never launch any system-keyring operations.
         QCOMPARE(vault.reads, 0);
         QCOMPARE(vault.writes, 0);
@@ -6528,8 +6609,10 @@ private slots:
         QVERIFY(QMetaObject::invokeMethod(bar, "customContextMenuRequested",
             Qt::DirectConnection, Q_ARG(QPoint, bar->tabRect(1).center())));
         QVERIFY(disconnectedFromMenu);
-        QTRY_COMPARE(tabs->count(), 1);
-        QVERIFY2(!tabs->tabBar()->isVisible(), "Returning to one server hides tabs.");
+        QTRY_COMPARE(tabs->count(), 2);
+        QVERIFY(tabs->tabBar()->isVisible());
+        QVERIFY(!tabs->widget(1)->isEnabled());
+        QVERIFY(tabs->tabToolTip(1).contains(QStringLiteral("Disconnected manually")));
         QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(
             QStringLiteral("Connected to Demo seedbox")), 3000);
         QTRY_COMPARE(count->text(), QStringLiteral("Torrents: 1 / 1"));
@@ -6539,6 +6622,68 @@ private slots:
         QCOMPARE(first.logouts(), 0);
         const int beforeLastPoll = first.syncRequests();
         QTRY_VERIFY_WITH_TIMEOUT(first.syncRequests() > beforeLastPoll, 6000);
+
+        // The red close button removes only the disconnected tab, with no
+        // second logout. A single active tab keeps the existing hidden strip.
+        auto *closeButton = qobject_cast<QToolButton *>(bar->tabButton(1, QTabBar::RightSide));
+        QVERIFY(closeButton && closeButton->isVisible());
+        QCOMPARE(closeButton->text(), QStringLiteral("×"));
+        QTest::mouseClick(closeButton, Qt::LeftButton);
+        QTRY_COMPARE(tabs->count(), 1);
+        QVERIFY(!tabs->tabBar()->isVisible());
+        QCOMPARE(second.logouts(), 1);
+
+        // Reopen the same saved server, then reject authenticated sync.
+        // This is a real failure after a populated torrent snapshot.
+        bool choseSecond = false;
+        auto *connectAction = window.findChild<QAction *>(QStringLiteral("connectToServer"));
+        QVERIFY(connectAction);
+        QTimer::singleShot(0, &window, [&]() {
+            auto *dialog = qobject_cast<ConnectionDialog *>(QApplication::activeModalWidget());
+            QVERIFY(dialog);
+            const auto cleanup = qScopeGuard([dialog]() { if (dialog->isVisible()) dialog->reject(); });
+            auto *profiles = dialog->findChild<QComboBox *>(QStringLiteral("savedServers"));
+            auto *password = dialog->findChild<QLineEdit *>(QStringLiteral("serverPassword"));
+            auto *button = dialog->findChild<QPushButton *>(QStringLiteral("connectServer"));
+            QVERIFY(profiles && password && button);
+            const int index = profiles->findText(QStringLiteral("Red seedbox"));
+            QVERIFY(index >= 0);
+            profiles->setCurrentIndex(index);
+            password->setText(QStringLiteral("demo-password"));
+            choseSecond = true;
+            button->click();
+        });
+        connectAction->trigger();
+        QVERIFY(choseSecond);
+        QTRY_COMPARE(tabs->count(), 2);
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(
+            QStringLiteral("Connected to Red seedbox")), 6000);
+        auto *reopenedTable = tabs->widget(1)->findChild<QTableView *>(QStringLiteral("torrentList"));
+        QVERIFY(reopenedTable);
+        // Reopening preserves the saved filter. Clear it to see the snapshot.
+        search->clear();
+        QTRY_COMPARE_WITH_TIMEOUT(reopenedTable->model()->rowCount(), 2, 6000);
+        second.rejectSync(true);
+        tabs->setCurrentIndex(0);
+        QTRY_VERIFY_WITH_TIMEOUT(!tabs->widget(1)->isEnabled(), 6000);
+        QCOMPARE(tabs->count(), 2);
+        QVERIFY(tabs->tabToolTip(1).contains(QStringLiteral("stale")));
+        QVERIFY(window.statusBar()->currentMessage().contains(QStringLiteral("Connected to Demo seedbox")));
+        tabs->setCurrentIndex(1);
+        QVERIFY(window.statusBar()->currentMessage().contains(QStringLiteral("Not connected to Red seedbox")));
+        QVERIFY(window.statusBar()->currentMessage().contains(QStringLiteral("stale")));
+        QCOMPARE(reopenedTable->model()->rowCount(), 2);
+        auto *reconnect = window.findChild<QAction *>(QStringLiteral("reconnectServer"));
+        QVERIFY(reconnect && reconnect->isEnabled());
+
+        // Close a connected background tab using its own red button.
+        auto *firstClose = qobject_cast<QToolButton *>(bar->tabButton(0, QTabBar::RightSide));
+        QVERIFY(firstClose && firstClose->isVisible());
+        QTest::mouseClick(firstClose, Qt::LeftButton);
+        QTRY_COMPARE_WITH_TIMEOUT(first.logouts(), 1, 6000);
+        QTRY_COMPARE(tabs->count(), 1);
+        QCOMPARE(tabs->tabText(0), QStringLiteral("Red seedbox"));
+        QVERIFY(!tabs->widget(0)->isEnabled());
     }
 
     void torrentFileUploadPreservesBinaryMetadata()
@@ -8119,7 +8264,14 @@ private slots:
         openConnectDialog(window, server.url());
         QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage()
             .contains(QStringLiteral("Login failed")), 6000);
-        QVERIFY(!window.windowTitle().contains(QStringLiteral("Demo seedbox")));
+        QVERIFY(window.windowTitle().contains(QStringLiteral("Demo seedbox")));
+        auto *tabs = window.findChild<QTabWidget *>(QStringLiteral("serverTabs"));
+        QVERIFY(tabs && tabs->count() == 1);
+        QCOMPARE(tabs->tabText(0), QStringLiteral("Demo seedbox"));
+        QVERIFY(!tabs->widget(0)->isEnabled());
+        QVERIFY(tabs->tabToolTip(0).contains(QStringLiteral("Login failed")));
+        auto *reconnect = window.findChild<QAction *>(QStringLiteral("reconnectServer"));
+        QVERIFY(reconnect && reconnect->isEnabled());
         QCOMPARE(vault.reads, 0);
         QCOMPARE(vault.writes, 0);
         QCOMPARE(vault.erases, 0);

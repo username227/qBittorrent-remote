@@ -128,6 +128,11 @@ bool ConnectionDialog::rememberPassword() const
     return m_remember->isEnabled() && m_remember->isChecked();
 }
 
+void ConnectionDialog::selectProfile(const QString &id)
+{
+    refreshProfiles(id);
+}
+
 void ConnectionDialog::refreshProfiles(const QString &selectId)
 {
     const QList<Remote::ServerProfile> profiles = m_store.profiles();
@@ -221,6 +226,7 @@ bool ConnectionDialog::saveCurrentProfile()
     refreshProfiles(edited.id);
     m_password->setText(typedPassword);
     m_selected = edited;
+    emit profileSaved(edited);
     return true;
 }
 
