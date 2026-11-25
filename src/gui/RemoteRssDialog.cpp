@@ -24,6 +24,8 @@
 #include <QUrl>
 #include <QVBoxLayout>
 #include <QTimer>
+#include <QShowEvent>
+#include <QSignalBlocker>
 #include <limits>
 
 namespace
@@ -64,13 +66,10 @@ QStringList feedUrls(const QJsonValue &v)
 }
 }
 
-RemoteRssDialog::RemoteRssDialog(Remote::RemoteSession *session, const QString &name,
-                                 QWidget *parent, bool rulesFirst)
-    : QDialog(parent), m_session(session)
+RemoteRssWidget::RemoteRssWidget(Remote::RemoteSession *session, QWidget *parent, bool rulesFirst)
+    : QWidget(parent), m_session(session)
 {
-    setObjectName(QStringLiteral("remoteRssDialog"));
-    setWindowTitle(tr("RSS — %1").arg(name));
-    resize(1000, 650);
+    setObjectName(QStringLiteral("remoteRssWidget"));
     auto *layout = new QVBoxLayout(this);
     auto *note = new QLabel(tr("RSS subscriptions and rules belong to this server. Changes take effect immediately."), this);
     note->setWordWrap(true);
@@ -157,9 +156,6 @@ RemoteRssDialog::RemoteRssDialog(Remote::RemoteSession *session, const QString &
     m_status->setWordWrap(true);
     footer->addWidget(m_status, 1);
     m_reload = button(footer, tr("Reload from server"), "rssReload", [this] { reload(); });
-    auto *close = new QPushButton(tr("Close"), this);
-    footer->addWidget(close);
-    connect(close, &QPushButton::clicked, this, &QDialog::reject);
     layout->addLayout(footer);
     if (session)
     {
@@ -172,27 +168,50 @@ RemoteRssDialog::RemoteRssDialog(Remote::RemoteSession *session, const QString &
         connect(session, &Remote::RemoteSession::failed, this, disconnected);
         connect(session, &QObject::destroyed, this, disconnected);
     }
-    reload();
+    updateActions();
 }
 
-void RemoteRssDialog::setBusy(bool busy)
+void RemoteRssWidget::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    QTimer::singleShot(0, this, [this] {
+        if (isVisible() && !m_busy && !m_loaded && m_session && m_session->isConnected())
+            reload();
+    });
+}
+
+RemoteRssDialog::RemoteRssDialog(Remote::RemoteSession *session, const QString &name,
+                                 QWidget *parent, bool rulesFirst)
+    : QDialog(parent)
+{
+    setObjectName(QStringLiteral("remoteRssDialog"));
+    setWindowTitle(tr("RSS — %1").arg(name));
+    resize(1000, 650);
+    auto *layout = new QVBoxLayout(this);
+    layout->addWidget(new RemoteRssWidget(session, this, rulesFirst), 1);
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, this);
+    layout->addWidget(buttons);
+    connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
+}
+
+void RemoteRssWidget::setBusy(bool busy)
 {
     m_busy = busy;
     updateActions();
 }
-void RemoteRssDialog::failed()
+void RemoteRssWidget::failed()
 {
     // Server error bodies can contain a private feed URL. Avoid echoing them.
     m_loaded = m_rulesLoaded = false;
     m_status->setText(tr("RSS request failed or could not be confirmed. Reload from the server."));
     setBusy(false);
 }
-void RemoteRssDialog::reload()
+void RemoteRssWidget::reload()
 {
     if (!m_session || !m_session->isConnected()) { failed(); return; }
     setBusy(true);
     m_status->setText(tr("Reading server RSS data..."));
-    const QPointer<RemoteRssDialog> self(this);
+    const QPointer<RemoteRssWidget> self(this);
     m_session->requestRss(QStringLiteral("items"), {{"withData", "true"}},
         [self](const QJsonObject &items) {
             if (!self) return;
@@ -211,21 +230,22 @@ void RemoteRssDialog::reload()
                 }, [self](const QString &) { if (self) { self->m_rulesLoaded = false; self->failed(); } });
         }, [self](const QString &) { if (self) { self->m_loaded = self->m_rulesLoaded = false; self->failed(); } });
 }
-QString RemoteRssDialog::selectedPath() const
+QString RemoteRssWidget::selectedPath() const
 {
     return m_feeds->currentItem() ? m_feeds->currentItem()->data(0, PathRole).toString() : QString();
 }
-QString RemoteRssDialog::selectedRule() const
+QString RemoteRssWidget::selectedRule() const
 {
     return m_ruleList->currentItem() ? m_ruleList->currentItem()->text() : QString();
 }
-QJsonObject RemoteRssDialog::selectedArticle() const
+QJsonObject RemoteRssWidget::selectedArticle() const
 {
     return m_articles->currentItem() ? m_articles->currentItem()->data(0, ArticleRole).toJsonObject() : QJsonObject();
 }
-void RemoteRssDialog::showItems()
+void RemoteRssWidget::showItems()
 {
     const QString selected = selectedPath();
+    const QSignalBlocker blocker(m_feeds);
     m_feeds->clear();
     m_feedData.clear();
     auto *root = new QTreeWidgetItem(m_feeds, {tr("All feeds")});
@@ -257,8 +277,12 @@ void RemoteRssDialog::showItems()
     m_feeds->setCurrentItem(restore);
     showArticles();
 }
-void RemoteRssDialog::showArticles()
+void RemoteRssWidget::showArticles()
 {
+    const auto previous = selectedArticle();
+    const QString oldPath = m_articles->currentItem()
+        ? m_articles->currentItem()->data(0, PathRole).toString() : QString();
+    const QSignalBlocker blocker(m_articles);
     m_articles->clear();
     const QString path = selectedPath();
     for (auto it = m_feedData.cbegin(); it != m_feedData.cend(); ++it)
@@ -272,6 +296,9 @@ void RemoteRssDialog::showArticles()
                 stringValue(article, "date"), it.key()});
             row->setData(0, PathRole, it.key());
             row->setData(0, ArticleRole, article);
+            if (!previous.isEmpty() && it.key() == oldPath
+                && stringValue(previous, "id") == stringValue(article, "id"))
+                m_articles->setCurrentItem(row);
             if (!article.value("isRead").toBool())
             {
                 auto font = row->font(0);
@@ -282,7 +309,7 @@ void RemoteRssDialog::showArticles()
     }
     showArticle();
 }
-void RemoteRssDialog::showArticle()
+void RemoteRssWidget::showArticle()
 {
     const auto a = selectedArticle();
     // Plain text only: feed HTML must never fetch resources on the desktop.
@@ -291,7 +318,7 @@ void RemoteRssDialog::showArticle()
         + QTextDocumentFragment::fromHtml(stringValue(a, "description")).toPlainText());
     updateActions();
 }
-void RemoteRssDialog::showRules()
+void RemoteRssWidget::showRules()
 {
     const QString selected = selectedRule();
     m_ruleList->clear();
@@ -303,7 +330,7 @@ void RemoteRssDialog::showRules()
         }
     if (!m_ruleList->currentItem() && m_ruleList->count()) m_ruleList->setCurrentRow(0);
 }
-void RemoteRssDialog::updateActions()
+void RemoteRssWidget::updateActions()
 {
     const bool online = m_session && m_session->isConnected() && !m_busy;
     const bool feeds = online && m_loaded;
@@ -328,16 +355,16 @@ void RemoteRssDialog::updateActions()
     const bool rule = rules && !selectedRule().isEmpty();
     for (auto *b : {m_editRule, m_renameRule, m_removeRule, m_match}) b->setEnabled(rule);
 }
-void RemoteRssDialog::mutate(const QString &action, const QMap<QString, QString> &params)
+void RemoteRssWidget::mutate(const QString &action, const QMap<QString, QString> &params)
 {
     if (!m_session || !m_session->isConnected()) { failed(); return; }
     setBusy(true);
     m_status->setText(tr("Sending RSS change to server..."));
-    const QPointer<RemoteRssDialog> self(this);
+    const QPointer<RemoteRssWidget> self(this);
     m_session->changeRss(action, params, [self] { if (self) self->reload(); },
         [self](const QString &) { if (self) self->failed(); });
 }
-void RemoteRssDialog::addItem(bool folder)
+void RemoteRssWidget::addItem(bool folder)
 {
     QString prefix = selectedPath();
     if (m_feedData.contains(prefix)) { const auto pos = prefix.lastIndexOf(sep); prefix = pos < 0 ? QString() : prefix.left(pos); }
@@ -365,7 +392,7 @@ void RemoteRssDialog::addItem(bool folder)
     if (!folder) params.insert("url", url->text().trimmed());
     mutate(folder ? QStringLiteral("addFolder") : QStringLiteral("addFeed"), params);
 }
-void RemoteRssDialog::editFeed()
+void RemoteRssWidget::editFeed()
 {
     const QString path = selectedPath();
     bool ok = false;
@@ -374,7 +401,7 @@ void RemoteRssDialog::editFeed()
     if (ok && validUrl(url)) mutate(QStringLiteral("setFeedURL"), {{"path", path}, {"url", url}});
     else if (ok) QMessageBox::warning(this, tr("Invalid feed URL"), tr("Use a valid HTTP or HTTPS URL."));
 }
-void RemoteRssDialog::moveItem()
+void RemoteRssWidget::moveItem()
 {
     const QString path = selectedPath();
     bool ok = false;
@@ -382,7 +409,7 @@ void RemoteRssDialog::moveItem()
         QLineEdit::Normal, path, &ok).trimmed();
     if (ok && validPath(dest) && dest != path) mutate(QStringLiteral("moveItem"), {{"itemPath", path}, {"destPath", dest}});
 }
-void RemoteRssDialog::removeItem()
+void RemoteRssWidget::removeItem()
 {
     const QString path = selectedPath();
     if (!path.isEmpty() && QMessageBox::question(this, tr("Remove RSS subscription"),
@@ -390,11 +417,11 @@ void RemoteRssDialog::removeItem()
         QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes)
         mutate(QStringLiteral("removeItem"), {{"path", path}});
 }
-void RemoteRssDialog::refreshItem()
+void RemoteRssWidget::refreshItem()
 {
     mutate(QStringLiteral("refreshItem"), {{"itemPath", selectedPath()}});
 }
-void RemoteRssDialog::markRead(bool article)
+void RemoteRssWidget::markRead(bool article)
 {
     QMap<QString, QString> params{{"itemPath", article ? m_articles->currentItem()->data(0, PathRole).toString() : selectedPath()}};
     if (article)
@@ -405,7 +432,7 @@ void RemoteRssDialog::markRead(bool article)
     }
     mutate(QStringLiteral("markAsRead"), params);
 }
-void RemoteRssDialog::downloadArticle()
+void RemoteRssWidget::downloadArticle()
 {
     const QString url = stringValue(selectedArticle(), "torrentURL");
     if (!m_session || !m_session->isConnected() || !validUrl(url, true)) return;
@@ -417,7 +444,7 @@ void RemoteRssDialog::downloadArticle()
     options.useServerDefaults = true;
     m_session->addTorrentUrls(url, options);
 }
-void RemoteRssDialog::editRule(bool create)
+void RemoteRssWidget::editRule(bool create)
 {
     QString name = selectedRule();
     if (create)
@@ -502,12 +529,12 @@ void RemoteRssDialog::editRule(bool create)
     checkedRuleMutation(name, baseline, QStringLiteral("setRule"), {{"ruleName", name},
         {"ruleDef", QString::fromUtf8(QJsonDocument(rule).toJson(QJsonDocument::Compact))}});
 }
-void RemoteRssDialog::checkedRuleMutation(const QString &name, const QJsonValue &baseline,
+void RemoteRssWidget::checkedRuleMutation(const QString &name, const QJsonValue &baseline,
         const QString &action, const QMap<QString, QString> &params, const QString &newName)
 {
     if (!m_session || !m_session->isConnected()) { failed(); return; }
     setBusy(true);
-    const QPointer<RemoteRssDialog> self(this);
+    const QPointer<RemoteRssWidget> self(this);
     m_session->requestRss(QStringLiteral("rules"), {},
         [self, name, baseline, action, params, newName](const QJsonObject &fresh) {
             if (!self) return;
@@ -522,7 +549,7 @@ void RemoteRssDialog::checkedRuleMutation(const QString &name, const QJsonValue 
             self->mutate(action, params);
         }, [self](const QString &) { if (self) self->failed(); });
 }
-void RemoteRssDialog::renameRule()
+void RemoteRssWidget::renameRule()
 {
     const QString old = selectedRule();
     bool ok = false;
@@ -531,19 +558,19 @@ void RemoteRssDialog::renameRule()
     if (m_rules.contains(name)) { QMessageBox::warning(this, tr("RSS rule"), tr("That name already exists.")); return; }
     checkedRuleMutation(old, m_rules.value(old), QStringLiteral("renameRule"), {{"ruleName", old}, {"newRuleName", name}}, name);
 }
-void RemoteRssDialog::removeRule()
+void RemoteRssWidget::removeRule()
 {
     const QString name = selectedRule();
     if (QMessageBox::question(this, tr("Remove RSS rule"), tr("Remove this automatic downloading rule from the server?"),
         QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes)
         checkedRuleMutation(name, m_rules.value(name), QStringLiteral("removeRule"), {{"ruleName", name}});
 }
-void RemoteRssDialog::matchingArticles()
+void RemoteRssWidget::matchingArticles()
 {
     const QString name = selectedRule();
     if (!m_session || !m_session->isConnected()) return;
     setBusy(true);
-    const QPointer<RemoteRssDialog> self(this);
+    const QPointer<RemoteRssWidget> self(this);
     m_session->requestRss(QStringLiteral("matchingArticles"), {{"ruleName", name}},
         [self](const QJsonObject &matches) {
             if (!self) return;

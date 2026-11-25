@@ -15,12 +15,14 @@ class QTabWidget;
 class QPushButton;
 namespace Remote { class RemoteSession; }
 
-class RemoteRssDialog final : public QDialog
+class RemoteRssWidget final : public QWidget
 {
     Q_OBJECT
 public:
-    explicit RemoteRssDialog(Remote::RemoteSession *session, const QString &name,
-                             QWidget *parent = nullptr, bool rulesFirst = false);
+    explicit RemoteRssWidget(Remote::RemoteSession *session, QWidget *parent = nullptr,
+                             bool rulesFirst = false);
+protected:
+    void showEvent(QShowEvent *event) override;
 private:
     void reload();
     void showItems();
@@ -64,4 +66,12 @@ private:
     QJsonObject m_items, m_rules;
     QMap<QString, QJsonObject> m_feedData;
     bool m_busy = false, m_loaded = false, m_rulesLoaded = false;
+};
+
+// Preferences retains an independently scoped modal rule editor.
+class RemoteRssDialog final : public QDialog
+{
+public:
+    explicit RemoteRssDialog(Remote::RemoteSession *session, const QString &name,
+                             QWidget *parent = nullptr, bool rulesFirst = false);
 };

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/ServerPane.h"
+#include "gui/RemoteRssDialog.h"
 #include "gui/FilterSidebar.h"
 #include "gui/TorrentModel.h"
 #include "gui/NaturalNameSort.h"
@@ -34,6 +35,8 @@
 #include <QSplitterHandle>
 #include <QTableView>
 #include <QVBoxLayout>
+#include <QTabWidget>
+#include <QTabBar>
 
 #ifdef Q_OS_LINUX
 #include <QMouseEvent>
@@ -172,11 +175,23 @@ ServerPane::ServerPane(QWidget *parent) : QWidget(parent)
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
 
-    auto *outer = new QSplitter(Qt::Horizontal, this);
+    m_sectionTabs = new QTabWidget(this);
+    m_sectionTabs->setObjectName(QStringLiteral("serverSectionTabs"));
+    m_sectionTabs->setDocumentMode(true);
+    layout->addWidget(m_sectionTabs);
+    m_transfers = new QWidget(m_sectionTabs);
+    auto *transferLayout = new QHBoxLayout(m_transfers);
+    transferLayout->setContentsMargins(0, 0, 0, 0);
+    transferLayout->setSpacing(0);
+    m_sectionTabs->addTab(m_transfers, tr("Transfers"));
+    m_sectionTabs->tabBar()->hide();
+    connect(m_sectionTabs, &QTabWidget::currentChanged, this, &ServerPane::sectionChanged);
+
+    auto *outer = new QSplitter(Qt::Horizontal, m_transfers);
     outer->setObjectName(QStringLiteral("serverHorizontalSplitter"));
     m_outerSplitter = outer;
     outer->setChildrenCollapsible(false);
-    layout->addWidget(outer);
+    transferLayout->addWidget(outer);
 
     m_sidebar = new FilterSidebar(outer);
     m_sidebar->setMinimumWidth(185);
@@ -344,6 +359,33 @@ ServerPane::ServerPane(QWidget *parent) : QWidget(parent)
     // Use a readable first-run width, but saved splitter sizes still win on
     // reconnect. Users can widen the sidebar for long remote paths.
     outer->setSizes({350, 930});
+}
+
+void ServerPane::setRssAvailable(Remote::RemoteSession *session, bool visible)
+{
+    if (visible && !m_rssWidget && session)
+    {
+        m_rssWidget = new RemoteRssWidget(session, m_sectionTabs);
+        m_sectionTabs->addTab(m_rssWidget, tr("RSS"));
+    }
+    if (m_rssWidget)
+    {
+        if (!visible && isRssSelected())
+            m_sectionTabs->setCurrentWidget(m_transfers);
+        m_sectionTabs->setTabVisible(m_sectionTabs->indexOf(m_rssWidget), visible);
+    }
+    m_sectionTabs->tabBar()->setVisible(visible && m_rssWidget);
+}
+
+void ServerPane::showRss()
+{
+    if (m_rssWidget && m_sectionTabs->isTabVisible(m_sectionTabs->indexOf(m_rssWidget)))
+        m_sectionTabs->setCurrentWidget(m_rssWidget);
+}
+
+bool ServerPane::isRssSelected() const
+{
+    return m_rssWidget && m_sectionTabs->currentWidget() == m_rssWidget;
 }
 
 void ServerPane::applySync(const QJsonObject &payload)

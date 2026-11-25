@@ -4590,22 +4590,22 @@ private slots:
         QVERIFY(tabs && action && action->isEnabled());
 
         const auto withReader = [&](auto exercise) {
-            bool finished = false;
-            QTimer::singleShot(0, &window, [&]() {
-                auto *dlg = qobject_cast<QDialog *>(QApplication::activeModalWidget());
-                QVERIFY(dlg && dlg->objectName() == QStringLiteral("remoteRssDialog"));
-                const auto cleanup = qScopeGuard([dlg]() { if (dlg->isVisible()) dlg->reject(); });
-                auto *add = dlg->findChild<QPushButton *>("rssAddFeed");
-                QVERIFY(add);
-                QTRY_VERIFY_WITH_TIMEOUT(add->isEnabled(), 6000);
-                exercise(dlg);
-                finished = true;
-            });
-            action->trigger();
-            QVERIFY(finished);
+            auto *sections = tabs->currentWidget()->findChild<QTabWidget *>("serverSectionTabs");
+            QVERIFY(sections && sections->isTabVisible(1));
+            sections->setCurrentIndex(1);
+            auto *reader = sections->currentWidget();
+            QVERIFY(reader && reader->objectName() == QStringLiteral("remoteRssWidget"));
+            QVERIFY(reader->isVisible());
+            auto *add = reader->findChild<QPushButton *>("rssAddFeed");
+            QVERIFY(add);
+            QTRY_VERIFY_WITH_TIMEOUT(add->isEnabled(), 6000);
+            exercise(reader);
         };
         tabs->setCurrentIndex(0);
-        withReader([&](QDialog *dlg) {
+        QVERIFY(action->isCheckable() && !action->isChecked());
+        action->trigger();
+        QVERIFY(action->isChecked());
+        withReader([&](QWidget *dlg) {
             auto *feeds = dlg->findChild<QTreeWidget *>("rssFeeds");
             auto *articles = dlg->findChild<QTreeWidget *>("rssArticles");
             auto *preview = dlg->findChild<QPlainTextEdit *>("rssArticlePreview");
@@ -4678,8 +4678,9 @@ private slots:
             QCOMPARE(changed.value("affectedFeeds"), rule.value("affectedFeeds"));
             QCOMPARE(modern.commandsFor("/api/v2/rss/setRule"), 0);
         });
+        auto *legacyReader = tabs->currentWidget()->findChild<QWidget *>("remoteRssWidget");
         tabs->setCurrentIndex(1);
-        withReader([&](QDialog *dlg) {
+        withReader([&](QWidget *dlg) {
             auto *feeds = dlg->findChild<QTreeWidget *>("rssFeeds");
             auto *rules = dlg->findChild<QListWidget *>("rssRules");
             QVERIFY(feeds && rules);
@@ -4687,6 +4688,16 @@ private slots:
             QCOMPARE(feeds->topLevelItem(0)->child(0)->text(0), QStringLiteral("Other"));
             QCOMPARE(rules->count(), 0);
         });
+        tabs->setCurrentIndex(0);
+        auto *sections = tabs->currentWidget()->findChild<QTabWidget *>("serverSectionTabs");
+        QVERIFY(sections && sections->currentWidget() == legacyReader);
+        QCOMPARE(legacyReader->findChild<QTabWidget *>("rssTabs")->currentIndex(), 1);
+        action->trigger();
+        QVERIFY(!action->isChecked());
+        QCOMPARE(sections->currentIndex(), 0);
+        QVERIFY(!sections->isTabVisible(1));
+        action->trigger();
+        QCOMPARE(sections->currentWidget(), legacyReader);
         QCOMPARE(modern.rssItems(), modernItems);
         QCOMPARE(modern.commandsFor("/api/v2/rss/addFeed"), 0);
         QCOMPARE(legacy.commandsFor("/api/v2/rss/addFeed"), 1);

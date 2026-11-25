@@ -17,6 +17,9 @@ class QTableView;
 class TorrentModel;
 class TorrentDetailsWidget;
 class PropTabBar;
+class QTabWidget;
+class RemoteRssWidget;
+namespace Remote { class RemoteSession; }
 
 // One independent native transfer view per connected qBittorrent instance.
 // The original upstream Qt widgets and icon resources are shared, never
@@ -45,6 +48,9 @@ public:
     bool hasFullSync() const { return m_hasFullSync; }
     QSortFilterProxyModel *proxy() const noexcept { return m_proxy; }
 
+    void setRssAvailable(Remote::RemoteSession *session, bool visible);
+    void showRss();
+    bool isRssSelected() const;
     void applySync(const QJsonObject &payload);
     QString downloadRateText() const;
     QString uploadRateText() const;
@@ -68,6 +74,7 @@ public:
     void restoreLayout(QSettings &settings, const QString &profileId);
 
 signals:
+    void sectionChanged();
     // Native torrent-list context menu delegates existing actions to the
     // owning MainWindow; the active server and its selection remain isolated.
     void torrentContextActionRequested(TorrentContextAction action);
@@ -88,6 +95,9 @@ private:
     void showTorrentContextMenu(const QPoint &position);
     void updateSelectedTorrent();
     void requestSelectedDetails();
+    QTabWidget *m_sectionTabs = nullptr;
+    QWidget *m_transfers = nullptr;
+    RemoteRssWidget *m_rssWidget = nullptr;
     FilterSidebar *m_sidebar = nullptr;
     QTableView *m_table = nullptr;
     TorrentModel *m_model = nullptr;
