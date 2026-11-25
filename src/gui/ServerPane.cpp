@@ -366,6 +366,8 @@ void ServerPane::setRssAvailable(Remote::RemoteSession *session, bool visible)
     if (visible && !m_rssWidget && session)
     {
         m_rssWidget = new RemoteRssWidget(session, m_sectionTabs);
+        if (m_layoutSettings && !m_layoutPrefix.isEmpty())
+            m_rssWidget->restoreLayout(*m_layoutSettings, m_layoutPrefix);
         m_sectionTabs->addTab(m_rssWidget, tr("RSS"));
     }
     if (m_rssWidget)
@@ -1075,6 +1077,7 @@ void ServerPane::saveLayout(QSettings &settings, const QString &profileId) const
         return;
 
     const QString root = serverLayoutPrefix(profileId);
+    if (m_rssWidget) m_rssWidget->saveLayout(settings, root);
     settings.setValue(root + QStringLiteral("/horizontal"), m_outerSplitter->saveState());
     const QByteArray expandedState = m_detailTabs->currentIndex() >= 0
         ? m_detailsSplitter->saveState() : m_expandedDetailsState;
@@ -1114,6 +1117,8 @@ void ServerPane::restoreLayout(QSettings &settings, const QString &profileId)
     if (profileId.isEmpty())
         return;
     const QString root = serverLayoutPrefix(profileId);
+    m_layoutSettings = &settings;
+    m_layoutPrefix = root;
     m_sidebar->restoreDirectoryState(settings, root);
 
     const auto restoreSplitter = [&settings, &root](QSplitter *splitter, const char *key) {

@@ -95,6 +95,8 @@ private:
     void showTorrentContextMenu(const QPoint &position);
     void updateSelectedTorrent();
     void requestSelectedDetails();
+    QSettings *m_layoutSettings = nullptr;
+    QString m_layoutPrefix;
     QTabWidget *m_sectionTabs = nullptr;
     QWidget *m_transfers = nullptr;
     RemoteRssWidget *m_rssWidget = nullptr;

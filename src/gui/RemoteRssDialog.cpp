@@ -26,12 +26,48 @@
 #include <QTimer>
 #include <QShowEvent>
 #include <QSignalBlocker>
+#include <QApplication>
+#include <QDateTime>
+#include <QDesktopServices>
+#include <QHeaderView>
+#include <QLocale>
+#include <QMenu>
+#include <QScrollBar>
+#include <QSettings>
+#include <QSet>
+#include <QStyle>
+#include <QTabBar>
+#include <QTextBrowser>
+#include <QTreeWidgetItemIterator>
 #include <limits>
 
 namespace
 {
 constexpr int PathRole = Qt::UserRole;
 constexpr int ArticleRole = Qt::UserRole + 1;
+constexpr int DateRole = Qt::UserRole + 2;
+
+// The article body is untrusted HTML. Never retrieve any embedded resources,
+// and route only explicitly clicked HTTP(S) links to the user's browser.
+class ArticleBrowser final : public QTextBrowser
+{
+public:
+    using QTextBrowser::QTextBrowser;
+protected:
+    QVariant loadResource(int, const QUrl &) override { return {}; }
+};
+
+class ArticleItem final : public QTreeWidgetItem
+{
+public:
+    using QTreeWidgetItem::QTreeWidgetItem;
+    bool operator<(const QTreeWidgetItem &other) const override
+    {
+        if (treeWidget() && treeWidget()->sortColumn() == 1)
+            return data(1, DateRole).toDateTime() < other.data(1, DateRole).toDateTime();
+        return QTreeWidgetItem::operator<(other);
+    }
+};
 const QChar sep = QLatin1Char('\\');
 QString joinPath(const QString &parent, const QString &name)
 {
@@ -67,13 +103,17 @@ QStringList feedUrls(const QJsonValue &v)
 }
 
 RemoteRssWidget::RemoteRssWidget(Remote::RemoteSession *session, QWidget *parent, bool rulesFirst)
-    : QWidget(parent), m_session(session)
+    : QWidget(parent), m_session(session), m_rulesOnly(rulesFirst)
 {
     setObjectName(QStringLiteral("remoteRssWidget"));
     auto *layout = new QVBoxLayout(this);
-    auto *note = new QLabel(tr("RSS subscriptions and rules belong to this server. Changes take effect immediately."), this);
-    note->setWordWrap(true);
-    layout->addWidget(note);
+    layout->setContentsMargins(4, 4, 4, 4);
+    if (rulesFirst)
+    {
+        auto *note = new QLabel(tr("Rule changes are applied immediately to this server."), this);
+        note->setWordWrap(true);
+        layout->addWidget(note);
+    }
     m_tabs = new QTabWidget(this);
     m_tabs->setObjectName(QStringLiteral("rssTabs"));
     layout->addWidget(m_tabs, 1);
@@ -93,32 +133,91 @@ RemoteRssWidget::RemoteRssWidget(Remote::RemoteSession *session, QWidget *parent
     m_editFeed = button(tools, tr("Edit URL..."), "rssEditFeed", [this] { editFeed(); });
     m_move = button(tools, tr("Rename / move..."), "rssMoveItem", [this] { moveItem(); });
     m_remove = button(tools, tr("Remove"), "rssRemoveItem", [this] { removeItem(); });
+    m_refresh = button(tools, tr("Refresh"), "rssRefreshItem", [this] { refreshItem(); });
     tools->addStretch();
+    m_downloader = button(tools, tr("RSS Downloader..."), "rssDownloader", [this] {
+        if (!m_session || !m_session->isConnected()) return;
+        RemoteRssDialog dialog(m_session, window()->windowTitle(), this, true);
+        dialog.exec();
+        if (m_session && m_session->isConnected()) reload();
+    });
     auto *split = new QSplitter(reader);
+    m_split = split;
     m_feeds = new QTreeWidget(split);
     m_feeds->setObjectName(QStringLiteral("rssFeeds"));
     m_feeds->setHeaderLabels({tr("Subscriptions"), tr("Status")});
-    m_feeds->setColumnWidth(0, 200);
+    m_feeds->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+    m_feeds->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    m_feeds->setMinimumWidth(240);
+    m_feeds->setAlternatingRowColors(true);
     auto *right = new QSplitter(Qt::Vertical, split);
+    m_right = right;
     m_articles = new QTreeWidget(right);
     m_articles->setObjectName(QStringLiteral("rssArticles"));
     m_articles->setHeaderLabels({tr("Article"), tr("Date"), tr("Feed")});
-    m_articles->setColumnWidth(0, 350);
-    m_article = new QPlainTextEdit(right);
+    m_articles->setRootIsDecorated(false);
+    m_articles->setAlternatingRowColors(true);
+    m_articles->header()->setStretchLastSection(false);
+    m_articles->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+    m_articles->header()->setSectionResizeMode(1, QHeaderView::Interactive);
+    m_articles->header()->setSectionResizeMode(2, QHeaderView::Interactive);
+    m_articles->setColumnWidth(1, 165);
+    m_articles->setColumnWidth(2, 150);
+    m_articles->setSortingEnabled(true);
+    m_articles->sortItems(1, Qt::DescendingOrder);
+    m_article = new ArticleBrowser(right);
     m_article->setObjectName(QStringLiteral("rssArticlePreview"));
     m_article->setReadOnly(true);
+    m_article->setOpenLinks(false);
+    m_article->setOpenExternalLinks(false);
+    connect(m_article, &QTextBrowser::anchorClicked, this, [](const QUrl &url) {
+        if (validUrl(url.toString(QUrl::FullyEncoded)))
+            QDesktopServices::openUrl(url);
+    });
     split->setStretchFactor(1, 1);
     right->setStretchFactor(0, 2);
+    split->setSizes({300, 850});
+    right->setSizes({360, 240});
     readerLayout->addWidget(split, 1);
     auto *articleTools = new QHBoxLayout;
     readerLayout->addLayout(articleTools);
-    m_refresh = button(articleTools, tr("Refresh feed(s)"), "rssRefreshItem", [this] { refreshItem(); });
     m_markItem = button(articleTools, tr("Mark feed(s) read"), "rssMarkItem", [this] { markRead(false); });
     m_markArticle = button(articleTools, tr("Mark article read"), "rssMarkArticle", [this] { markRead(true); });
     m_download = button(articleTools, tr("Download torrent..."), "rssDownload", [this] { downloadArticle(); });
     articleTools->addStretch();
     connect(m_feeds, &QTreeWidget::currentItemChanged, this, [this] { showArticles(); });
-    connect(m_articles, &QTreeWidget::currentItemChanged, this, [this] { showArticle(); });
+    connect(m_articles, &QTreeWidget::currentItemChanged, this, [this] {
+        showArticle();
+        const auto a = selectedArticle();
+        if (!m_busy && m_loaded && !a.value("isRead").toBool()
+            && !stringValue(a, "id").isEmpty() && m_session && m_session->isConnected())
+            markRead(true);
+    });
+    m_feeds->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_feeds, &QTreeWidget::customContextMenuRequested, this, [this](const QPoint &point) {
+        if (auto *item = m_feeds->itemAt(point)) m_feeds->setCurrentItem(item);
+        QMenu menu(this);
+        for (auto *b : {m_addFeed, m_addFolder, m_editFeed, m_move, m_remove, m_refresh, m_markItem})
+        {
+            auto *action = menu.addAction(b->text());
+            action->setEnabled(b->isEnabled());
+            connect(action, &QAction::triggered, b, &QPushButton::click);
+        }
+        menu.exec(m_feeds->viewport()->mapToGlobal(point));
+    });
+    m_articles->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_articles, &QTreeWidget::customContextMenuRequested, this, [this](const QPoint &point) {
+        if (!m_articles->itemAt(point)) return;
+        m_articles->setCurrentItem(m_articles->itemAt(point));
+        QMenu menu(this);
+        for (auto *b : {m_markArticle, m_download})
+        {
+            auto *action = menu.addAction(b->text());
+            action->setEnabled(b->isEnabled());
+            connect(action, &QAction::triggered, b, &QPushButton::click);
+        }
+        menu.exec(m_articles->viewport()->mapToGlobal(point));
+    });
     m_tabs->addTab(reader, tr("RSS reader"));
 
     auto *rules = new QWidget(m_tabs);
@@ -150,13 +249,22 @@ RemoteRssWidget::RemoteRssWidget(Remote::RemoteSession *session, QWidget *parent
     });
     m_tabs->addTab(rules, tr("Automatic downloading rules"));
     m_tabs->setCurrentIndex(rulesFirst ? 1 : 0);
+    m_tabs->tabBar()->hide();
     auto *footer = new QHBoxLayout;
     m_status = new QLabel(this);
     m_status->setObjectName(QStringLiteral("rssStatus"));
     m_status->setWordWrap(true);
     footer->addWidget(m_status, 1);
-    m_reload = button(footer, tr("Reload from server"), "rssReload", [this] { reload(); });
+    m_reload = button(footer, tr("Reload"), "rssReload", [this] { reload(); });
     layout->addLayout(footer);
+    auto *timer = new QTimer(this);
+    timer->setInterval(5000);
+    connect(timer, &QTimer::timeout, this, [this] {
+        if (!m_rulesOnly && isVisible() && !m_busy && !QApplication::activeModalWidget()
+            && m_session && m_session->isConnected())
+            reload();
+    });
+    timer->start();
     if (session)
     {
         auto disconnected = [this] {
@@ -210,14 +318,21 @@ void RemoteRssWidget::reload()
 {
     if (!m_session || !m_session->isConnected()) { failed(); return; }
     setBusy(true);
-    m_status->setText(tr("Reading server RSS data..."));
+    if (!m_loaded) m_status->setText(tr("Reading server RSS data..."));
     const QPointer<RemoteRssWidget> self(this);
     m_session->requestRss(QStringLiteral("items"), {{"withData", "true"}},
         [self](const QJsonObject &items) {
             if (!self) return;
+            const bool changed = !self->m_loaded || self->m_items != items;
             self->m_items = items;
             self->m_loaded = true;
-            self->showItems();
+            if (changed) self->showItems();
+            if (!self->m_rulesOnly)
+            {
+                self->m_status->clear();
+                self->setBusy(false);
+                return;
+            }
             if (!self->m_session) { self->failed(); return; }
             self->m_session->requestRss(QStringLiteral("rules"), {},
                 [self](const QJsonObject &rules) {
@@ -225,7 +340,7 @@ void RemoteRssWidget::reload()
                     self->m_rules = rules;
                     self->m_rulesLoaded = true;
                     self->showRules();
-                    self->m_status->setText(tr("Server snapshot loaded. Feed refreshes may finish asynchronously."));
+                    self->m_status->clear();
                     self->setBusy(false);
                 }, [self](const QString &) { if (self) { self->m_rulesLoaded = false; self->failed(); } });
         }, [self](const QString &) { if (self) { self->m_loaded = self->m_rulesLoaded = false; self->failed(); } });
@@ -245,15 +360,25 @@ QJsonObject RemoteRssWidget::selectedArticle() const
 void RemoteRssWidget::showItems()
 {
     const QString selected = selectedPath();
+    const int scroll = m_feeds->verticalScrollBar()->value();
+    QSet<QString> known, expanded;
+    for (QTreeWidgetItemIterator it(m_feeds); *it; ++it)
+    {
+        const QString key = (*it)->data(0, PathRole).toString();
+        known.insert(key);
+        if ((*it)->isExpanded()) expanded.insert(key);
+    }
     const QSignalBlocker blocker(m_feeds);
     m_feeds->clear();
     m_feedData.clear();
     auto *root = new QTreeWidgetItem(m_feeds, {tr("All feeds")});
     root->setData(0, PathRole, QString());
+    root->setIcon(0, style()->standardIcon(QStyle::SP_DirIcon));
     QTreeWidgetItem *restore = root;
-    std::function<void(const QJsonObject &, QTreeWidgetItem *, const QString &, int)> visit;
+    std::function<int(const QJsonObject &, QTreeWidgetItem *, const QString &, int)> visit;
     visit = [&](const QJsonObject &object, QTreeWidgetItem *parent, const QString &prefix, int depth) {
-        if (depth > 64) return;
+        if (depth > 64) return 0;
+        int total = 0;
         for (auto it = object.begin(); it != object.end(); ++it)
         {
             if (!it.value().isObject()) continue;
@@ -262,19 +387,34 @@ void RemoteRssWidget::showItems()
             auto *item = new QTreeWidgetItem(parent, {it.key()});
             item->setData(0, PathRole, path);
             if (path == selected) restore = item;
+            int unread = 0;
             if (value.value("uid").isString() && value.value("url").isString())
             {
                 m_feedData.insert(path, value);
-                item->setText(1, value.value("hasError").toBool() ? tr("Error")
-                    : value.value("isLoading").toBool() ? tr("Loading")
-                    : tr("%1 article(s)").arg(value.value("articles").toArray().size()));
+                const bool error = value.value("hasError").toBool();
+                const bool loading = value.value("isLoading").toBool();
+                item->setIcon(0, style()->standardIcon(error ? QStyle::SP_MessageBoxWarning
+                    : loading ? QStyle::SP_BrowserReload : QStyle::SP_FileIcon));
+                item->setText(1, error ? tr("Error") : loading ? tr("Loading") : QString());
+                for (const auto &article : value.value("articles").toArray())
+                    if (article.isObject() && !article.toObject().value("isRead").toBool()) ++unread;
             }
-            else visit(value, item, path, depth + 1);
+            else
+            {
+                item->setIcon(0, style()->standardIcon(QStyle::SP_DirIcon));
+                unread = visit(value, item, path, depth + 1);
+                item->setExpanded(!known.contains(path) || expanded.contains(path));
+            }
+            if (unread) item->setText(0, tr("%1 (%2)").arg(it.key()).arg(unread));
+            total += unread;
         }
+        return total;
     };
-    visit(m_items, root, {}, 0);
-    m_feeds->expandAll();
+    const int unread = visit(m_items, root, {}, 0);
+    if (unread) root->setText(0, tr("All feeds (%1)").arg(unread));
+    root->setExpanded(!known.contains(QString()) || expanded.contains(QString()));
     m_feeds->setCurrentItem(restore);
+    m_feeds->verticalScrollBar()->setValue(scroll);
     showArticles();
 }
 void RemoteRssWidget::showArticles()
@@ -282,7 +422,11 @@ void RemoteRssWidget::showArticles()
     const auto previous = selectedArticle();
     const QString oldPath = m_articles->currentItem()
         ? m_articles->currentItem()->data(0, PathRole).toString() : QString();
+    const int scroll = m_articles->verticalScrollBar()->value();
     const QSignalBlocker blocker(m_articles);
+    const int sortColumn = m_articles->sortColumn();
+    const auto sortOrder = m_articles->header()->sortIndicatorOrder();
+    m_articles->setSortingEnabled(false);
     m_articles->clear();
     const QString path = selectedPath();
     for (auto it = m_feedData.cbegin(); it != m_feedData.cend(); ++it)
@@ -292,8 +436,12 @@ void RemoteRssWidget::showArticles()
         {
             if (!entry.isObject()) continue;
             const auto article = entry.toObject();
-            auto *row = new QTreeWidgetItem(m_articles, {stringValue(article, "title"),
-                stringValue(article, "date"), it.key()});
+            const auto date = QDateTime::fromString(stringValue(article, "date"), Qt::RFC2822Date);
+            auto *row = new ArticleItem(m_articles, {stringValue(article, "title"),
+                date.isValid() ? QLocale().toString(date.toLocalTime().date(), QLocale::ShortFormat)
+                               : stringValue(article, "date"), it.key()});
+            row->setData(1, DateRole, date);
+            row->setToolTip(0, stringValue(article, "title"));
             row->setData(0, PathRole, it.key());
             row->setData(0, ArticleRole, article);
             if (!previous.isEmpty() && it.key() == oldPath
@@ -307,15 +455,33 @@ void RemoteRssWidget::showArticles()
             }
         }
     }
+    m_articles->setSortingEnabled(true);
+    m_articles->sortItems(sortColumn, sortOrder);
+    m_articles->verticalScrollBar()->setValue(scroll);
     showArticle();
 }
 void RemoteRssWidget::showArticle()
 {
     const auto a = selectedArticle();
-    // Plain text only: feed HTML must never fetch resources on the desktop.
-    m_article->setPlainText(a.isEmpty() ? QString() : stringValue(a, "title") + QStringLiteral("\n")
-        + stringValue(a, "date") + QStringLiteral("\n\n")
-        + QTextDocumentFragment::fromHtml(stringValue(a, "description")).toPlainText());
+    // Avoid resetting a reading position when only the read flag changes.
+    QJsonObject visible = a;
+    visible.remove("isRead");
+    if (visible != m_displayedArticle)
+    {
+        m_displayedArticle = visible;
+        if (a.isEmpty()) m_article->clear();
+        else
+        {
+            const QString link = stringValue(a, "link");
+            QString html = QStringLiteral("<h3>%1</h3><p>%2</p>")
+                .arg(stringValue(a, "title").toHtmlEscaped(), stringValue(a, "date").toHtmlEscaped());
+            if (validUrl(link))
+                html += QStringLiteral("<p><a href=\"%1\">%2</a></p>")
+                    .arg(link.toHtmlEscaped(), tr("Open original article").toHtmlEscaped());
+            html += stringValue(a, "description");
+            m_article->setHtml(html);
+        }
+    }
     updateActions();
 }
 void RemoteRssWidget::showRules()
@@ -338,6 +504,7 @@ void RemoteRssWidget::updateActions()
     const bool feed = selected && m_feedData.contains(selectedPath());
     const bool article = feeds && m_articles->currentItem();
     m_reload->setEnabled(online);
+    m_downloader->setEnabled(online && m_loaded);
     m_feeds->setEnabled(feeds);
     m_articles->setEnabled(feeds);
     m_addFeed->setEnabled(feeds);
@@ -371,7 +538,7 @@ void RemoteRssWidget::addItem(bool folder)
     QDialog dialog(this);
     dialog.setWindowTitle(folder ? tr("New RSS folder") : tr("New RSS subscription"));
     auto *form = new QFormLayout(&dialog);
-    auto *path = new QLineEdit(prefix.isEmpty() ? QString() : prefix + sep, &dialog);
+    auto *path = new QLineEdit(&dialog);
     path->setObjectName(QStringLiteral("rssItemPath"));
     form->addRow(folder ? tr("Folder name:") : tr("Subscription name:"), path);
     auto *url = new QLineEdit(&dialog);
@@ -382,10 +549,11 @@ void RemoteRssWidget::addItem(bool folder)
     connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     if (dialog.exec() != QDialog::Accepted) return;
-    const QString dest = path->text().trimmed();
-    if (!validPath(dest) || (!folder && !validUrl(url->text().trimmed())))
+    const QString name = path->text().trimmed();
+    const QString dest = joinPath(prefix, name);
+    if (name.isEmpty() || name.contains(sep) || !validPath(dest) || (!folder && !validUrl(url->text().trimmed())))
     {
-        QMessageBox::warning(this, tr("Invalid subscription"), tr("Enter a name/path and, for a feed, a valid HTTP or HTTPS URL. Use backslashes between folders."));
+        QMessageBox::warning(this, tr("Invalid subscription"), tr("Enter a name without backslashes and, for a feed, a valid HTTP or HTTPS URL."));
         return;
     }
     QMap<QString, QString> params{{"path", dest}};
@@ -583,4 +751,25 @@ void RemoteRssWidget::matchingArticles()
             self->m_ruleSummary->setPlainText(lines.isEmpty() ? tr("No matching articles.") : lines.join(QLatin1Char('\n')));
             self->setBusy(false);
         }, [self](const QString &) { if (self) self->failed(); });
+}
+
+void RemoteRssWidget::saveLayout(QSettings &settings, const QString &prefix) const
+{
+    settings.setValue(prefix + "/rssHorizontal", m_split->saveState());
+    settings.setValue(prefix + "/rssVertical", m_right->saveState());
+    settings.setValue(prefix + "/rssArticleHeader", m_articles->header()->saveState());
+}
+void RemoteRssWidget::restoreLayout(QSettings &settings, const QString &prefix)
+{
+    const auto horizontal = settings.value(prefix + "/rssHorizontal").toByteArray();
+    const auto vertical = settings.value(prefix + "/rssVertical").toByteArray();
+    const auto header = settings.value(prefix + "/rssArticleHeader").toByteArray();
+    if (!horizontal.isEmpty()) m_split->restoreState(horizontal);
+    if (!vertical.isEmpty()) m_right->restoreState(vertical);
+    if (!header.isEmpty())
+    {
+        m_articles->header()->restoreState(header);
+        m_articles->sortItems(m_articles->header()->sortIndicatorSection(),
+                             m_articles->header()->sortIndicatorOrder());
+    }
 }

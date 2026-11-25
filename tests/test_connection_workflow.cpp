@@ -67,6 +67,7 @@
 #include <QLocale>
 #include <QInputDialog>
 #include <QPlainTextEdit>
+#include <QTextBrowser>
 #include <QStandardItemModel>
 #include <QSpinBox>
 #include <QTimeEdit>
@@ -4563,7 +4564,7 @@ private slots:
         const QString feedUrl = QStringLiteral("https://feed.example/rss?key=a+b%2Fc&x=1");
         const QJsonObject article{{"id", "article-id"}, {"title", "Example article"},
             {"date", "Wed, 25 Nov 2026 12:00:00 +0000"}, {"description", "<b>Example description</b>"},
-            {"torrentURL", "https://feed.example/download?key=a+b%2Fc&x=1"}, {"isRead", false}};
+            {"link", "https://feed.example/news/story"}, {"torrentURL", "https://feed.example/download?key=a+b%2Fc&x=1"}, {"isRead", false}};
         const QJsonObject feed{{"uid", "id1"}, {"url", feedUrl}, {"articles", QJsonArray{article}}};
         const QJsonObject rule{{"enabled", false}, {"priority", 0}, {"useRegex", false},
             {"mustContain", "Old"}, {"mustNotContain", ""}, {"episodeFilter", ""},
@@ -4608,18 +4609,20 @@ private slots:
         withReader([&](QWidget *dlg) {
             auto *feeds = dlg->findChild<QTreeWidget *>("rssFeeds");
             auto *articles = dlg->findChild<QTreeWidget *>("rssArticles");
-            auto *preview = dlg->findChild<QPlainTextEdit *>("rssArticlePreview");
+            auto *preview = dlg->findChild<QTextBrowser *>("rssArticlePreview");
             auto *mark = dlg->findChild<QPushButton *>("rssMarkArticle");
             auto *add = dlg->findChild<QPushButton *>("rssAddFeed");
-            auto *rssTabs = dlg->findChild<QTabWidget *>("rssTabs");
-            auto *rules = dlg->findChild<QListWidget *>("rssRules");
-            auto *editRule = dlg->findChild<QPushButton *>("rssEditRule");
-            QVERIFY(feeds && articles && preview && mark && add && rssTabs && rules && editRule);
+            auto *downloader = dlg->findChild<QPushButton *>("rssDownloader");
+            QVERIFY(feeds && articles && preview && mark && add && downloader);
             QCOMPARE(feeds->topLevelItem(0)->childCount(), 1);
-            QCOMPARE(feeds->topLevelItem(0)->child(0)->text(0), QStringLiteral("News"));
+            QCOMPARE(feeds->topLevelItem(0)->child(0)->text(0), QStringLiteral("News (1)"));
             QCOMPARE(articles->topLevelItemCount(), 1);
             articles->setCurrentItem(articles->topLevelItem(0));
             QVERIFY(preview->toPlainText().contains(QStringLiteral("Example description")));
+            QVERIFY(preview->toHtml().contains(QStringLiteral("href=\"https://feed.example/news/story\"")));
+            QVERIFY(!preview->openExternalLinks());
+            QTRY_VERIFY_WITH_TIMEOUT(add->isEnabled(), 6000);
+            QCOMPARE(legacy.commandsFor("/api/v2/rss/markAsRead"), 1);
             auto *download = dlg->findChild<QPushButton *>("rssDownload");
             QVERIFY(download && download->isEnabled());
             QTimer::singleShot(0, dlg, [&]() {
@@ -4633,8 +4636,6 @@ private slots:
             QCOMPARE(decoded.queryItemValue(QStringLiteral("urls"), QUrl::FullyDecoded),
                      article.value("torrentURL").toString());
             QCOMPARE(modern.commandsFor("/api/v2/torrents/add"), 0);
-            QVERIFY(mark->isEnabled());
-            mark->click();
             QTRY_VERIFY_WITH_TIMEOUT(add->isEnabled(), 6000);
             QCOMPARE(legacy.commandsFor("/api/v2/rss/markAsRead"), 1);
             QVERIFY(legacy.rssItems().value("News").toObject().value("articles").toArray().at(0).toObject().value("isRead").toBool());
@@ -4656,12 +4657,20 @@ private slots:
             QCOMPARE(legacy.rssItems().value("New feed").toObject().value("url").toString(), feedUrl + QStringLiteral("&new=2"));
             QCOMPARE(feeds->topLevelItem(0)->childCount(), 2);
 
-            rssTabs->setCurrentIndex(1);
-            QCOMPARE(rules->count(), 1);
-            rules->setCurrentRow(0);
+            bool edited = false;
             QTimer::singleShot(0, dlg, [&]() {
+                auto *ruleDialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+                QVERIFY(ruleDialog && ruleDialog->objectName() == QStringLiteral("remoteRssDialog"));
+                const auto cleanup = qScopeGuard([ruleDialog]() { if (ruleDialog->isVisible()) ruleDialog->reject(); });
+                auto *rules = ruleDialog->findChild<QListWidget *>("rssRules");
+                auto *editRule = ruleDialog->findChild<QPushButton *>("rssEditRule");
+                QVERIFY(rules && editRule);
+                QTRY_VERIFY_WITH_TIMEOUT(editRule->isEnabled(), 6000);
+                QCOMPARE(rules->count(), 1);
+                rules->setCurrentRow(0);
+                QTimer::singleShot(0, ruleDialog, [&]() {
                 auto *editor = qobject_cast<QDialog *>(QApplication::activeModalWidget());
-                if (!editor || editor == dlg) return;
+                if (!editor || editor == ruleDialog) return;
                 const auto cleanup = qScopeGuard([editor]() { if (editor->isVisible()) editor->reject(); });
                 auto *must = editor->findChild<QLineEdit *>("rssRuleMustContain");
                 auto *box = editor->findChild<QDialogButtonBox *>();
@@ -4676,7 +4685,12 @@ private slots:
             QCOMPARE(changed.value("torrentParams"), rule.value("torrentParams"));
             QCOMPARE(changed.value("previouslyMatchedEpisodes"), rule.value("previouslyMatchedEpisodes"));
             QCOMPARE(changed.value("affectedFeeds"), rule.value("affectedFeeds"));
-            QCOMPARE(modern.commandsFor("/api/v2/rss/setRule"), 0);
+                QCOMPARE(modern.commandsFor("/api/v2/rss/setRule"), 0);
+                edited = true;
+            });
+            downloader->click();
+            QVERIFY(edited);
+            QTRY_VERIFY_WITH_TIMEOUT(add->isEnabled(), 6000);
         });
         auto *legacyReader = tabs->currentWidget()->findChild<QWidget *>("remoteRssWidget");
         tabs->setCurrentIndex(1);
@@ -4691,7 +4705,7 @@ private slots:
         tabs->setCurrentIndex(0);
         auto *sections = tabs->currentWidget()->findChild<QTabWidget *>("serverSectionTabs");
         QVERIFY(sections && sections->currentWidget() == legacyReader);
-        QCOMPARE(legacyReader->findChild<QTabWidget *>("rssTabs")->currentIndex(), 1);
+        QCOMPARE(legacyReader->findChild<QTabWidget *>("rssTabs")->currentIndex(), 0);
         action->trigger();
         QVERIFY(!action->isChecked());
         QCOMPARE(sections->currentIndex(), 0);

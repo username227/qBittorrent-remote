@@ -11,6 +11,9 @@ class QTreeWidget;
 class QTreeWidgetItem;
 class QListWidget;
 class QPlainTextEdit;
+class QTextBrowser;
+class QSplitter;
+class QSettings;
 class QTabWidget;
 class QPushButton;
 namespace Remote { class RemoteSession; }
@@ -21,6 +24,8 @@ class RemoteRssWidget final : public QWidget
 public:
     explicit RemoteRssWidget(Remote::RemoteSession *session, QWidget *parent = nullptr,
                              bool rulesFirst = false);
+    void saveLayout(QSettings &settings, const QString &prefix) const;
+    void restoreLayout(QSettings &settings, const QString &prefix);
 protected:
     void showEvent(QShowEvent *event) override;
 private:
@@ -55,7 +60,11 @@ private:
     QLabel *m_status = nullptr;
     QTreeWidget *m_feeds = nullptr;
     QTreeWidget *m_articles = nullptr;
-    QPlainTextEdit *m_article = nullptr;
+    QTextBrowser *m_article = nullptr;
+    QSplitter *m_split = nullptr, *m_right = nullptr;
+    QPushButton *m_downloader = nullptr;
+    bool m_rulesOnly = false;
+    QJsonObject m_displayedArticle;
     QListWidget *m_ruleList = nullptr;
     QPlainTextEdit *m_ruleSummary = nullptr;
     QPushButton *m_reload = nullptr, *m_addFeed = nullptr, *m_addFolder = nullptr;
