@@ -128,11 +128,17 @@ bool statusMatches(const QString &key, const QJsonObject &torrent)
         return true;
     const QString state = torrent.value(QStringLiteral("state")).toString();
     const bool finished = torrent.value(QStringLiteral("progress")).toDouble() >= 1.0;
+    // Native TorrentImpl::isDownloading/isUploading include queued and
+    // checking torrents; downloading also includes stopped downloads.
+    // These are overlapping status filters, not transfer-rate categories.
     const bool downloading = state == QLatin1String("downloading")
         || state == QLatin1String("forcedDL") || state == QLatin1String("metaDL")
-        || state == QLatin1String("stalledDL");
+        || state == QLatin1String("forcedMetaDL") || state == QLatin1String("stalledDL")
+        || state == QLatin1String("checkingDL") || state == QLatin1String("queuedDL")
+        || state == QLatin1String("stoppedDL") || state == QLatin1String("pausedDL");
     const bool seeding = state == QLatin1String("uploading")
-        || state == QLatin1String("forcedUP") || state == QLatin1String("stalledUP");
+        || state == QLatin1String("forcedUP") || state == QLatin1String("stalledUP")
+        || state == QLatin1String("queuedUP") || state == QLatin1String("checkingUP");
     const bool stopped = state.startsWith(QLatin1String("stopped"))
         || state.startsWith(QLatin1String("paused"));
     const bool active = torrent.value(QStringLiteral("dlspeed")).toDouble() > 0
@@ -140,7 +146,12 @@ bool statusMatches(const QString &key, const QJsonObject &torrent)
     if (key == QLatin1String("downloading")) return downloading;
     if (key == QLatin1String("seeding")) return seeding;
     if (key == QLatin1String("completed")) return finished;
-    if (key == QLatin1String("running")) return !stopped && (downloading || seeding);
+    // Native isRunning() is !isStopped(). The Web API exposes a state
+    // rather than the underlying stopped flag for moving/error/checking
+    // states; follow the official WebUI's non-stopped-state interpretation
+    // while not treating a missing or unknown state as running.
+    if (key == QLatin1String("running"))
+        return !stopped && !state.isEmpty() && state != QLatin1String("unknown");
     if (key == QLatin1String("stopped")) return stopped;
     if (key == QLatin1String("active")) return active;
     if (key == QLatin1String("inactive")) return !active;
