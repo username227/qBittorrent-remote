@@ -59,7 +59,7 @@ const QStringList &fieldKeys()
     return keys;
 }
 
-QString bytesText(double bytes)
+QString bytesText(double bytes, int precision = 1)
 {
     if (bytes < 0)
         return QStringLiteral("—");
@@ -70,7 +70,7 @@ QString bytesText(double bytes)
         bytes /= 1024;
         ++index;
     }
-    return QLocale().toString(bytes, 'f', index == 0 ? 0 : 1)
+    return QLocale().toString(bytes, 'f', index == 0 ? 0 : precision)
         + QLatin1Char(' ') + QString::fromLatin1(units[index]);
 }
 
@@ -270,7 +270,7 @@ QVariant TorrentModel::data(const QModelIndex &index, int role) const
         return number < 0 ? QStringLiteral("N/A")
             : QLocale().toString(number, 'f', 3);
     if (byteColumn(col))
-        return bytesText(number);
+        return bytesText(number, col == 1 ? 2 : 1);
     if (speedColumn(col))
         return number < 0 ? QStringLiteral("∞") : bytesText(number) + QStringLiteral("/s");
     if (durationColumn(col))
