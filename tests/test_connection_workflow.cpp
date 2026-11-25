@@ -4805,12 +4805,36 @@ private slots:
                 QVERIFY(apply->isEnabled());
                 if (save)
                 {
-                    QTimer::singleShot(0, dlg, [] {
+                    bool confirmed = false;
+                    QString unexpectedDialog;
+                    QTimer modalDriver;
+                    modalDriver.setInterval(20);
+                    connect(&modalDriver, &QTimer::timeout, dlg, [&] {
                         auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
-                        if (box) box->button(QMessageBox::Yes)->click();
+                        if (!box) return;
+                        if (box->windowTitle() == QStringLiteral("Change server WebUI settings")
+                            && box->button(QMessageBox::Yes))
+                        {
+                            confirmed = true;
+                            box->button(QMessageBox::Yes)->click();
+                        }
+                        else
+                        {
+                            unexpectedDialog = box->windowTitle() + QStringLiteral(": ") + box->text();
+                            box->reject();
+                        }
                     });
+                    modalDriver.start();
                     apply->click();
-                    QTRY_VERIFY_WITH_TIMEOUT(!apply->isEnabled(), 6000);
+                    // Apply is disabled as soon as the asynchronous write starts.
+                    // Wait for the page to be unlocked after readback, otherwise
+                    // the scope guard's reject() is ignored while remoteBusy.
+                    QTRY_VERIFY_WITH_TIMEOUT(nav->isEnabled(), 6000);
+                    modalDriver.stop();
+                    QVERIFY2(unexpectedDialog.isEmpty(), qPrintable(unexpectedDialog));
+                    QVERIFY(confirmed);
+                    QVERIFY(!apply->isEnabled());
+                    QCOMPARE(modern.commandsFor("/api/v2/app/setPreferences"), 1);
                 }
                 finished = true;
             });
