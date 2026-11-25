@@ -373,10 +373,10 @@ void RemoteRssWidget::addItem(bool folder)
     auto *form = new QFormLayout(&dialog);
     auto *path = new QLineEdit(prefix.isEmpty() ? QString() : prefix + sep, &dialog);
     path->setObjectName(QStringLiteral("rssItemPath"));
-    form->addRow(folder ? tr("Folder Name:") : tr("Subscription Name:"), path);
+    form->addRow(folder ? tr("Folder name:") : tr("Subscription name:"), path);
     auto *url = new QLineEdit(&dialog);
     url->setObjectName(QStringLiteral("rssFeedUrl"));
-    if (!folder) form->addRow(tr("Feed URL:"), url);
+    if (!folder) form->addRow(tr("URL:"), url);
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
     form->addRow(buttons);
     connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
