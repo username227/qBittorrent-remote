@@ -67,6 +67,16 @@ Qt Test may drive GUI interactions but is invoked exclusively through CTest.
 The functional suites share one linked `qbittorrent_remote_tests` executable;
 CTest still launches each registered workflow in a separate process.
 
+All three test presets (development, release, Windows UCRT64) run up to
+four CTest workflow processes concurrently. Linux CI and the Windows
+installer build already use those presets and inherit the same setting.
+This changes scheduling only: all registered tests and their timeouts
+remain intact. Override with `ctest --preset dev --parallel 1` for
+serial diagnosis, or choose a different job count on your machine.
+For packaging or manual builds that do not use a preset, pass
+`ctest --test-dir <build-dir> --parallel 4 --output-on-failure` in the
+package check step.
+
 ### Windows installer and cross-platform CI
 
 A native Windows x64 installer can be built from **MSYS2 UCRT64** using the
