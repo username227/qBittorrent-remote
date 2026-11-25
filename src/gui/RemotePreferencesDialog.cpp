@@ -2147,16 +2147,20 @@ void RemotePreferencesDialog::buildRemotePathsPage(const QString &preferredProfi
     m_editMapping->setObjectName(QStringLiteral("editPathMapping"));
     m_removeMapping = new QPushButton(tr("Remove"), group);
     m_removeMapping->setObjectName(QStringLiteral("removePathMapping"));
+    m_preferMapping = new QPushButton(tr("Make Preferred"), group);
+    m_preferMapping->setObjectName(QStringLiteral("preferPathMapping"));
+    m_preferMapping->setToolTip(tr("Move this mapping to the top. If multiple mappings match the same local directory, the first equally specific mapping is used for remote destinations."));
     m_checkMount = new QPushButton(tr("Check Local Mount"), group);
     m_checkMount->setObjectName(QStringLiteral("checkLocalMount"));
     for (QPushButton *button : {m_addMapping, m_editMapping,
-                                 m_removeMapping, m_checkMount})
+                                 m_removeMapping, m_preferMapping, m_checkMount})
         row->addWidget(button);
     row->addStretch();
     groupLayout->addLayout(row);
 
     auto *note = new QLabel(tr(
-        "Browse picks a local folder; enter the remote path manually. "
+        "Multiple remote directories may share a local mount. The most specific "
+        "mapping wins; for equal local roots, the first listed mapping is preferred. "
         "Mount check is local only."), group);
     note->setToolTip(tr(
         "A local mount check cannot verify the server filesystem. "
@@ -2181,6 +2185,17 @@ void RemotePreferencesDialog::buildRemotePathsPage(const QString &preferredProfi
                      this, [this]() { editMapping(true); });
     QObject::connect(m_removeMapping, &QPushButton::clicked,
                      this, [this]() { removeMapping(); });
+    QObject::connect(m_preferMapping, &QPushButton::clicked,
+                     this, [this]() {
+        auto entries = tableMappings();
+        const int row = m_mappings->currentRow();
+        if (row <= 0 || row >= entries.size() || currentProfileId().isEmpty())
+            return;
+        entries.prepend(entries.takeAt(row));
+        displayMappings(entries);
+        m_mappings->selectRow(0);
+        stageCurrentMappings();
+    });
     QObject::connect(m_checkMount, &QPushButton::clicked,
                      this, [this]() { checkLocalMount(); });
     QObject::connect(m_mappings, &QTableWidget::cellDoubleClicked,
@@ -2322,6 +2337,7 @@ void RemotePreferencesDialog::updateButtons()
     m_addMapping->setEnabled(hasProfile);
     m_editMapping->setEnabled(selected);
     m_removeMapping->setEnabled(selected);
+    m_preferMapping->setEnabled(selected && m_mappings->currentRow() > 0);
     m_checkMount->setEnabled(selected);
     if (m_applyButton)
         m_applyButton->setEnabled(!m_remoteBusy && (!m_changedProfiles.isEmpty()

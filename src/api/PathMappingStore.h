@@ -37,7 +37,8 @@ public:
     static bool validate(const QList<PathMapping> &mappings, QString *error = nullptr);
 
     // Empty means that no configured root matches. Match on a directory
-    // boundary, preferring the longest root; never guess a remote location.
+    // boundary, preferring the longest root. Equal local roots use the
+    // first configured mapping (the user's preferred remote destination).
     static QString toRemote(const QString &localPath, const QList<PathMapping> &mappings);
     static QString toLocal(const QString &remotePath, const QList<PathMapping> &mappings);
 

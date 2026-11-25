@@ -71,7 +71,7 @@ private slots:
             QStringLiteral("/some/unmapped/dir"), first).isEmpty());
 
         QVERIFY(!maps.replace(QStringLiteral("server-a"),
-                             {{local, destination}, {local, QStringLiteral("/share/Other")}},
+                             {{local, destination}, {nested, destination + QStringLiteral("/")}},
                              &error));
         QVERIFY(!error.isEmpty());
         QVERIFY(!maps.replace(QStringLiteral("server-a"),
@@ -414,7 +414,8 @@ private slots:
         const QString local = QDir(tmp.path()).filePath(QStringLiteral("mounted"));
         const QString remote = QStringLiteral("/share/CACHEDEV1_DATA/Downloads");
 
-        const auto addViaDialog = [&](RemotePreferencesDialog &dialog) {
+        const QString alias = QStringLiteral("/share/Public/Downloads");
+        const auto addViaDialog = [&](RemotePreferencesDialog &dialog, const QString &remotePath) {
             auto *button = dialog.findChild<QPushButton *>(
                 QStringLiteral("addPathMapping"));
             QVERIFY(button);
@@ -431,7 +432,7 @@ private slots:
                 if (!localField || !remoteField || !buttons)
                     return;
                 localField->setText(local);
-                remoteField->setText(remote);
+                remoteField->setText(remotePath);
                 editorOpened = true;
                 buttons->button(QDialogButtonBox::Ok)->click();
             });
@@ -455,7 +456,7 @@ private slots:
             nav->setCurrentRow(0);
             QCOMPARE(nav->item(0)->text(), QStringLiteral("Servers"));
             QCOMPARE(selector->currentData().toString(), first.id);
-            addViaDialog(dialog);
+            addViaDialog(dialog, remote);
             QCOMPARE(table->rowCount(), 1);
             // Local paths follow the client's native style; remote paths
             // remain POSIX on Windows as well as Linux.
@@ -478,8 +479,19 @@ private slots:
             auto *table = dialog.findChild<QTableWidget *>(
                 QStringLiteral("remotePathMappings"));
             QVERIFY(table);
-            addViaDialog(dialog);
-            QCOMPARE(table->rowCount(), 1);
+            addViaDialog(dialog, remote);
+            addViaDialog(dialog, alias);
+            QCOMPARE(table->rowCount(), 2);
+            QCOMPARE(table->item(0, 1)->text(), remote);
+            QCOMPARE(table->item(1, 1)->text(), alias);
+            QCOMPARE(table->item(0, 0)->text(), table->item(1, 0)->text());
+            auto *prefer = dialog.findChild<QPushButton *>(QStringLiteral("preferPathMapping"));
+            QVERIFY(prefer);
+            table->selectRow(1);
+            QVERIFY(prefer->isEnabled());
+            prefer->click();
+            QCOMPARE(table->item(0, 1)->text(), alias);
+            QCOMPARE(table->item(1, 1)->text(), remote);
             auto *apply = dialog.findChild<QPushButton *>(
                 QStringLiteral("preferencesApply"));
             apply->click();
@@ -488,9 +500,19 @@ private slots:
             dialog.reject();
         }
         const auto stored = Remote::PathMappingStore(settings).mappings(first.id);
-        QCOMPARE(stored.size(), 1);
-        QCOMPARE(stored.first().remoteRoot, remote);
+        QCOMPARE(stored.size(), 2);
+        QCOMPARE(stored.first().remoteRoot, alias);
+        QCOMPARE(stored.last().remoteRoot, remote);
         QVERIFY(Remote::PathMappingStore(settings).mappings(second.id).isEmpty());
+        // Reopening the real page retains the user's preferred ordering.
+        {
+            RemotePreferencesDialog dialog(settings, first.id);
+            auto *table = dialog.findChild<QTableWidget *>(QStringLiteral("remotePathMappings"));
+            QVERIFY(table);
+            QCOMPARE(table->rowCount(), 2);
+            QCOMPARE(table->item(0, 1)->text(), alias);
+            QCOMPARE(table->item(1, 1)->text(), remote);
+        }
 
         // Deleting a saved profile must not leave orphaned path mappings.
         QVERIFY(profiles.remove(first.id));

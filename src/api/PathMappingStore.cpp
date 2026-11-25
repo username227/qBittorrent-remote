@@ -93,7 +93,6 @@ QList<PathMapping> PathMappingStore::mappings(const QString &profileId) const
 
 bool PathMappingStore::validate(const QList<PathMapping> &mappings, QString *error)
 {
-    QSet<QString> locals;
     QSet<QString> remotes;
     for (const PathMapping &entry : mappings)
     {
@@ -113,14 +112,13 @@ bool PathMappingStore::validate(const QList<PathMapping> &mappings, QString *err
                                      "and neither mapping root can be /.");
             return false;
         }
-        if (locals.contains(local) || remotes.contains(remote))
+        if (remotes.contains(remote))
         {
             if (error)
-                *error = QObject::tr("Each local and remote directory may appear only once "
-                                     "in a server's mappings.");
+                *error = QObject::tr("Each remote directory may appear only once "
+                                     "in a server's mappings. Local directories may be shared.");
             return false;
         }
-        locals.insert(local);
         remotes.insert(remote);
     }
     return true;
@@ -171,6 +169,8 @@ QString PathMappingStore::toRemote(const QString &local, const QList<PathMapping
     const QString path = localPath(local);
     QString bestRoot;
     QString bestDest;
+    // For equal-length local aliases, the first configured row is preferred.
+    // A more specific local directory still overrides the preferred parent.
     for (const PathMapping &entry : entries)
     {
         const QString root = stripTrailingSlash(localPath(entry.localRoot));
