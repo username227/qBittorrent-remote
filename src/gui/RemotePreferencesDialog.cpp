@@ -35,10 +35,13 @@
 #include <QPushButton>
 #include <QRandomGenerator>
 #include <limits>
+#include <type_traits>
 #include <QScrollArea>
 #include <QSignalBlocker>
 #include <QSizePolicy>
 #include <QSpinBox>
+#include <QDoubleSpinBox>
+#include <QRadioButton>
 #include <QTimeEdit>
 #include <QLocale>
 #include <QSplitter>
@@ -80,6 +83,19 @@ struct ScheduleTimeKeys
 };
 constexpr ScheduleTimeKeys scheduleFrom{"schedule_from_hour", "schedule_from_min"};
 constexpr ScheduleTimeKeys scheduleTo{"schedule_to_hour", "schedule_to_min"};
+
+// The legacy API ignores a numeric limit unless its enable flag is also
+// supplied. Both generations expose -1 when disabled; send the complete
+// pair only when that logical limit changes.
+struct SeedingLimitKeys
+{
+    const char *value;
+    const char *enabled;
+};
+constexpr SeedingLimitKeys seedingRatio{"max_ratio", "max_ratio_enabled"};
+constexpr SeedingLimitKeys seedingTime{"max_seeding_time", "max_seeding_time_enabled"};
+constexpr SeedingLimitKeys seedingInactive{"max_inactive_seeding_time", "max_inactive_seeding_time_enabled"};
+constexpr SeedingLimitKeys seedingLimits[] = {seedingRatio, seedingTime, seedingInactive};
 
 bool validTimeComponent(const QJsonValue &value, int maximum)
 {
@@ -219,6 +235,7 @@ RemotePreferencesDialog::RemotePreferencesDialog(QSettings &settings,
     bindSpeedControls();
     bindBitTorrentPrivacyControls();
     bindBitTorrentQueueingControls();
+    bindBitTorrentSeedingLimits();
     populateAdvancedPlaceholders();
     buildRemotePathsPage(preferredProfileId);
 
@@ -772,6 +789,140 @@ void RemotePreferencesDialog::bindBitTorrentQueueingControls()
         ignoreSlow, tr("Upload threshold in KiB/s on the connected server."));
     bindSpin("slow_torrent_inactive_timer", m_ui->spinSlowTorrentsInactivityTimer,
         ignoreSlow, tr("Inactivity timer in seconds on the connected server."));
+}
+
+void RemotePreferencesDialog::bindBitTorrentSeedingLimits()
+{
+    // Use the current upstream native ratio range and two-decimal precision.
+    // Both API generations accept nonnegative ratios and times; -1 disables.
+    m_ui->spinMaxRatio->setMaximum(std::numeric_limits<int>::max());
+    const auto bind = [this](SeedingLimitKeys keys, QCheckBox *check, auto *spin) {
+        using Spin = std::remove_pointer_t<decltype(spin)>;
+        if (auto *editor = spin->template findChild<QLineEdit *>())
+        {
+            editor->setEnabled(true);
+            editor->setToolTip(QString());
+        }
+        bindRemoteField(RemoteField{
+            QString::fromLatin1(keys.value), check,
+            [check, spin]() {
+                return QJsonValue(check->isChecked() ? double(spin->value()) : -1.0);
+            },
+            [check, spin](const QJsonValue &value) {
+                const double limit = value.toDouble();
+                check->setChecked(limit >= 0);
+                // Keep the previous in-dialog value when unchecked. The
+                // daemon stores only -1, not a dormant numeric threshold.
+                if (limit >= 0)
+                    spin->setValue(static_cast<decltype(spin->value())>(limit));
+            },
+            [spin](const QJsonValue &value) {
+                if (!value.isDouble()) return false;
+                const double limit = value.toDouble();
+                if (limit == -1) return true;
+                if (limit < spin->minimum() || limit > spin->maximum()) return false;
+                if constexpr (std::is_same_v<Spin, QSpinBox>)
+                    return limit == value.toInt();
+                return true; // populateRemoteFields also rejects rounding.
+            },
+            {}, tr("Global limit on the connected server; uncheck to disable.")
+        });
+        connect(check, &QCheckBox::toggled, this, [this]() { remoteFieldChanged(); });
+        connect(spin, &Spin::valueChanged, this, [this]() { remoteFieldChanged(); });
+    };
+    bind(seedingRatio, m_ui->checkMaxRatio, m_ui->spinMaxRatio);
+    bind(seedingTime, m_ui->checkMaxSeedingMinutes, m_ui->spinMaxSeedingMinutes);
+    bind(seedingInactive, m_ui->checkMaxInactiveSeedingMinutes, m_ui->spinMaxInactiveSeedingMinutes);
+
+    // Native dropdown order differs from the API enum: the two last
+    // entries are reversed. Never bind this as a plain index.
+    auto *action = m_ui->comboRatioLimitAct;
+    const QList<int> actions{0, 1, 3, 2};
+    bindRemoteField(RemoteField{
+        QStringLiteral("max_ratio_act"), action,
+        [action, actions]() { return QJsonValue(actions.value(action->currentIndex(), -1)); },
+        [action, actions](const QJsonValue &v) { action->setCurrentIndex(actions.indexOf(v.toInt())); },
+        [](const QJsonValue &v) {
+            return v.isDouble() && v.toDouble() == v.toInt() && v.toInt() >= 0 && v.toInt() <= 3;
+        },
+        [this]() {
+            return (remoteFieldAvailable(seedingRatio.value) && m_ui->checkMaxRatio->isChecked())
+                || (remoteFieldAvailable(seedingTime.value) && m_ui->checkMaxSeedingMinutes->isChecked())
+                || (remoteFieldAvailable(seedingInactive.value) && m_ui->checkMaxInactiveSeedingMinutes->isChecked());
+        },
+        tr("Action performed by the remote server when its configured seeding limits are reached.")
+    });
+    connect(action, &QComboBox::currentIndexChanged, this, [this]() { remoteFieldChanged(); });
+
+    auto *any = m_ui->radioButtonShareLimitsModeAny;
+    auto *all = m_ui->radioButtonShareLimitsModeAll;
+    // 5.1.4 has implicit MatchAny and does not advertise this field.
+    bindRemoteField(RemoteField{
+        QStringLiteral("share_limits_mode"), any,
+        [all]() { return QJsonValue(all->isChecked() ? QStringLiteral("MatchAll") : QStringLiteral("MatchAny")); },
+        [any, all](const QJsonValue &v) {
+            (v.toString() == QLatin1String("MatchAll") ? all : any)->setChecked(true);
+        },
+        [](const QJsonValue &v) {
+            return v.isString() && (v.toString() == QLatin1String("MatchAny")
+                || v.toString() == QLatin1String("MatchAll"));
+        },
+        {}, tr("Match any or all enabled seeding limits on the connected server.")
+    });
+    connect(any, &QRadioButton::toggled, this, [this]() { remoteFieldChanged(); });
+    connect(all, &QRadioButton::toggled, this, [this]() { remoteFieldChanged(); });
+}
+
+void RemotePreferencesDialog::refreshSeedingLimitControls()
+{
+    const auto refresh = [this](SeedingLimitKeys keys, QCheckBox *check, QAbstractSpinBox *spin) {
+        const bool supported = remoteFieldAvailable(keys.value);
+        spin->setEnabled(supported && check->isChecked());
+        spin->setToolTip(check->toolTip());
+    };
+    refresh(seedingRatio, m_ui->checkMaxRatio, m_ui->spinMaxRatio);
+    refresh(seedingTime, m_ui->checkMaxSeedingMinutes, m_ui->spinMaxSeedingMinutes);
+    refresh(seedingInactive, m_ui->checkMaxInactiveSeedingMinutes, m_ui->spinMaxInactiveSeedingMinutes);
+    m_ui->labelRatioLimitAct->setEnabled(m_ui->comboRatioLimitAct->isEnabled());
+    m_ui->radioButtonShareLimitsModeAll->setEnabled(remoteFieldAvailable("share_limits_mode"));
+    m_ui->radioButtonShareLimitsModeAll->setToolTip(m_ui->radioButtonShareLimitsModeAny->toolTip());
+}
+
+bool RemotePreferencesDialog::validateSeedingLimitChanges(const QJsonObject &changes)
+{
+    const bool limitChanged = changes.contains(QLatin1String(seedingRatio.value))
+        || changes.contains(QLatin1String(seedingTime.value))
+        || changes.contains(QLatin1String(seedingInactive.value));
+    const bool modeChanged = changes.contains(QStringLiteral("share_limits_mode"));
+    const bool actionChanged = changes.contains(QStringLiteral("max_ratio_act"));
+    if (!limitChanged && !modeChanged && !actionChanged) return true;
+
+    bool enablingOrEditing = modeChanged || actionChanged;
+    for (const auto keys : seedingLimits)
+        if (changes.contains(QLatin1String(keys.value))
+            && changes.value(QLatin1String(keys.value)).toDouble() >= 0)
+            enablingOrEditing = true;
+
+    if (enablingOrEditing && !remoteFieldAvailable("max_ratio_act"))
+    {
+        QMessageBox::warning(this, tr("Unknown seeding-limit action"),
+            tr("The connected server has not supplied a valid action. "
+               "Do not enable or change active limits until its action is known."));
+        return false;
+    }
+    // Also warn when changing a threshold or mode while a destructive
+    // action is already configured: this can affect existing torrents.
+    const int index = m_ui->comboRatioLimitAct->currentIndex();
+    if (remoteFieldAvailable("max_ratio_act") && (index == 1 || index == 2))
+    {
+        return QMessageBox::question(this, tr("Change automatic torrent removal"),
+            tr("The connected server may automatically remove torrents%1 when these limits "
+               "are met, including existing torrents using global limits. "
+               "These actions can occur even when qBittorrent Remote is closed. Apply changes?")
+                .arg(index == 2 ? tr(" and delete their downloaded files") : QString()),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes;
+    }
+    return true;
 }
 
 void RemotePreferencesDialog::bindConnectionListeningControls()
@@ -1742,6 +1893,7 @@ void RemotePreferencesDialog::refreshRemoteControls()
     refreshNotificationControls();
     refreshBackupControls();
     refreshConnectionLimitControls();
+    refreshSeedingLimitControls();
     refreshI2PControls();
     refreshProxyControls();
     const bool portAvailable = remoteFieldAvailable("listen_port");
@@ -1757,6 +1909,16 @@ void RemotePreferencesDialog::populateRemoteFields(const QJsonObject &values,
     m_loadingRemotePreferences = true;
     m_remotePreferencesLoaded = true;
     QJsonObject availableValues = values;
+    // A missing or contradictory flag/value pair is not editable. Do not
+    // silently substitute a Designer threshold or overwrite unknown state.
+    for (const auto keys : seedingLimits)
+    {
+        const auto value = values.value(QLatin1String(keys.value));
+        const auto enabled = values.value(QLatin1String(keys.enabled));
+        if (!value.isDouble() || !enabled.isBool()
+            || (enabled.toBool() ? value.toDouble() < 0 : value.toDouble() != -1))
+            availableValues.remove(QLatin1String(keys.value));
+    }
     // A half-present or invalid time is not an editable setting.
     for (const auto keys : {scheduleFrom, scheduleTo})
     {
@@ -1841,6 +2003,9 @@ QJsonObject RemotePreferencesDialog::remoteChanges() const
     };
     completeTime(scheduleFrom, m_ui->timeEditScheduleFrom->time());
     completeTime(scheduleTo, m_ui->timeEditScheduleTo->time());
+    for (const auto keys : seedingLimits)
+        if (changes.contains(QLatin1String(keys.value)))
+            changes.insert(QLatin1String(keys.enabled), changes.value(QLatin1String(keys.value)).toDouble() >= 0);
     return changes;
 }
 
@@ -2362,7 +2527,7 @@ void RemotePreferencesDialog::applyChanges(bool closeAfter)
         return;
     }
     if (!validateDownloadChanges(changes) || !validateIPFilterChanges(changes)
-        || !validateSpeedChanges(changes))
+        || !validateSpeedChanges(changes) || !validateSeedingLimitChanges(changes))
     {
         m_closeAfterApply = false;
         return;
