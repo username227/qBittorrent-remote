@@ -237,6 +237,7 @@ RemotePreferencesDialog::RemotePreferencesDialog(QSettings &settings,
     bindBitTorrentQueueingControls();
     bindBitTorrentSeedingLimits();
     bindBitTorrentAutomaticTrackers();
+    bindSearchControls();
     populateAdvancedPlaceholders();
     buildRemotePathsPage(preferredProfileId);
 
@@ -992,6 +993,35 @@ bool RemotePreferencesDialog::validateAutomaticTrackerChanges(const QJsonObject 
         return false;
     }
     return true;
+}
+
+void RemotePreferencesDialog::bindSearchControls()
+{
+    // 5.3.0 exposes search job persistence in app/preferences; 5.1.4
+    // has only desktop tab persistence and exposes neither API key.
+    // Capability is determined by the authenticated server's typed values.
+    bindRemoteControl("store_search_jobs", m_ui->groupStoreSearchJobs, {},
+        tr("Keep search jobs on the connected server across restarts."));
+    bindRemoteControl("store_search_job_results", m_ui->checkStoreSearchJobResults,
+        [this]() {
+            return remoteFieldAvailable("store_search_jobs")
+                && m_ui->groupStoreSearchJobs->isChecked();
+        }, tr("Also retain the results of stored search jobs on the connected server."));
+
+    // These two settings are frontend-specific, not Web API preferences.
+    // The remote torrent-list filter is not the upstream search engine.
+    // Until our native search-results interface exists, do not stage inert
+    // local settings or send invented preference keys to the daemon.
+    const QString reason = tr("Requires the native Search interface, which is not yet implemented in qBittorrent Remote.");
+    m_ui->searchHistoryLengthSpinBox->setEnabled(false);
+    m_ui->searchHistoryLengthSpinBox->setToolTip(reason);
+    m_ui->searchHistoryLengthLabel->setEnabled(false);
+    m_ui->searchHistoryLengthLabel->setToolTip(reason);
+    m_ui->checkCloseSearchTabWithMiddleClick->setEnabled(false);
+    m_ui->checkCloseSearchTabWithMiddleClick->setToolTip(reason);
+    // Remove the placeholder's separate disabled-editor tooltip.
+    if (auto *editor = m_ui->searchHistoryLengthSpinBox->findChild<QLineEdit *>())
+        editor->setToolTip(reason);
 }
 
 void RemotePreferencesDialog::bindConnectionListeningControls()

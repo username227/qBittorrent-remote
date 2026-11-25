@@ -66,6 +66,7 @@ private:
     void bindBitTorrentQueueingControls();
     void bindBitTorrentSeedingLimits();
     void bindBitTorrentAutomaticTrackers();
+    void bindSearchControls();
     void refreshAutomaticTrackerControls();
     bool validateAutomaticTrackerChanges(const QJsonObject &changes);
     void refreshSeedingLimitControls();

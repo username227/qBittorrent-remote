@@ -5270,6 +5270,137 @@ private slots:
         QCOMPARE(legacy.serverPreferences(), expectedLegacy);
     }
 
+    void searchPreferencesFollowSelectedServer()
+    {
+        DemoQbittorrentServer legacy(true), modern(true);
+        modern.enableModernResponses();
+        const QJsonObject initialLegacy{{"upnp", true}};
+        const QJsonObject initialModern{
+            {"store_search_jobs", false}, {"store_search_job_results", true}, {"upnp", false}
+        };
+        legacy.setServerPreferences(initialLegacy);
+        modern.setServerPreferences(initialModern);
+        QVERIFY(legacy.start() && modern.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("prefs.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, legacy.url());
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(QStringLiteral("v5.1.4")), 6000);
+        openConnectDialog(window, modern.url(), false, true, true, QStringLiteral("Modern seedbox"));
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(QStringLiteral("v5.3.0")), 6000);
+        auto *tabs = window.findChild<QTabWidget *>(QStringLiteral("serverTabs"));
+        auto *prefs = window.findChild<QAction *>(QStringLiteral("actionOptions"));
+        QVERIFY(tabs && prefs);
+
+        struct Controls {
+            QGroupBox *jobs;
+            QCheckBox *results, *middleClick, *upnp;
+            QSpinBox *history;
+            QPushButton *apply;
+        };
+        const auto withSearch = [&](auto exercise) {
+            bool finished = false;
+            QTimer::singleShot(0, &window, [&]() {
+                auto *dlg = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget());
+                QVERIFY(dlg);
+                const auto cleanup = qScopeGuard([dlg]() { if (dlg->isVisible()) dlg->reject(); });
+                auto *sections = dlg->findChild<QListWidget *>("preferencesSections");
+                const Controls c{
+                    dlg->findChild<QGroupBox *>("groupStoreSearchJobs"),
+                    dlg->findChild<QCheckBox *>("checkStoreSearchJobResults"),
+                    dlg->findChild<QCheckBox *>("checkCloseSearchTabWithMiddleClick"),
+                    dlg->findChild<QCheckBox *>("checkUPnP"),
+                    dlg->findChild<QSpinBox *>("searchHistoryLengthSpinBox"),
+                    dlg->findChild<QPushButton *>("preferencesApply")
+                };
+                QVERIFY(sections && c.jobs && c.results && c.middleClick && c.upnp && c.history && c.apply);
+                sections->setCurrentRow(6);
+                QTRY_VERIFY_WITH_TIMEOUT(c.upnp->isEnabled(), 6000);
+                QVERIFY(!c.middleClick->isEnabled() && !c.history->isEnabled());
+                QVERIFY(c.history->toolTip().contains(QStringLiteral("native Search interface")));
+                QVERIFY(!c.apply->isEnabled());
+                exercise(c);
+                finished = true;
+            });
+            prefs->trigger();
+            QVERIFY(finished);
+        };
+        const auto delta = [](DemoQbittorrentServer &server) {
+            const QUrlQuery form(QString::fromUtf8(server.lastCommandBody("/api/v2/app/setPreferences")));
+            return QJsonDocument::fromJson(form.queryItemValue(
+                QStringLiteral("json"), QUrl::FullyDecoded).toUtf8()).object();
+        };
+        tabs->setCurrentIndex(0);
+        withSearch([](const Controls &c) {
+            QVERIFY(!c.jobs->isEnabled() && !c.results->isEnabled());
+        });
+        QCOMPARE(legacy.commandsFor("/api/v2/app/setPreferences"), 0);
+
+        tabs->setCurrentIndex(1);
+        for (bool save : {false, true})
+        {
+            withSearch([&](const Controls &c) {
+                QVERIFY(c.jobs->isEnabled() && !c.jobs->isChecked());
+                QVERIFY(c.results->isChecked() && !c.results->isEnabled());
+                c.jobs->setChecked(true);
+                QVERIFY(c.results->isEnabled());
+                c.jobs->setChecked(false);
+                QVERIFY(!c.apply->isEnabled());
+                c.jobs->setChecked(true);
+                c.results->setChecked(false);
+                QVERIFY(c.apply->isEnabled());
+                QCOMPARE(modern.commandsFor("/api/v2/app/setPreferences"), 0);
+                if (save)
+                {
+                    c.apply->click();
+                    QTRY_VERIFY_WITH_TIMEOUT(c.jobs->isEnabled() && !c.apply->isEnabled(), 6000);
+                }
+            });
+            if (!save) QCOMPARE(modern.serverPreferences(), initialModern);
+        }
+        const QJsonObject firstDelta{{"store_search_jobs", true}, {"store_search_job_results", false}};
+        QCOMPARE(delta(modern), firstDelta);
+        QJsonObject expected = initialModern;
+        expected.insert("store_search_jobs", true);
+        expected.insert("store_search_job_results", false);
+        QCOMPARE(modern.serverPreferences(), expected);
+        withSearch([](const Controls &c) {
+            QVERIFY(c.jobs->isChecked() && c.results->isEnabled() && !c.results->isChecked());
+            c.results->setChecked(true);
+            c.apply->click();
+            QTRY_VERIFY_WITH_TIMEOUT(c.jobs->isEnabled() && !c.apply->isEnabled(), 6000);
+            c.jobs->setChecked(false);
+            QVERIFY(c.results->isChecked() && !c.results->isEnabled());
+            c.apply->click();
+            QTRY_VERIFY_WITH_TIMEOUT(c.jobs->isEnabled() && !c.apply->isEnabled(), 6000);
+        });
+        const QJsonObject disableOnly{{"store_search_jobs", false}};
+        QCOMPARE(delta(modern), disableOnly);
+        expected.insert("store_search_jobs", false);
+        expected.insert("store_search_job_results", true);
+        QCOMPARE(modern.serverPreferences(), expected);
+        QCOMPARE(legacy.serverPreferences(), initialLegacy);
+
+        // Invalid and missing fields do not become Designer defaults.
+        expected.insert("store_search_jobs", QStringLiteral("true"));
+        expected.remove("store_search_job_results");
+        modern.setServerPreferences(expected);
+        withSearch([](const Controls &c) {
+            QVERIFY(!c.jobs->isEnabled() && !c.results->isEnabled());
+            c.upnp->setChecked(true);
+            c.apply->click();
+            QTRY_VERIFY_WITH_TIMEOUT(c.upnp->isEnabled() && !c.apply->isEnabled(), 6000);
+        });
+        const QJsonObject unrelated{{"upnp", true}};
+        QCOMPARE(delta(modern), unrelated);
+        expected.insert("upnp", true);
+        QCOMPARE(modern.serverPreferences(), expected);
+        QCOMPARE(legacy.serverPreferences(), initialLegacy);
+    }
+
     void speedPreferencesFollowSelectedServer()
     {
         DemoQbittorrentServer legacy(true), modern(true);
