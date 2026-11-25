@@ -61,6 +61,8 @@ private:
     void bindProxyControls();
     void refreshProxyControls();
     void bindIPFilterControls();
+    void bindSpeedControls();
+    bool validateSpeedChanges(const QJsonObject &changes);
     bool validateIPFilterChanges(const QJsonObject &changes);
     void refreshI2PControls();
     void readI2PBuildInfo();

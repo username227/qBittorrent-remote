@@ -68,6 +68,7 @@
 #include <QPlainTextEdit>
 #include <QStandardItemModel>
 #include <QSpinBox>
+#include <QTimeEdit>
 #include <QDoubleSpinBox>
 #include <QDialogButtonBox>
 #include <QImage>
@@ -386,6 +387,16 @@ public:
                                     for (auto it = updates.constBegin(); it != updates.constEnd(); ++it)
                                         if (m_preferences.contains(it.key()))
                                         {
+                                            const QString key = it.key();
+                                            const bool fromTime = key == QLatin1String("schedule_from_hour")
+                                                || key == QLatin1String("schedule_from_min");
+                                            const bool toTime = key == QLatin1String("schedule_to_hour")
+                                                || key == QLatin1String("schedule_to_min");
+                                            if ((fromTime && (!updates.contains(QStringLiteral("schedule_from_hour"))
+                                                    || !updates.contains(QStringLiteral("schedule_from_min"))))
+                                                || (toTime && (!updates.contains(QStringLiteral("schedule_to_hour"))
+                                                    || !updates.contains(QStringLiteral("schedule_to_min")))))
+                                                continue;
                                             const bool directory = it.key() == QLatin1String("save_path")
                                                 || it.key() == QLatin1String("temp_path")
                                                 || ((it.key() == QLatin1String("export_dir")
@@ -4397,6 +4408,224 @@ private slots:
                 && c.peer->isChecked() && c.rss->isChecked() && c.misc->isChecked());
             QVERIFY(!c.apply->isEnabled());
         });
+    }
+
+    void speedPreferencesFollowSelectedServer()
+    {
+        DemoQbittorrentServer legacy(true), modern(true);
+        modern.enableModernResponses();
+        const QJsonObject initialLegacy{
+            {QStringLiteral("up_limit"), 100 * 1024},
+            {QStringLiteral("dl_limit"), 0},
+            {QStringLiteral("alt_up_limit"), 10 * 1024},
+            {QStringLiteral("alt_dl_limit"), 20 * 1024},
+            {QStringLiteral("scheduler_enabled"), false},
+            {QStringLiteral("schedule_from_hour"), 8},
+            {QStringLiteral("schedule_from_min"), 15},
+            {QStringLiteral("schedule_to_hour"), 20},
+            {QStringLiteral("schedule_to_min"), 30},
+            {QStringLiteral("scheduler_days"), 0},
+            {QStringLiteral("limit_utp_rate"), true},
+            {QStringLiteral("limit_tcp_overhead"), false},
+            {QStringLiteral("limit_lan_peers"), true}
+        };
+        QJsonObject initialModern = initialLegacy;
+        initialModern.insert(QStringLiteral("up_limit"), 200 * 1024);
+        initialModern.insert(QStringLiteral("scheduler_enabled"), true);
+        initialModern.insert(QStringLiteral("scheduler_days"), 9);
+        legacy.setServerPreferences(initialLegacy);
+        modern.setServerPreferences(initialModern);
+        QVERIFY(legacy.start() && modern.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("prefs.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, legacy.url());
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(QStringLiteral("v5.1.4")), 6000);
+        openConnectDialog(window, modern.url(), false, true, true, QStringLiteral("Modern seedbox"));
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(QStringLiteral("v5.3.0")), 6000);
+        auto *tabs = window.findChild<QTabWidget *>(QStringLiteral("serverTabs"));
+        auto *prefs = window.findChild<QAction *>(QStringLiteral("actionOptions"));
+        QVERIFY(tabs && prefs);
+
+        struct Controls
+        {
+            QSpinBox *up, *down, *altUp, *altDown;
+            QGroupBox *schedule;
+            QTimeEdit *from, *to;
+            QComboBox *days;
+            QCheckBox *utp, *overhead, *lan;
+            QPushButton *apply;
+        };
+        const auto withSpeed = [&](auto exercise) {
+            bool finished = false;
+            QTimer::singleShot(0, &window, [&]() {
+                auto *dlg = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget());
+                QVERIFY(dlg);
+                const auto cleanup = qScopeGuard([dlg]() { if (dlg->isVisible()) dlg->reject(); });
+                auto *sections = dlg->findChild<QListWidget *>(QStringLiteral("preferencesSections"));
+                const Controls c{
+                    dlg->findChild<QSpinBox *>(QStringLiteral("spinUploadLimit")),
+                    dlg->findChild<QSpinBox *>(QStringLiteral("spinDownloadLimit")),
+                    dlg->findChild<QSpinBox *>(QStringLiteral("spinUploadLimitAlt")),
+                    dlg->findChild<QSpinBox *>(QStringLiteral("spinDownloadLimitAlt")),
+                    dlg->findChild<QGroupBox *>(QStringLiteral("groupBoxSchedule")),
+                    dlg->findChild<QTimeEdit *>(QStringLiteral("timeEditScheduleFrom")),
+                    dlg->findChild<QTimeEdit *>(QStringLiteral("timeEditScheduleTo")),
+                    dlg->findChild<QComboBox *>(QStringLiteral("comboBoxScheduleDays")),
+                    dlg->findChild<QCheckBox *>(QStringLiteral("checkLimituTPConnections")),
+                    dlg->findChild<QCheckBox *>(QStringLiteral("checkLimitTransportOverhead")),
+                    dlg->findChild<QCheckBox *>(QStringLiteral("checkLimitLocalPeerRate")),
+                    dlg->findChild<QPushButton *>(QStringLiteral("preferencesApply"))
+                };
+                QVERIFY(sections && c.up && c.down && c.altUp && c.altDown && c.schedule
+                    && c.from && c.to && c.days && c.utp && c.overhead && c.lan && c.apply);
+                sections->setCurrentRow(4);
+                QTRY_VERIFY_WITH_TIMEOUT(c.lan->isEnabled(), 6000);
+                QCOMPARE(c.days->count(), 10);
+                exercise(c);
+                finished = true;
+            });
+            prefs->trigger();
+            QVERIFY(finished);
+        };
+        const auto delta = [](DemoQbittorrentServer &server) {
+            const QUrlQuery form(QString::fromUtf8(server.lastCommandBody("/api/v2/app/setPreferences")));
+            return QJsonDocument::fromJson(form.queryItemValue(
+                QStringLiteral("json"), QUrl::FullyDecoded).toUtf8()).object();
+        };
+
+        tabs->setCurrentIndex(0);
+        for (bool save : {false, true})
+        {
+            withSpeed([&](const Controls &c) {
+                QVERIFY(c.up->isEnabled() && c.down->isEnabled() && c.altUp->isEnabled() && c.altDown->isEnabled());
+                QCOMPARE(c.up->value(), 100);
+                QCOMPARE(c.down->value(), 0);
+                QCOMPARE(c.altUp->value(), 10);
+                QCOMPARE(c.altDown->value(), 20);
+                QVERIFY(c.schedule->isEnabled() && !c.schedule->isChecked());
+                QVERIFY(!c.from->isEnabled() && !c.to->isEnabled() && !c.days->isEnabled());
+                QVERIFY(c.utp->isChecked() && !c.overhead->isChecked() && c.lan->isChecked());
+                QVERIFY(!c.apply->isEnabled());
+                c.up->setValue(0);
+                c.down->setValue(2000000);
+                c.altUp->setValue(32);
+                c.altDown->setValue(0);
+                c.schedule->setChecked(true);
+                QVERIFY(c.from->isEnabled() && c.to->isEnabled() && c.days->isEnabled());
+                QCOMPARE(c.from->time(), QTime(8, 15));
+                QCOMPARE(c.to->time(), QTime(20, 30));
+                // Only minutes of From and hours of To change. The API still
+                // requires the complete hour/minute pair for each.
+                c.from->setTime(QTime(8, 45));
+                c.to->setTime(QTime(7, 30)); // Overnight is valid.
+                c.days->setCurrentIndex(2);
+                c.utp->click();
+                c.overhead->click();
+                c.lan->click();
+                QVERIFY(c.apply->isEnabled());
+                QCOMPARE(legacy.commandsFor("/api/v2/app/setPreferences"), 0);
+                if (save)
+                {
+                    // Native equal-time validation must keep all edits staged.
+                    c.to->setTime(c.from->time());
+                    bool warned = false;
+                    QTimer closer;
+                    closer.setInterval(20);
+                    connect(&closer, &QTimer::timeout, &window, [&]() {
+                        if (auto *warning = qobject_cast<QMessageBox *>(QApplication::activeModalWidget()))
+                        {
+                            warned = true;
+                            warning->accept();
+                        }
+                    });
+                    closer.start();
+                    c.apply->click();
+                    closer.stop();
+                    QVERIFY(warned && c.apply->isEnabled());
+                    QCOMPARE(legacy.commandsFor("/api/v2/app/setPreferences"), 0);
+                    c.to->setTime(QTime(7, 30));
+                    c.apply->click();
+                    QTRY_VERIFY_WITH_TIMEOUT(c.schedule->isEnabled() && !c.apply->isEnabled(), 6000);
+                }
+            });
+            if (!save) QCOMPARE(legacy.serverPreferences(), initialLegacy);
+        }
+        const QJsonObject expectedLegacy{
+            {QStringLiteral("up_limit"), 0},
+            {QStringLiteral("dl_limit"), 2000000 * 1024},
+            {QStringLiteral("alt_up_limit"), 32 * 1024},
+            {QStringLiteral("alt_dl_limit"), 0},
+            {QStringLiteral("scheduler_enabled"), true},
+            {QStringLiteral("schedule_from_hour"), 8},
+            {QStringLiteral("schedule_from_min"), 45},
+            {QStringLiteral("schedule_to_hour"), 7},
+            {QStringLiteral("schedule_to_min"), 30},
+            {QStringLiteral("scheduler_days"), 2},
+            {QStringLiteral("limit_utp_rate"), false},
+            {QStringLiteral("limit_tcp_overhead"), true},
+            {QStringLiteral("limit_lan_peers"), false}
+        };
+        QCOMPARE(delta(legacy), expectedLegacy);
+        QCOMPARE(legacy.serverPreferences(), expectedLegacy);
+        QCOMPARE(modern.serverPreferences(), initialModern);
+        withSpeed([](const Controls &c) {
+            QCOMPARE(c.down->value(), 2000000);
+            QCOMPARE(c.from->time(), QTime(8, 45));
+            QCOMPARE(c.to->time(), QTime(7, 30));
+            QCOMPARE(c.days->currentIndex(), 2);
+            QVERIFY(!c.apply->isEnabled());
+        });
+
+        tabs->setCurrentIndex(1);
+        withSpeed([&](const Controls &c) {
+            QCOMPARE(c.up->value(), 200);
+            QVERIFY(c.schedule->isChecked());
+            QCOMPARE(c.days->currentIndex(), 9);
+            c.schedule->setChecked(false);
+            QVERIFY(!c.from->isEnabled() && !c.to->isEnabled() && !c.days->isEnabled());
+            c.schedule->setChecked(true);
+            QCOMPARE(c.from->time(), QTime(8, 15));
+            QCOMPARE(c.days->currentIndex(), 9);
+            QVERIFY(!c.apply->isEnabled());
+            c.schedule->setChecked(false);
+            c.apply->click();
+            QTRY_VERIFY_WITH_TIMEOUT(c.schedule->isEnabled() && !c.apply->isEnabled(), 6000);
+        });
+        const QJsonObject disabledSchedule{{QStringLiteral("scheduler_enabled"), false}};
+        QCOMPARE(delta(modern), disabledSchedule);
+        initialModern.insert(QStringLiteral("scheduler_enabled"), false);
+        QCOMPARE(modern.serverPreferences(), initialModern);
+        QCOMPARE(legacy.serverPreferences(), expectedLegacy);
+
+        // Unsupported or non-representable values must not become defaults.
+        QJsonObject malformed = initialModern;
+        malformed.insert(QStringLiteral("up_limit"), 511);
+        malformed.remove(QStringLiteral("alt_dl_limit"));
+        malformed.insert(QStringLiteral("schedule_from_hour"), 24);
+        malformed.remove(QStringLiteral("schedule_to_min"));
+        malformed.insert(QStringLiteral("scheduler_days"), 10);
+        malformed.insert(QStringLiteral("limit_utp_rate"), QStringLiteral("true"));
+        modern.setServerPreferences(malformed);
+        withSpeed([&](const Controls &c) {
+            QVERIFY(!c.up->isEnabled() && !c.altDown->isEnabled() && !c.utp->isEnabled());
+            QVERIFY(c.down->isEnabled() && c.altUp->isEnabled() && c.schedule->isEnabled());
+            c.schedule->setChecked(true);
+            QVERIFY(!c.from->isEnabled() && !c.to->isEnabled() && !c.days->isEnabled());
+            c.schedule->setChecked(false);
+            QVERIFY(!c.apply->isEnabled());
+            c.down->setValue(128);
+            c.apply->click();
+            QTRY_VERIFY_WITH_TIMEOUT(c.down->isEnabled() && !c.apply->isEnabled(), 6000);
+        });
+        const QJsonObject onlyDown{{QStringLiteral("dl_limit"), 128 * 1024}};
+        QCOMPARE(delta(modern), onlyDown);
+        malformed.insert(QStringLiteral("dl_limit"), 128 * 1024);
+        QCOMPARE(modern.serverPreferences(), malformed);
+        QCOMPARE(legacy.serverPreferences(), expectedLegacy);
     }
 
     void ipFilteringFollowsSelectedServer()
