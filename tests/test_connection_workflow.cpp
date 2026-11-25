@@ -5103,6 +5103,173 @@ private slots:
         QCOMPARE(modern.serverPreferences(), malformed);
     }
 
+    void bitTorrentAutomaticTrackersFollowSelectedServer()
+    {
+        DemoQbittorrentServer legacy(true), modern(true);
+        modern.enableModernResponses();
+        const QString manual = QStringLiteral("udp://one.example:6969/announce\n\nhttps://two.example/announce");
+        const QString oldUrl = QStringLiteral("https://lists.example/old.txt");
+        const QString newUrl = QStringLiteral("https://lists.example/new.txt?format=plain&v=1");
+        const QString fetched = QStringLiteral("https://fetched.example/announce\n");
+        const QJsonObject initialLegacy{
+            {"add_trackers_enabled", false}, {"add_trackers", manual},
+            {"add_trackers_from_url_enabled", true}, {"add_trackers_url", oldUrl},
+            {"add_trackers_url_list", fetched}
+        };
+        const QJsonObject initialModern{
+            {"add_trackers_enabled", true}, {"add_trackers", "https://modern.example/announce"},
+            {"add_trackers_from_url_enabled", false}, {"add_trackers_url", ""},
+            {"add_trackers_url_list", ""}
+        };
+        legacy.setServerPreferences(initialLegacy);
+        modern.setServerPreferences(initialModern);
+        QVERIFY(legacy.start() && modern.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("prefs.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, legacy.url());
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(QStringLiteral("v5.1.4")), 6000);
+        openConnectDialog(window, modern.url(), false, true, true, QStringLiteral("Modern seedbox"));
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(QStringLiteral("v5.3.0")), 6000);
+        auto *tabs = window.findChild<QTabWidget *>(QStringLiteral("serverTabs"));
+        auto *prefs = window.findChild<QAction *>(QStringLiteral("actionOptions"));
+        QVERIFY(tabs && prefs);
+
+        struct Controls {
+            QGroupBox *manualEnabled, *urlEnabled;
+            QPlainTextEdit *manual, *fetched;
+            QLineEdit *url;
+            QPushButton *apply;
+        };
+        const auto withTrackers = [&](auto exercise) {
+            bool finished = false;
+            QTimer::singleShot(0, &window, [&]() {
+                auto *dlg = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget());
+                QVERIFY(dlg);
+                const auto cleanup = qScopeGuard([dlg]() { if (dlg->isVisible()) dlg->reject(); });
+                auto *sections = dlg->findChild<QListWidget *>("preferencesSections");
+                const Controls c{
+                    dlg->findChild<QGroupBox *>("checkEnableAddTrackers"),
+                    dlg->findChild<QGroupBox *>("checkAddTrackersFromURL"),
+                    dlg->findChild<QPlainTextEdit *>("textTrackers"),
+                    dlg->findChild<QPlainTextEdit *>("textTrackersFromURL"),
+                    dlg->findChild<QLineEdit *>("textTrackersURL"),
+                    dlg->findChild<QPushButton *>("preferencesApply")
+                };
+                QVERIFY(sections && c.manualEnabled && c.urlEnabled && c.manual && c.fetched && c.url && c.apply);
+                sections->setCurrentRow(5);
+                QTRY_VERIFY_WITH_TIMEOUT(c.manualEnabled->isEnabled() || c.urlEnabled->isEnabled(), 6000);
+                QVERIFY(c.fetched->isReadOnly());
+                exercise(c);
+                finished = true;
+            });
+            prefs->trigger();
+            QVERIFY(finished);
+        };
+        const auto delta = [](DemoQbittorrentServer &server) {
+            const QUrlQuery form(QString::fromUtf8(server.lastCommandBody("/api/v2/app/setPreferences")));
+            return QJsonDocument::fromJson(form.queryItemValue(
+                QStringLiteral("json"), QUrl::FullyDecoded).toUtf8()).object();
+        };
+        const QString revised = manual + QStringLiteral("\n\nhttps://three.example/announce?key=a+b%2Fc");
+        tabs->setCurrentIndex(0);
+        for (bool save : {false, true})
+        {
+            withTrackers([&](const Controls &c) {
+                QVERIFY(!c.manualEnabled->isChecked() && !c.manual->isEnabled());
+                QCOMPARE(c.manual->toPlainText(), manual);
+                QVERIFY(c.urlEnabled->isChecked() && c.url->isEnabled() && c.fetched->isEnabled());
+                QCOMPARE(c.url->text(), oldUrl);
+                QCOMPARE(c.fetched->toPlainText(), fetched);
+                QVERIFY(!c.apply->isEnabled());
+                c.manualEnabled->setChecked(true);
+                QVERIFY(c.manual->isEnabled());
+                c.manualEnabled->setChecked(false);
+                QVERIFY(!c.apply->isEnabled());
+                c.manualEnabled->setChecked(true);
+                c.manual->setPlainText(revised);
+                c.manualEnabled->setChecked(false);
+                QCOMPARE(c.manual->toPlainText(), revised);
+                c.manualEnabled->setChecked(true);
+                c.url->setText(QStringLiteral("  ") + newUrl + QStringLiteral("  "));
+                // The fetched snapshot is not synthesized from the edited URL.
+                QCOMPARE(c.fetched->toPlainText(), fetched);
+                QVERIFY(c.apply->isEnabled());
+                QCOMPARE(legacy.commandsFor("/api/v2/app/setPreferences"), 0);
+                if (save)
+                {
+                    c.apply->click();
+                    QTRY_VERIFY_WITH_TIMEOUT(c.manualEnabled->isEnabled() && !c.apply->isEnabled(), 6000);
+                    QCOMPARE(c.url->text(), newUrl);
+                }
+            });
+            if (!save) QCOMPARE(legacy.serverPreferences(), initialLegacy);
+        }
+        const QJsonObject expectedDelta{
+            {"add_trackers_enabled", true}, {"add_trackers", revised}, {"add_trackers_url", newUrl}
+        };
+        QCOMPARE(delta(legacy), expectedDelta);
+        QJsonObject expectedLegacy = initialLegacy;
+        for (auto it = expectedDelta.constBegin(); it != expectedDelta.constEnd(); ++it)
+            expectedLegacy.insert(it.key(), it.value());
+        QCOMPARE(legacy.serverPreferences(), expectedLegacy);
+        QCOMPARE(modern.serverPreferences(), initialModern);
+        // Simulate completion of the daemon's asynchronous fetch. Reopening
+        // must show the actual new server value, not the old cached list.
+        expectedLegacy.insert("add_trackers_url_list", "udp://new.example:6969/announce");
+        legacy.setServerPreferences(expectedLegacy);
+        withTrackers([&](const Controls &c) {
+            QCOMPARE(c.manual->toPlainText(), revised);
+            QCOMPARE(c.url->text(), newUrl);
+            QCOMPARE(c.fetched->toPlainText(), QStringLiteral("udp://new.example:6969/announce"));
+            QVERIFY(!c.apply->isEnabled());
+        });
+
+        tabs->setCurrentIndex(1);
+        withTrackers([&](const Controls &c) {
+            QVERIFY(c.manualEnabled->isChecked() && c.manual->isEnabled());
+            QCOMPARE(c.manual->toPlainText(), QStringLiteral("https://modern.example/announce"));
+            QVERIFY(!c.urlEnabled->isChecked() && !c.url->isEnabled() && !c.fetched->isEnabled());
+            c.manualEnabled->setChecked(false);
+            c.urlEnabled->setChecked(true);
+            QVERIFY(c.url->isEnabled() && c.fetched->isEnabled());
+            c.url->setText(newUrl);
+            c.apply->click();
+            QTRY_VERIFY_WITH_TIMEOUT(c.urlEnabled->isEnabled() && !c.apply->isEnabled(), 6000);
+        });
+        const QJsonObject modernDelta{
+            {"add_trackers_enabled", false}, {"add_trackers_from_url_enabled", true}, {"add_trackers_url", newUrl}
+        };
+        QCOMPARE(delta(modern), modernDelta);
+        QJsonObject expectedModern = initialModern;
+        for (auto it = modernDelta.constBegin(); it != modernDelta.constEnd(); ++it)
+            expectedModern.insert(it.key(), it.value());
+        QCOMPARE(modern.serverPreferences(), expectedModern);
+        QCOMPARE(legacy.serverPreferences(), expectedLegacy);
+        // Unavailable fields remain disabled and must never be written as
+        // empty defaults. The valid enable flag can still disable a list.
+        expectedModern.remove("add_trackers");
+        expectedModern.insert("add_trackers_url_list", 42);
+        modern.setServerPreferences(expectedModern);
+        withTrackers([](const Controls &c) {
+            QVERIFY(!c.manual->isEnabled());
+            QVERIFY(c.urlEnabled->isChecked() && !c.fetched->isEnabled());
+            QVERIFY(c.fetched->toPlainText().isEmpty());
+            QVERIFY(!c.apply->isEnabled());
+            c.urlEnabled->setChecked(false);
+            c.apply->click();
+            QTRY_VERIFY_WITH_TIMEOUT(c.urlEnabled->isEnabled() && !c.apply->isEnabled(), 6000);
+        });
+        const QJsonObject disableOnly{{"add_trackers_from_url_enabled", false}};
+        QCOMPARE(delta(modern), disableOnly);
+        expectedModern.insert("add_trackers_from_url_enabled", false);
+        QCOMPARE(modern.serverPreferences(), expectedModern);
+        QCOMPARE(legacy.serverPreferences(), expectedLegacy);
+    }
+
     void speedPreferencesFollowSelectedServer()
     {
         DemoQbittorrentServer legacy(true), modern(true);
