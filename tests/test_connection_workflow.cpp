@@ -4563,7 +4563,7 @@ private slots:
         const QString feedUrl = QStringLiteral("https://feed.example/rss?key=a+b%2Fc&x=1");
         const QJsonObject article{{"id", "article-id"}, {"title", "Example article"},
             {"date", "Wed, 25 Nov 2026 12:00:00 +0000"}, {"description", "<b>Example description</b>"},
-            {"torrentURL", "https://feed.example/download?id=1"}, {"isRead", false}};
+            {"torrentURL", "https://feed.example/download?key=a+b%2Fc&x=1"}, {"isRead", false}};
         const QJsonObject feed{{"uid", "id1"}, {"url", feedUrl}, {"articles", QJsonArray{article}}};
         const QJsonObject rule{{"enabled", false}, {"priority", 0}, {"useRegex", false},
             {"mustContain", "Old"}, {"mustNotContain", ""}, {"episodeFilter", ""},
@@ -4620,6 +4620,19 @@ private slots:
             QCOMPARE(articles->topLevelItemCount(), 1);
             articles->setCurrentItem(articles->topLevelItem(0));
             QVERIFY(preview->toPlainText().contains(QStringLiteral("Example description")));
+            auto *download = dlg->findChild<QPushButton *>("rssDownload");
+            QVERIFY(download && download->isEnabled());
+            QTimer::singleShot(0, dlg, [&]() {
+                auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+                if (box) box->button(QMessageBox::Yes)->click();
+            });
+            download->click();
+            QTRY_COMPARE_WITH_TIMEOUT(legacy.commandsFor("/api/v2/torrents/add"), 1, 6000);
+            const QByteArray wire = legacy.lastCommandBody("/api/v2/torrents/add");
+            const QUrlQuery decoded(QString::fromUtf8(QByteArray(wire).replace('+', ' ')));
+            QCOMPARE(decoded.queryItemValue(QStringLiteral("urls"), QUrl::FullyDecoded),
+                     article.value("torrentURL").toString());
+            QCOMPARE(modern.commandsFor("/api/v2/torrents/add"), 0);
             QVERIFY(mark->isEnabled());
             mark->click();
             QTRY_VERIFY_WITH_TIMEOUT(add->isEnabled(), 6000);
@@ -7685,7 +7698,7 @@ private slots:
         QCOMPARE(linkDriver.links, 1);
         QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor("/api/v2/torrents/add"), 2, 6000);
         QCOMPARE(QUrlQuery(QString::fromUtf8(server.lastCommandBody(
-            "/api/v2/torrents/add"))).queryItemValue(QStringLiteral("urls")), magnet);
+            "/api/v2/torrents/add"))).queryItemValue(QStringLiteral("urls"), QUrl::FullyDecoded), magnet);
 
         QMimeData irrelevant;
         irrelevant.setUrls({QUrl::fromLocalFile(temp.filePath(QStringLiteral("notes.txt")))});
@@ -8904,7 +8917,7 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor("/api/v2/torrents/add"), 1, 5000);
         const QUrlQuery addition(QString::fromUtf8(
             server.lastCommandBody("/api/v2/torrents/add")));
-        QVERIFY(addition.queryItemValue(QStringLiteral("urls"))
+        QVERIFY(addition.queryItemValue(QStringLiteral("urls"), QUrl::FullyDecoded)
                 .startsWith(QStringLiteral("magnet:?xt=")));
     }
 
