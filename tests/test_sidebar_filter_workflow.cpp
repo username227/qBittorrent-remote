@@ -14,6 +14,8 @@
 #include <QTimer>
 #include <QTreeWidget>
 #include <QSettings>
+#include <QScrollBar>
+#include <QStyleOptionSlider>
 #include <QTemporaryDir>
 #include <QSortFilterProxyModel>
 #include <QTableView>
@@ -65,6 +67,77 @@ class SidebarWorkflowTest final : public QObject
 {
     Q_OBJECT
 private slots:
+    void torrentVerticalTrackClickFollowsPlatformBehavior()
+    {
+        ServerPane pane;
+        pane.resize(1200, 800);
+        QJsonObject torrents;
+        for (int i = 0; i < 1000; ++i)
+            torrents.insert(QString::number(i, 16), QJsonObject{
+                {"name", QStringLiteral("Torrent %1").arg(i)},
+                {"state", "uploading"}, {"progress", 1}});
+        pane.applySync(QJsonObject{{"full_update", true}, {"torrents", torrents}});
+        pane.show();
+
+        auto *table = pane.table();
+        auto *bar = table->verticalScrollBar();
+        QTRY_COMPARE(table->model()->rowCount(), 1000);
+        QTRY_VERIFY(bar->isVisible() && bar->pageStep() > 0
+                    && bar->maximum() > 10 * bar->pageStep());
+        bar->setValue(bar->minimum());
+
+        const auto optionFor = [](const QScrollBar *scrollbar) {
+            QStyleOptionSlider option;
+            option.initFrom(scrollbar);
+            option.orientation = scrollbar->orientation();
+            option.minimum = scrollbar->minimum();
+            option.maximum = scrollbar->maximum();
+            option.sliderValue = scrollbar->value();
+            option.sliderPosition = scrollbar->sliderPosition();
+            option.singleStep = scrollbar->singleStep();
+            option.pageStep = scrollbar->pageStep();
+            option.upsideDown = scrollbar->invertedAppearance();
+            return option;
+        };
+        const auto trackPoint = [&](qreal fraction) {
+            const auto option = optionFor(bar);
+            const QRect groove = bar->style()->subControlRect(
+                QStyle::CC_ScrollBar, &option, QStyle::SC_ScrollBarGroove, bar);
+            return QPoint(groove.center().x(),
+                          groove.top() + qRound(fraction * (groove.height() - 1)));
+        };
+        const QPoint lower = trackPoint(0.75);
+        const auto before = optionFor(bar);
+        QCOMPARE(bar->style()->hitTestComplexControl(
+            QStyle::CC_ScrollBar, &before, lower, bar), QStyle::SC_ScrollBarAddPage);
+        const int initialRow = table->rowAt(0);
+        QTest::mouseClick(bar, Qt::LeftButton, Qt::NoModifier, lower);
+#ifdef Q_OS_LINUX
+        QVERIFY(bar->value() > bar->maximum() * 0.60);
+        QVERIFY(bar->value() < bar->maximum() * 0.90);
+        QVERIFY(table->rowAt(0) > initialRow + 100);
+        const QPoint upper = trackPoint(0.25);
+        QTest::mouseClick(bar, Qt::LeftButton, Qt::NoModifier, upper);
+        QVERIFY(bar->value() > bar->maximum() * 0.10);
+        QVERIFY(bar->value() < bar->maximum() * 0.40);
+        QVERIFY(table->rowAt(0) < 400);
+#else
+        // Compare with an unmodified native scrollbar rather than assuming
+        // every non-Linux Qt style uses exactly the same click behavior.
+        QScrollBar native(Qt::Vertical);
+        native.resize(bar->size());
+        native.setRange(bar->minimum(), bar->maximum());
+        native.setPageStep(bar->pageStep());
+        native.setSingleStep(bar->singleStep());
+        native.setInvertedAppearance(bar->invertedAppearance());
+        native.show();
+        QTest::mouseClick(&native, Qt::LeftButton, Qt::NoModifier, lower);
+        QCOMPARE(bar->value(), native.value());
+        QVERIFY(table->rowAt(0) > initialRow);
+#endif
+        QVERIFY(!bar->isSliderDown());
+    }
+
     void torrentColumnHeaderStaysRegularAfterSelectionAndFontChanges()
     {
         ServerPane pane;

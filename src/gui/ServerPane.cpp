@@ -35,10 +35,75 @@
 #include <QTableView>
 #include <QVBoxLayout>
 
+#ifdef Q_OS_LINUX
+#include <QMouseEvent>
+#include <QScrollBar>
+#include <QStyleOptionSlider>
+#endif
+
 // One composable proxy per remote server. Filtering never mutates the remote
 // torrent model, so changing selections does not affect the other servers.
 namespace
 {
+#ifdef Q_OS_LINUX
+// Keep the platform's actual scrollbar style, but make a left click in the
+// vertical transfer-list track jump to that position, as in Cinnamon/GTK.
+class TransferListScrollBar final : public QScrollBar
+{
+public:
+    explicit TransferListScrollBar(QWidget *parent)
+        : QScrollBar(Qt::Vertical, parent) {}
+
+protected:
+    void mousePressEvent(QMouseEvent *event) override
+    {
+        QStyleOptionSlider option;
+        initStyleOption(&option);
+        option.keyboardModifiers = event->modifiers();
+        const QPoint point = event->position().toPoint();
+        if (event->button() == Qt::LeftButton
+            && event->buttons() == Qt::LeftButton
+            && minimum() < maximum()
+            && !style()->styleHint(QStyle::SH_ScrollBar_LeftClickAbsolutePosition,
+                                   &option, this))
+        {
+            const auto control = style()->hitTestComplexControl(
+                QStyle::CC_ScrollBar, &option, point, this);
+            if (control == QStyle::SC_ScrollBarAddPage
+                || control == QStyle::SC_ScrollBarSubPage)
+            {
+                const QRect groove = style()->subControlRect(
+                    QStyle::CC_ScrollBar, &option, QStyle::SC_ScrollBarGroove, this);
+                const QRect thumb = style()->subControlRect(
+                    QStyle::CC_ScrollBar, &option, QStyle::SC_ScrollBarSlider, this);
+                const int travel = groove.height() - thumb.height();
+                if (travel > 0)
+                {
+                    const int position = qBound(0,
+                        point.y() - groove.top() - thumb.height() / 2, travel);
+                    setValue(QStyle::sliderValueFromPosition(
+                        minimum(), maximum(), position, travel, option.upsideDown));
+
+                    // Hand the press back to Qt once the thumb is under the
+                    // pointer, retaining native press-and-drag and release.
+                    initStyleOption(&option);
+                    option.keyboardModifiers = event->modifiers();
+                    if (style()->hitTestComplexControl(QStyle::CC_ScrollBar,
+                            &option, point, this) != QStyle::SC_ScrollBarSlider)
+                    {
+                        // A style or coarse range may leave the pointer just
+                        // outside the relocated thumb. Do not page a second time.
+                        event->accept();
+                        return;
+                    }
+                }
+            }
+        }
+        QScrollBar::mousePressEvent(event);
+    }
+};
+#endif
+
 // The Name column must remain readable even when the other, numerous
 // qBittorrent transfer columns extend past the viewport. Users can scroll
 // horizontally instead of being left with an unresizable 20-pixel Name cell.
@@ -124,6 +189,9 @@ ServerPane::ServerPane(QWidget *parent) : QWidget(parent)
 
     m_table = new QTableView(vertical);
     m_table->setObjectName(QStringLiteral("torrentList"));
+#ifdef Q_OS_LINUX
+    m_table->setVerticalScrollBar(new TransferListScrollBar(m_table));
+#endif
     m_model = new TorrentModel(m_table);
     auto *combined = new TorrentFilterProxyModel(m_sidebar, m_table);
     m_proxy = combined;
