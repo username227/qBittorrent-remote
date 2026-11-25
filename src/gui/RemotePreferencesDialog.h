@@ -64,6 +64,9 @@ private:
     void bindSpeedControls();
     void bindBitTorrentPrivacyControls();
     void bindBitTorrentQueueingControls();
+    void bindBitTorrentSeedingLimits();
+    void refreshSeedingLimitControls();
+    bool validateSeedingLimitChanges(const QJsonObject &changes);
     bool validateSpeedChanges(const QJsonObject &changes);
     bool validateIPFilterChanges(const QJsonObject &changes);
     void refreshI2PControls();

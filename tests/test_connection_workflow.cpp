@@ -71,6 +71,7 @@
 #include <QSpinBox>
 #include <QTimeEdit>
 #include <QDoubleSpinBox>
+#include <QRadioButton>
 #include <QDialogButtonBox>
 #include <QImage>
 #include <QProgressBar>
@@ -4914,6 +4915,192 @@ private slots:
         malformed.insert(QStringLiteral("max_active_uploads"), 7);
         QCOMPARE(modern.serverPreferences(), malformed);
         QCOMPARE(legacy.serverPreferences(), expectedLegacy);
+    }
+
+    void bitTorrentSeedingLimitsFollowSelectedServer()
+    {
+        DemoQbittorrentServer legacy(true), modern(true);
+        modern.enableModernResponses();
+        const QJsonObject initialLegacy{
+            {"max_ratio_enabled", false}, {"max_ratio", -1},
+            {"max_seeding_time_enabled", true}, {"max_seeding_time", 1440},
+            {"max_inactive_seeding_time_enabled", false}, {"max_inactive_seeding_time", -1},
+            {"max_ratio_act", 2}
+        };
+        const QJsonObject initialModern{
+            {"max_ratio_enabled", true}, {"max_ratio", 2.5},
+            {"max_seeding_time_enabled", false}, {"max_seeding_time", -1},
+            {"max_inactive_seeding_time_enabled", true}, {"max_inactive_seeding_time", 60},
+            {"max_ratio_act", 0}, {"share_limits_mode", "MatchAll"}
+        };
+        legacy.setServerPreferences(initialLegacy);
+        modern.setServerPreferences(initialModern);
+        QVERIFY(legacy.start() && modern.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("prefs.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, legacy.url());
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(QStringLiteral("v5.1.4")), 6000);
+        openConnectDialog(window, modern.url(), false, true, true, QStringLiteral("Modern seedbox"));
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(QStringLiteral("v5.3.0")), 6000);
+        auto *tabs = window.findChild<QTabWidget *>(QStringLiteral("serverTabs"));
+        auto *prefs = window.findChild<QAction *>(QStringLiteral("actionOptions"));
+        QVERIFY(tabs && prefs);
+
+        struct Controls {
+            QCheckBox *ratio, *time, *inactive;
+            QDoubleSpinBox *ratioValue;
+            QSpinBox *timeValue, *inactiveValue;
+            QRadioButton *any, *all;
+            QComboBox *action;
+            QPushButton *apply;
+        };
+        const auto withLimits = [&](auto exercise) {
+            bool finished = false;
+            QTimer::singleShot(0, &window, [&]() {
+                auto *dlg = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget());
+                QVERIFY(dlg);
+                const auto cleanup = qScopeGuard([dlg]() { if (dlg->isVisible()) dlg->reject(); });
+                auto *sections = dlg->findChild<QListWidget *>(QStringLiteral("preferencesSections"));
+                const Controls c{
+                    dlg->findChild<QCheckBox *>("checkMaxRatio"),
+                    dlg->findChild<QCheckBox *>("checkMaxSeedingMinutes"),
+                    dlg->findChild<QCheckBox *>("checkMaxInactiveSeedingMinutes"),
+                    dlg->findChild<QDoubleSpinBox *>("spinMaxRatio"),
+                    dlg->findChild<QSpinBox *>("spinMaxSeedingMinutes"),
+                    dlg->findChild<QSpinBox *>("spinMaxInactiveSeedingMinutes"),
+                    dlg->findChild<QRadioButton *>("radioButtonShareLimitsModeAny"),
+                    dlg->findChild<QRadioButton *>("radioButtonShareLimitsModeAll"),
+                    dlg->findChild<QComboBox *>("comboRatioLimitAct"),
+                    dlg->findChild<QPushButton *>("preferencesApply")
+                };
+                QVERIFY(sections && c.ratio && c.time && c.inactive && c.ratioValue
+                    && c.timeValue && c.inactiveValue && c.any && c.all && c.action && c.apply);
+                sections->setCurrentRow(5);
+                QTRY_VERIFY_WITH_TIMEOUT(c.time->isEnabled(), 6000);
+                exercise(c);
+                finished = true;
+            });
+            prefs->trigger();
+            QVERIFY(finished);
+        };
+        const auto delta = [](DemoQbittorrentServer &server) {
+            const QUrlQuery form(QString::fromUtf8(server.lastCommandBody("/api/v2/app/setPreferences")));
+            return QJsonDocument::fromJson(form.queryItemValue(
+                QStringLiteral("json"), QUrl::FullyDecoded).toUtf8()).object();
+        };
+
+        tabs->setCurrentIndex(0);
+        for (bool save : {false, true})
+        {
+            withLimits([&](const Controls &c) {
+                QVERIFY(!c.ratio->isChecked() && !c.ratioValue->isEnabled());
+                QVERIFY(c.time->isChecked() && c.timeValue->isEnabled());
+                QCOMPARE(c.timeValue->value(), 1440);
+                QCOMPARE(c.action->currentIndex(), 3); // API 2 = super seeding
+                QVERIFY(!c.any->isEnabled() && !c.all->isEnabled());
+                QVERIFY(!c.apply->isEnabled());
+                c.ratio->setChecked(true);
+                QVERIFY(c.ratioValue->isEnabled());
+                QVERIFY(c.ratioValue->findChild<QLineEdit *>()->isEnabled());
+                c.ratioValue->setValue(1.75);
+                c.ratio->setChecked(false);
+                QVERIFY(!c.apply->isEnabled());
+                c.ratio->setChecked(true);
+                QCOMPARE(c.ratioValue->value(), 1.75);
+                c.timeValue->setValue(2880); // enabled flag still required in legacy write
+                c.inactive->setChecked(true);
+                c.inactiveValue->setValue(0);
+                c.action->setCurrentIndex(0);
+                QVERIFY(c.apply->isEnabled());
+                QCOMPARE(legacy.commandsFor("/api/v2/app/setPreferences"), 0);
+                if (save)
+                {
+                    c.apply->click();
+                    QTRY_VERIFY_WITH_TIMEOUT(c.time->isEnabled() && !c.apply->isEnabled(), 6000);
+                }
+            });
+            if (!save) QCOMPARE(legacy.serverPreferences(), initialLegacy);
+        }
+        const QJsonObject expectedLegacy{
+            {"max_ratio_enabled", true}, {"max_ratio", 1.75},
+            {"max_seeding_time_enabled", true}, {"max_seeding_time", 2880},
+            {"max_inactive_seeding_time_enabled", true}, {"max_inactive_seeding_time", 0},
+            {"max_ratio_act", 0}
+        };
+        QCOMPARE(delta(legacy), expectedLegacy);
+        QCOMPARE(legacy.serverPreferences(), expectedLegacy);
+        QCOMPARE(modern.serverPreferences(), initialModern);
+        withLimits([](const Controls &c) {
+            QVERIFY(c.ratio->isChecked() && c.time->isChecked() && c.inactive->isChecked());
+            QCOMPARE(c.ratioValue->value(), 1.75);
+            QCOMPARE(c.timeValue->value(), 2880);
+            QCOMPARE(c.inactiveValue->value(), 0);
+            QVERIFY(!c.apply->isEnabled());
+        });
+
+        tabs->setCurrentIndex(1);
+        withLimits([&](const Controls &c) {
+            QVERIFY(c.all->isEnabled() && c.all->isChecked());
+            QCOMPARE(c.ratioValue->value(), 2.5);
+            QCOMPARE(c.inactiveValue->value(), 60);
+            c.ratio->setChecked(false);
+            c.inactive->setChecked(false);
+            QVERIFY(!c.action->isEnabled());
+            c.time->setChecked(true);
+            c.timeValue->setValue(720);
+            QVERIFY(c.action->isEnabled());
+            c.any->setChecked(true);
+            c.action->setCurrentIndex(2); // native delete files = API 3
+
+            // Declining the destructive-action confirmation leaves the
+            // server unchanged and the edits staged.
+            const auto answer = [&](QMessageBox::StandardButton response) {
+                QTimer::singleShot(0, &window, [response]() {
+                    if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget()))
+                        box->button(response)->click();
+                });
+                c.apply->click();
+            };
+            answer(QMessageBox::No);
+            QCOMPARE(modern.serverPreferences(), initialModern);
+            QVERIFY(c.apply->isEnabled());
+            answer(QMessageBox::Yes);
+            QTRY_VERIFY_WITH_TIMEOUT(c.time->isEnabled() && !c.apply->isEnabled(), 6000);
+        });
+        const QJsonObject expectedModern{
+            {"max_ratio_enabled", false}, {"max_ratio", -1},
+            {"max_seeding_time_enabled", true}, {"max_seeding_time", 720},
+            {"max_inactive_seeding_time_enabled", false}, {"max_inactive_seeding_time", -1},
+            {"max_ratio_act", 3}, {"share_limits_mode", "MatchAny"}
+        };
+        QCOMPARE(delta(modern), expectedModern);
+        QCOMPARE(modern.serverPreferences(), expectedModern);
+        QCOMPARE(legacy.serverPreferences(), expectedLegacy);
+        withLimits([](const Controls &c) {
+            QVERIFY(c.any->isChecked() && c.any->isEnabled());
+            QCOMPARE(c.action->currentIndex(), 2);
+            QCOMPARE(c.timeValue->value(), 720);
+            QVERIFY(!c.ratioValue->isEnabled() && !c.inactiveValue->isEnabled());
+        });
+
+        QJsonObject malformed = expectedModern;
+        malformed.insert("max_ratio_enabled", true); // contradicts -1
+        malformed.insert("max_inactive_seeding_time", 12); // contradicts false
+        malformed.insert("share_limits_mode", "Unknown");
+        malformed.insert("max_ratio_act", 99);
+        modern.setServerPreferences(malformed);
+        withLimits([](const Controls &c) {
+            QVERIFY(!c.ratio->isEnabled() && !c.ratioValue->isEnabled());
+            QVERIFY(!c.inactive->isEnabled() && !c.inactiveValue->isEnabled());
+            QVERIFY(!c.any->isEnabled() && !c.all->isEnabled() && !c.action->isEnabled());
+            QVERIFY(c.time->isEnabled() && c.timeValue->isEnabled());
+            QVERIFY(!c.apply->isEnabled());
+        });
+        QCOMPARE(modern.serverPreferences(), malformed);
     }
 
     void speedPreferencesFollowSelectedServer()
