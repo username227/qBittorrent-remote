@@ -272,6 +272,7 @@ if(BUILD_TESTING)
 
     add_remote_workflow_group(remote_content_workflow 75
         nativeTorrentDetailsUseSelectedRemoteServerAndFilePriorityApis
+        contentRefreshPreservesUserFolderExpansion
         contentDragPreferenceIsEnabledAndControlsNativeDragMode
         userDragsOnlyExistingMappedContentAsCopyUris
         userOpensMappedRemoteTorrentLocationInDesktopFileManager

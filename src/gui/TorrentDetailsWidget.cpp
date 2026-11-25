@@ -10,6 +10,7 @@
 #include <QDesktopServices>
 #include <QFileInfo>
 #include <QIcon>
+#include <QItemSelectionModel>
 #include <QLineEdit>
 #include <QMimeDatabase>
 #include <QMimeType>
@@ -24,6 +25,7 @@
 #include <QPalette>
 #include <QProgressBar>
 #include <QRegularExpression>
+#include <QScrollBar>
 #include <QSignalBlocker>
 #include <QStyledItemDelegate>
 #include <QStyleOptionViewItem>
@@ -40,6 +42,7 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <utility>
 
 namespace
 {
@@ -929,8 +932,71 @@ void TorrentDetailsWidget::displayFiles(const QJsonArray &files)
 {
     auto *tree = m_ui->filesList;
     QSignalBlocker blocker(tree);
+    // Rechecks and ordinary transfers change file values, not the tree.
+    // Reuse existing items unless the server's file IDs or paths change.
+    // setSelection() clears the tree when the selected hash changes.
+    const bool firstDisplay = tree->topLevelItemCount() == 0;
+    const auto itemPath = [](const QTreeWidgetItem *item) {
+        QStringList components;
+        for (auto *node = item; node; node = node->parent())
+            components.prepend(node->text(0));
+        return components.join(QLatin1Char('/'));
+    };
+    const auto itemKey = [&itemPath](const QTreeWidgetItem *item) -> QString {
+        const QVariant id = item->data(0, Qt::UserRole);
+        return id.isValid() ? QStringLiteral("file:") + QString::number(id.toInt())
+            : QStringLiteral("folder:") + itemPath(item);
+    };
+    QSet<QString> expandedFolders;
+    QSet<QString> selectedItems;
+    QString currentItem;
+    const int currentColumn = tree->currentColumn();
+    const int verticalPosition = tree->verticalScrollBar()->value();
+    const int horizontalPosition = tree->horizontalScrollBar()->value();
+    // Keep the actual visible row, independently of the selected/current
+    // item (which may be far outside the viewport during a long recheck).
+    QString anchorKey;
+    int anchorOffset = 0;
+    if (const auto *anchor = tree->itemAt(0, 0))
+    {
+        anchorKey = itemKey(anchor);
+        anchorOffset = tree->visualItemRect(anchor).top();
+    }
+    QHash<int, QTreeWidgetItem *> existingFiles;
+    if (const auto *current = tree->currentItem())
+        currentItem = itemKey(current);
+    for (QTreeWidgetItemIterator it(tree); *it; ++it)
+    {
+        auto *item = *it;
+        if (item->childCount() && item->isExpanded())
+            expandedFolders.insert(itemKey(item));
+        if (item->isSelected())
+            selectedItems.insert(itemKey(item));
+        const QVariant id = item->data(0, Qt::UserRole);
+        if (id.isValid())
+            existingFiles.insert(id.toInt(), item);
+    }
+    QSet<int> incomingIds;
+    bool sameStructure = !firstDisplay;
+    for (const QJsonValue &entry : files)
+    {
+        const auto file = entry.toObject();
+        const int id = file.value(QStringLiteral("index")).toInt(-1);
+        const auto parts = file.value(QStringLiteral("name")).toString()
+            .split(QLatin1Char('/'), Qt::SkipEmptyParts);
+        if (id < 0 || parts.isEmpty())
+            continue;
+        const auto *item = existingFiles.value(id);
+        if (incomingIds.contains(id) || !item
+            || itemPath(item) != parts.join(QLatin1Char('/')))
+            sameStructure = false;
+        incomingIds.insert(id);
+    }
+    sameStructure = sameStructure && incomingIds.size() == existingFiles.size();
+    const bool wasSorting = tree->isSortingEnabled();
     tree->setSortingEnabled(false);
-    tree->clear();
+    if (!sameStructure)
+        tree->clear();
     QHash<QString, QTreeWidgetItem *> folders;
     const QMimeDatabase mimeDatabase;
 
@@ -945,36 +1011,40 @@ void TorrentDetailsWidget::displayFiles(const QJsonArray &files)
         if (parts.isEmpty())
             continue;
 
-        QString path;
-        QTreeWidgetItem *parent = nullptr;
-        for (int i = 0; i + 1 < parts.size(); ++i)
+        QTreeWidgetItem *item = sameStructure ? existingFiles.value(id) : nullptr;
+        if (!item)
         {
-            path += QLatin1Char('/') + parts.at(i);
-            if (!folders.contains(path))
+            QString path;
+            QTreeWidgetItem *parent = nullptr;
+            for (int i = 0; i + 1 < parts.size(); ++i)
             {
-                auto *folder = parent ? new SortableDetailTreeItem(parent)
-                                      : new SortableDetailTreeItem(tree);
-                folder->setText(0, parts.at(i));
-                folder->setIcon(0, style()->standardIcon(QStyle::SP_DirIcon));
-                folder->setFlags(folder->flags() | Qt::ItemIsUserCheckable);
-                folders.insert(path, folder);
+                path += QLatin1Char('/') + parts.at(i);
+                if (!folders.contains(path))
+                {
+                    auto *folder = parent ? new SortableDetailTreeItem(parent)
+                                          : new SortableDetailTreeItem(tree);
+                    folder->setText(0, parts.at(i));
+                    folder->setIcon(0, style()->standardIcon(QStyle::SP_DirIcon));
+                    folder->setFlags(folder->flags() | Qt::ItemIsUserCheckable);
+                    folders.insert(path, folder);
+                }
+                parent = folders.value(path);
             }
-            parent = folders.value(path);
-        }
 
-        auto *item = parent ? new SortableDetailTreeItem(parent)
-                            : new SortableDetailTreeItem(tree);
-        item->setText(0, parts.last());
-        // Determine icons strictly from filename extension: never stat or
-        // navigate the server's arbitrary file paths on the local machine.
-        const QMimeType mime = mimeDatabase.mimeTypeForFile(
-            parts.last(), QMimeDatabase::MatchExtension);
-        QIcon icon = QIcon::fromTheme(mime.iconName());
-        if (icon.isNull())
-            icon = QIcon::fromTheme(mime.genericIconName());
-        if (icon.isNull())
-            icon = style()->standardIcon(QStyle::SP_FileIcon);
-        item->setIcon(0, icon);
+            item = parent ? new SortableDetailTreeItem(parent)
+                          : new SortableDetailTreeItem(tree);
+            item->setText(0, parts.last());
+            // Determine icons strictly from filename extension: never stat or
+            // navigate the server's arbitrary file paths on the local machine.
+            const QMimeType mime = mimeDatabase.mimeTypeForFile(
+                parts.last(), QMimeDatabase::MatchExtension);
+            QIcon icon = QIcon::fromTheme(mime.iconName());
+            if (icon.isNull())
+                icon = QIcon::fromTheme(mime.genericIconName());
+            if (icon.isNull())
+                icon = style()->standardIcon(QStyle::SP_FileIcon);
+            item->setIcon(0, icon);
+        }
 
         const qint64 size = file.value(QStringLiteral("size")).toInteger(0);
         const double fraction = qBound(0.0,
@@ -991,6 +1061,7 @@ void TorrentDetailsWidget::displayFiles(const QJsonArray &files)
         item->setText(4, bytesText(remaining));
         item->setData(4, Qt::UserRole, remaining);
         item->setText(5, availabilityText(file.value(QStringLiteral("availability"))));
+        item->setData(5, Qt::UserRole, QVariant());
         setNumericSortKey(item, 5, file.value(QStringLiteral("availability")));
         if (!file.contains(QStringLiteral("availability")))
             item->setText(5, QStringLiteral("N/A"));
@@ -1003,8 +1074,9 @@ void TorrentDetailsWidget::displayFiles(const QJsonArray &files)
         item->setCheckState(0, priority == 0 ? Qt::Unchecked : Qt::Checked);
     }
     updateFileFolders();
-    tree->setSortingEnabled(true);
-    tree->expandToDepth(0);
+    tree->setSortingEnabled(wasSorting);
+    if (firstDisplay)
+        tree->expandToDepth(0);
     // Preserve a user's active filename filter across server refreshes.
     if (auto *filter = findChild<QLineEdit *>(QStringLiteral("torrentFileFilter")))
     {
@@ -1022,6 +1094,44 @@ void TorrentDetailsWidget::displayFiles(const QJsonArray &files)
             for (int i = 0; i < tree->topLevelItemCount(); ++i)
                 filterItem(tree->topLevelItem(i), filterItem);
         }
+    }
+
+    if (!firstDisplay)
+    {
+        QTreeWidgetItem *restoredCurrent = nullptr;
+        QTreeWidgetItem *restoredAnchor = nullptr;
+        for (QTreeWidgetItemIterator it(tree); *it; ++it)
+        {
+            auto *item = *it;
+            const QString key = itemKey(item);
+            if (!sameStructure && selectedItems.contains(key))
+                item->setSelected(true);
+            if (key == currentItem)
+                restoredCurrent = item;
+            if (key == anchorKey)
+                restoredAnchor = item;
+        }
+        if (!sameStructure && restoredCurrent)
+            tree->setCurrentItem(restoredCurrent, currentColumn, QItemSelectionModel::NoUpdate);
+        // Restoring the current index can scroll/expand its ancestors.
+        // Reapply the user's explicit expansion choices last.
+        if (!sameStructure)
+            for (auto *folder : std::as_const(folders))
+                folder->setExpanded(expandedFolders.contains(itemKey(folder)));
+        // Complete pending sorting/layout before setting scroll positions.
+        // If live sorting moves the visible row, keep that row anchored
+        // where possible, rather than jumping to the selected file.
+        tree->doItemsLayout();
+        tree->verticalScrollBar()->setValue(verticalPosition);
+        if (restoredAnchor && tree->visualItemRect(restoredAnchor).isValid()
+            && tree->visualItemRect(restoredAnchor).top() != anchorOffset)
+        {
+            tree->scrollToItem(restoredAnchor, QAbstractItemView::PositionAtTop);
+            if (tree->verticalScrollMode() == QAbstractItemView::ScrollPerPixel)
+                tree->verticalScrollBar()->setValue(tree->verticalScrollBar()->value()
+                    + tree->visualItemRect(restoredAnchor).top() - anchorOffset);
+        }
+        tree->horizontalScrollBar()->setValue(horizontalPosition);
     }
 }
 
