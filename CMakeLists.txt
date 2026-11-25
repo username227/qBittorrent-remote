@@ -83,6 +83,8 @@ add_library(qbittorrent_remote_gui STATIC
     src/gui/RemotePreferencesDialog.h
     src/gui/RemoteBanListDialog.cpp
     src/gui/RemoteBanListDialog.h
+    src/gui/RemoteRssDialog.cpp
+    src/gui/RemoteRssDialog.h
     src/gui/banlistoptionsdialog.ui
     src/gui/RemoteCategoryDialog.cpp
     src/gui/RemoteCategoryDialog.h
@@ -323,6 +325,11 @@ if(BUILD_TESTING)
         i2pConfigurationFollowsSelectedServerAndBuild
         proxyConfigurationFollowsSelectedServer
         ipFilteringFollowsSelectedServer
+    )
+
+    add_remote_workflow_group(remote_rss_preferences_workflow 60
+        rssPreferencesFollowSelectedServer
+        rssReaderAndRulesFollowSelectedServer
     )
 
     add_remote_workflow_group(remote_speed_preferences_workflow 60

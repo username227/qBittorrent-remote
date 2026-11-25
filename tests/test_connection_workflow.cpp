@@ -67,6 +67,7 @@
 #include <QLocale>
 #include <QInputDialog>
 #include <QPlainTextEdit>
+#include <QTextBrowser>
 #include <QStandardItemModel>
 #include <QSpinBox>
 #include <QTimeEdit>
@@ -367,6 +368,47 @@ public:
                                 code = 404;
                                 response = "Unknown torrent";
                             }
+                        }
+                        else if (m_rssDemo && hasCookie && path.startsWith("/api/v2/rss/"))
+                        {
+                            if (path.startsWith("/api/v2/rss/items?"))
+                                response = QJsonDocument(m_rssItems).toJson(QJsonDocument::Compact);
+                            else if (path == "/api/v2/rss/rules")
+                                response = QJsonDocument(m_rssRules).toJson(QJsonDocument::Compact);
+                            else if (path.startsWith("/api/v2/rss/matchingArticles?"))
+                                response = QJsonDocument(QJsonObject{{"News", QJsonArray{"Example article"}}}).toJson(QJsonDocument::Compact);
+                            else if (fields.value(0) == "POST")
+                            {
+                                m_commands.append({path, body});
+                                const QUrlQuery form(QString::fromUtf8(body));
+                                const auto param = [&](const char *key) {
+                                    return form.queryItemValue(QString::fromLatin1(key), QUrl::FullyDecoded);
+                                };
+                                if (path == "/api/v2/rss/addFeed")
+                                    m_rssItems.insert(param("path"), QJsonObject{{"uid", "new-id"}, {"url", param("url")}, {"articles", QJsonArray{}}});
+                                else if (path == "/api/v2/rss/markAsRead")
+                                {
+                                    QJsonObject feed = m_rssItems.value(param("itemPath")).toObject();
+                                    QJsonArray articles = feed.value("articles").toArray();
+                                    for (qsizetype i = 0; i < articles.size(); ++i)
+                                    {
+                                        QJsonObject article = articles.at(i).toObject();
+                                        if (article.value("id").toString() == param("articleId"))
+                                        {
+                                            article.insert("isRead", true);
+                                            articles.replace(i, article);
+                                        }
+                                    }
+                                    feed.insert("articles", articles);
+                                    m_rssItems.insert(param("itemPath"), feed);
+                                }
+                                else if (path == "/api/v2/rss/setRule")
+                                    m_rssRules.insert(param("ruleName"), QJsonDocument::fromJson(param("ruleDef").toUtf8()).object());
+                                else if (path != "/api/v2/rss/refreshItem")
+                                    code = 400;
+                                if (code == 200 && m_modernResponses) code = 204;
+                            }
+                            else code = 404;
                         }
                         else if (m_preferencesDemo && hasCookie
                                  && path == "/api/v2/app/preferences")
@@ -822,6 +864,14 @@ public:
         m_preferences = values;
     }
     QJsonObject serverPreferences() const { return m_preferences; }
+    void setRssData(const QJsonObject &items, const QJsonObject &rules)
+    {
+        m_rssDemo = true;
+        m_rssItems = items;
+        m_rssRules = rules;
+    }
+    QJsonObject rssItems() const { return m_rssItems; }
+    QJsonObject rssRules() const { return m_rssRules; }
     void setBuildInfo(const QJsonObject &info) { m_buildInfo = info; }
     int preferenceReads() const { return m_preferenceReads; }
     void rejectPreferenceWrites(bool reject) { m_rejectPreferences = reject; }
@@ -980,6 +1030,8 @@ private:
     bool m_trayAltMode = false;
     QString m_trayConnectionStatus = QStringLiteral("connected");
     QJsonObject m_traySpeedLimits;
+    bool m_rssDemo = false;
+    QJsonObject m_rssItems, m_rssRules;
     bool m_preferencesDemo = false;
     bool m_rejectPreferences = false;
     bool m_ignorePreferences = false;
@@ -4505,6 +4557,378 @@ private slots:
         });
     }
 
+    void rssReaderAndRulesFollowSelectedServer()
+    {
+        DemoQbittorrentServer legacy(true), modern(true);
+        modern.enableModernResponses();
+        const QString feedUrl = QStringLiteral("https://feed.example/rss?key=a+b%2Fc&x=1");
+        const QJsonObject article{{"id", "article-id"}, {"title", "Example article"},
+            {"date", "Wed, 25 Nov 2026 12:00:00 +0000"}, {"description", "<b>Example description</b><img src='https://feed.example/image.png' width='1200' height='900'><img src='file:///tmp/private.png'>"},
+            {"link", "https://feed.example/news/story"}, {"torrentURL", "https://feed.example/download?key=a+b%2Fc&x=1"}, {"isRead", false}};
+        const QJsonObject feed{{"uid", "id1"}, {"url", feedUrl}, {"articles", QJsonArray{article}}};
+        const QJsonObject rule{{"enabled", false}, {"priority", 0}, {"useRegex", false},
+            {"mustContain", "Old"}, {"mustNotContain", ""}, {"episodeFilter", ""},
+            {"ignoreDays", 0}, {"smartFilter", false}, {"affectedFeeds", QJsonArray{feedUrl}},
+            {"torrentParams", QJsonObject{{"category", "Music"}}}, {"previouslyMatchedEpisodes", QJsonArray{"1x01"}}};
+        const QJsonObject legacyItems{{"News", feed}};
+        const QJsonObject legacyRules{{"Existing", rule}};
+        const QJsonObject modernItems{{"Other", QJsonObject{{"uid", "id2"}, {"url", "https://other.example/rss"}, {"articles", QJsonArray{}}}}};
+        legacy.setRssData(legacyItems, legacyRules);
+        modern.setRssData(modernItems, {});
+        QVERIFY(legacy.start() && modern.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("prefs.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, legacy.url());
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(QStringLiteral("v5.1.4")), 6000);
+        openConnectDialog(window, modern.url(), false, true, true, QStringLiteral("Modern seedbox"));
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(QStringLiteral("v5.3.0")), 6000);
+        auto *tabs = window.findChild<QTabWidget *>("serverTabs");
+        auto *action = window.findChild<QAction *>("actionRemoteRSS");
+        QVERIFY(tabs && action && action->isEnabled());
+
+        const auto withReader = [&](auto exercise) {
+            auto *sections = tabs->currentWidget()->findChild<QTabWidget *>("serverSectionTabs");
+            QVERIFY(sections && sections->isTabVisible(1));
+            sections->setCurrentIndex(1);
+            auto *reader = sections->currentWidget();
+            QVERIFY(reader && reader->objectName() == QStringLiteral("remoteRssWidget"));
+            QVERIFY(reader->isVisible());
+            auto *add = reader->findChild<QPushButton *>("rssAddFeed");
+            QVERIFY(add);
+            QTRY_VERIFY_WITH_TIMEOUT(add->isEnabled(), 6000);
+            exercise(reader);
+        };
+        tabs->setCurrentIndex(0);
+        QVERIFY(action->isCheckable() && !action->isChecked());
+        action->trigger();
+        QVERIFY(action->isChecked());
+        withReader([&](QWidget *dlg) {
+            auto *feeds = dlg->findChild<QTreeWidget *>("rssFeeds");
+            auto *articles = dlg->findChild<QTreeWidget *>("rssArticles");
+            auto *preview = dlg->findChild<QTextBrowser *>("rssArticlePreview");
+            auto *mark = dlg->findChild<QPushButton *>("rssMarkArticle");
+            auto *add = dlg->findChild<QPushButton *>("rssAddFeed");
+            auto *downloader = dlg->findChild<QPushButton *>("rssDownloader");
+            QVERIFY(feeds && articles && preview && mark && add && downloader);
+            QCOMPARE(feeds->topLevelItem(0)->childCount(), 1);
+            QCOMPARE(feeds->topLevelItem(0)->child(0)->text(0), QStringLiteral("News (1)"));
+            QCOMPARE(articles->topLevelItemCount(), 1);
+            articles->setCurrentItem(articles->topLevelItem(0));
+            QVERIFY(preview->toPlainText().contains(QStringLiteral("Example description")));
+            QVERIFY(preview->toHtml().contains(QStringLiteral("href=\"https://feed.example/news/story\"")));
+            QVERIFY(!preview->toHtml().contains(QStringLiteral("<img"), Qt::CaseInsensitive));
+            QVERIFY(!preview->openExternalLinks());
+            QTRY_VERIFY_WITH_TIMEOUT(add->isEnabled(), 6000);
+            QCOMPARE(legacy.commandsFor("/api/v2/rss/markAsRead"), 1);
+            auto *download = dlg->findChild<QPushButton *>("rssDownload");
+            QVERIFY(download && download->isEnabled());
+            QTimer::singleShot(0, dlg, [&]() {
+                auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+                if (box) box->button(QMessageBox::Yes)->click();
+            });
+            download->click();
+            QTRY_COMPARE_WITH_TIMEOUT(legacy.commandsFor("/api/v2/torrents/add"), 1, 6000);
+            const QByteArray wire = legacy.lastCommandBody("/api/v2/torrents/add");
+            const QUrlQuery decoded(QString::fromUtf8(QByteArray(wire).replace('+', ' ')));
+            QCOMPARE(decoded.queryItemValue(QStringLiteral("urls"), QUrl::FullyDecoded),
+                     article.value("torrentURL").toString());
+            QCOMPARE(modern.commandsFor("/api/v2/torrents/add"), 0);
+            QTRY_VERIFY_WITH_TIMEOUT(add->isEnabled(), 6000);
+            QCOMPARE(legacy.commandsFor("/api/v2/rss/markAsRead"), 1);
+            QVERIFY(legacy.rssItems().value("News").toObject().value("articles").toArray().at(0).toObject().value("isRead").toBool());
+
+            QTimer::singleShot(0, dlg, [&]() {
+                auto *sub = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+                if (!sub || sub == dlg) return;
+                const auto cleanup = qScopeGuard([sub]() { if (sub->isVisible()) sub->reject(); });
+                auto *path = sub->findChild<QLineEdit *>("rssItemPath");
+                auto *url = sub->findChild<QLineEdit *>("rssFeedUrl");
+                auto *box = sub->findChild<QDialogButtonBox *>();
+                QVERIFY(path && url && box);
+                path->setText(QStringLiteral("New feed"));
+                url->setText(feedUrl + QStringLiteral("&new=2"));
+                box->button(QDialogButtonBox::Ok)->click();
+            });
+            add->click();
+            QTRY_VERIFY_WITH_TIMEOUT(add->isEnabled(), 6000);
+            QCOMPARE(legacy.rssItems().value("New feed").toObject().value("url").toString(), feedUrl + QStringLiteral("&new=2"));
+            QCOMPARE(feeds->topLevelItem(0)->childCount(), 2);
+
+            bool edited = false;
+            QTimer::singleShot(0, dlg, [&]() {
+                auto *ruleDialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+                QVERIFY(ruleDialog && ruleDialog->objectName() == QStringLiteral("remoteRssDialog"));
+                const auto cleanup = qScopeGuard([ruleDialog]() { if (ruleDialog->isVisible()) ruleDialog->reject(); });
+                auto *rules = ruleDialog->findChild<QListWidget *>("rssRules");
+                auto *editRule = ruleDialog->findChild<QPushButton *>("rssEditRule");
+                QVERIFY(rules && editRule);
+                QTRY_VERIFY_WITH_TIMEOUT(editRule->isEnabled(), 6000);
+                QCOMPARE(rules->count(), 1);
+                rules->setCurrentRow(0);
+                QTimer::singleShot(0, ruleDialog, [&]() {
+                auto *editor = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+                if (!editor || editor == ruleDialog) return;
+                const auto cleanup = qScopeGuard([editor]() { if (editor->isVisible()) editor->reject(); });
+                auto *must = editor->findChild<QLineEdit *>("rssRuleMustContain");
+                auto *box = editor->findChild<QDialogButtonBox *>();
+                QVERIFY(must && box);
+                must->setText(QStringLiteral("New match"));
+                box->button(QDialogButtonBox::Ok)->click();
+            });
+            editRule->click();
+            QTRY_VERIFY_WITH_TIMEOUT(editRule->isEnabled(), 6000);
+            const auto changed = legacy.rssRules().value("Existing").toObject();
+            QCOMPARE(changed.value("mustContain").toString(), QStringLiteral("New match"));
+            QCOMPARE(changed.value("torrentParams"), rule.value("torrentParams"));
+            QCOMPARE(changed.value("previouslyMatchedEpisodes"), rule.value("previouslyMatchedEpisodes"));
+            QCOMPARE(changed.value("affectedFeeds"), rule.value("affectedFeeds"));
+                QCOMPARE(modern.commandsFor("/api/v2/rss/setRule"), 0);
+                edited = true;
+            });
+            downloader->click();
+            QVERIFY(edited);
+            QTRY_VERIFY_WITH_TIMEOUT(add->isEnabled(), 6000);
+        });
+        auto *legacyReader = tabs->currentWidget()->findChild<QWidget *>("remoteRssWidget");
+        tabs->setCurrentIndex(1);
+        withReader([&](QWidget *dlg) {
+            auto *feeds = dlg->findChild<QTreeWidget *>("rssFeeds");
+            auto *rules = dlg->findChild<QListWidget *>("rssRules");
+            QVERIFY(feeds && rules);
+            QCOMPARE(feeds->topLevelItem(0)->childCount(), 1);
+            QCOMPARE(feeds->topLevelItem(0)->child(0)->text(0), QStringLiteral("Other"));
+            QCOMPARE(rules->count(), 0);
+        });
+        tabs->setCurrentIndex(0);
+        auto *sections = tabs->currentWidget()->findChild<QTabWidget *>("serverSectionTabs");
+        QVERIFY(sections && sections->currentWidget() == legacyReader);
+        QCOMPARE(legacyReader->findChild<QTabWidget *>("rssTabs")->currentIndex(), 0);
+        action->trigger();
+        QVERIFY(!action->isChecked());
+        QCOMPARE(sections->currentIndex(), 0);
+        QVERIFY(!sections->isTabVisible(1));
+        action->trigger();
+        QCOMPARE(sections->currentWidget(), legacyReader);
+        QCOMPARE(modern.rssItems(), modernItems);
+        QCOMPARE(modern.commandsFor("/api/v2/rss/addFeed"), 0);
+        QCOMPARE(legacy.commandsFor("/api/v2/rss/addFeed"), 1);
+    }
+
+    void rssPreferencesFollowSelectedServer()
+    {
+        DemoQbittorrentServer legacy(true), modern(true);
+        modern.enableModernResponses();
+        const QString patterns = QStringLiteral("s(\\\\d+)e(\\\\d+)\n(\\\\d+)x(\\\\d+)");
+        const QString revised = patterns + QStringLiteral("\nEP(\\\\d+)");
+        const QJsonObject initialLegacy{
+            {"rss_processing_enabled", false}, {"rss_refresh_interval", 5},
+            {"rss_fetch_delay", 2}, {"rss_max_articles_per_feed", 100},
+            {"rss_auto_downloading_enabled", false},
+            {"rss_download_repack_proper_episodes", true},
+            {"rss_smart_episode_filters", patterns}
+        };
+        const QJsonObject initialModern{
+            {"rss_processing_enabled", true}, {"rss_refresh_interval", 30},
+            {"rss_fetch_delay", 0}, {"rss_max_articles_per_feed", 500},
+            {"rss_auto_downloading_enabled", true},
+            {"rss_download_repack_proper_episodes", false},
+            {"rss_smart_episode_filters", QStringLiteral("other")}
+        };
+        legacy.setServerPreferences(initialLegacy);
+        modern.setServerPreferences(initialModern);
+        QVERIFY(legacy.start() && modern.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("prefs.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, legacy.url());
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(QStringLiteral("v5.1.4")), 6000);
+        openConnectDialog(window, modern.url(), false, true, true, QStringLiteral("Modern seedbox"));
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(QStringLiteral("v5.3.0")), 6000);
+        auto *tabs = window.findChild<QTabWidget *>("serverTabs");
+        auto *prefs = window.findChild<QAction *>("actionOptions");
+        QVERIFY(tabs && prefs);
+
+        struct Controls {
+            QCheckBox *reader, *autoDownload, *repacks, *images;
+            QSpinBox *interval, *delay, *articles;
+            QPlainTextEdit *filters;
+            QPushButton *rules, *apply;
+        };
+        const auto withRSS = [&](auto exercise) {
+            bool finished = false;
+            QTimer::singleShot(0, &window, [&]() {
+                auto *dlg = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget());
+                QVERIFY(dlg);
+                const auto cleanup = qScopeGuard([dlg]() { if (dlg->isVisible()) dlg->reject(); });
+                auto *sections = dlg->findChild<QListWidget *>("preferencesSections");
+                const Controls c{
+                    dlg->findChild<QCheckBox *>("checkRSSEnable"),
+                    dlg->findChild<QCheckBox *>("checkRSSAutoDownloaderEnable"),
+                    dlg->findChild<QCheckBox *>("checkSmartFilterDownloadRepacks"),
+                    dlg->findChild<QCheckBox *>("checkRSSLoadExternalImages"),
+                    dlg->findChild<QSpinBox *>("spinRSSRefreshInterval"),
+                    dlg->findChild<QSpinBox *>("spinRSSFetchDelay"),
+                    dlg->findChild<QSpinBox *>("spinRSSMaxArticlesPerFeed"),
+                    dlg->findChild<QPlainTextEdit *>("textSmartEpisodeFilters"),
+                    dlg->findChild<QPushButton *>("btnEditRules"),
+                    dlg->findChild<QPushButton *>("preferencesApply")
+                };
+                QVERIFY(sections && c.reader && c.autoDownload && c.repacks && c.images && c.interval
+                    && c.delay && c.articles && c.filters && c.rules && c.apply);
+                sections->setCurrentRow(7);
+                QTRY_VERIFY_WITH_TIMEOUT(c.reader->isEnabled(), 6000);
+                QVERIFY(c.rules->isEnabled());
+                QVERIFY(!c.apply->isEnabled());
+                exercise(c);
+                finished = true;
+            });
+            prefs->trigger();
+            QVERIFY(finished);
+        };
+        const auto delta = [](DemoQbittorrentServer &server) {
+            const QUrlQuery form(QString::fromUtf8(server.lastCommandBody("/api/v2/app/setPreferences")));
+            return QJsonDocument::fromJson(form.queryItemValue(
+                QStringLiteral("json"), QUrl::FullyDecoded).toUtf8()).object();
+        };
+
+        tabs->setCurrentIndex(0);
+        withRSS([&](const Controls &c) {
+            QVERIFY(c.images->isEnabled() && !c.images->isChecked());
+            c.images->setChecked(true);
+            QVERIFY(c.apply->isEnabled());
+            c.images->setChecked(false);
+            QVERIFY(!c.apply->isEnabled());
+            c.images->setChecked(true);
+        });
+        QVERIFY(!settings.value(QStringLiteral("Preferences/RSS/LoadExternalImages"), false).toBool());
+        withRSS([&](const Controls &c) {
+            c.images->setChecked(true);
+            c.apply->click();
+            QTRY_VERIFY_WITH_TIMEOUT(!c.apply->isEnabled(), 6000);
+        });
+        QVERIFY(settings.value(QStringLiteral("Preferences/RSS/LoadExternalImages")).toBool());
+        QCOMPARE(legacy.commandsFor("/api/v2/app/setPreferences"), 0);
+        tabs->setCurrentIndex(1);
+        withRSS([&](const Controls &c) {
+            QVERIFY(c.images->isChecked());
+            c.images->setChecked(false);
+            c.apply->click();
+            QTRY_VERIFY_WITH_TIMEOUT(!c.apply->isEnabled(), 6000);
+        });
+        QVERIFY(!settings.value(QStringLiteral("Preferences/RSS/LoadExternalImages")).toBool());
+        QCOMPARE(modern.commandsFor("/api/v2/app/setPreferences"), 0);
+        tabs->setCurrentIndex(0);
+        for (bool save : {false, true})
+        {
+            withRSS([&](const Controls &c) {
+                QVERIFY(!c.reader->isChecked() && !c.autoDownload->isChecked());
+                QVERIFY(c.interval->isEnabled() && c.delay->isEnabled() && c.articles->isEnabled());
+                QVERIFY(c.filters->isEnabled() && c.repacks->isEnabled());
+                QCOMPARE(c.interval->value(), 5);
+                QCOMPARE(c.delay->value(), 2);
+                QCOMPARE(c.articles->value(), 100);
+                QCOMPARE(c.filters->toPlainText(), patterns);
+                QVERIFY(c.repacks->isChecked());
+                for (auto *spin : {c.interval, c.delay, c.articles})
+                    QVERIFY(spin->findChild<QLineEdit *>()->isEnabled());
+                c.reader->setChecked(true);
+                c.reader->setChecked(false);
+                QVERIFY(!c.apply->isEnabled());
+                c.reader->setChecked(true);
+                c.autoDownload->setChecked(true);
+                c.interval->setValue(17);
+                c.delay->setValue(0);
+                c.articles->setValue(0);
+                c.repacks->setChecked(false);
+                c.filters->setPlainText(revised);
+                QVERIFY(c.apply->isEnabled());
+                QCOMPARE(legacy.commandsFor("/api/v2/app/setPreferences"), 0);
+                if (save)
+                {
+                    const auto answer = [&](QMessageBox::StandardButton response) {
+                        QTimer::singleShot(0, &window, [response]() {
+                            if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget()))
+                                box->button(response)->click();
+                        });
+                        c.apply->click();
+                    };
+                    answer(QMessageBox::No);
+                    QCOMPARE(legacy.serverPreferences(), initialLegacy);
+                    QVERIFY(c.apply->isEnabled());
+                    answer(QMessageBox::Yes);
+                    QTRY_VERIFY_WITH_TIMEOUT(c.reader->isEnabled() && !c.apply->isEnabled(), 6000);
+                }
+            });
+            if (!save) QCOMPARE(legacy.serverPreferences(), initialLegacy);
+        }
+        const QJsonObject expectedLegacy{
+            {"rss_processing_enabled", true}, {"rss_refresh_interval", 17},
+            {"rss_fetch_delay", 0}, {"rss_max_articles_per_feed", 0},
+            {"rss_auto_downloading_enabled", true},
+            {"rss_download_repack_proper_episodes", false},
+            {"rss_smart_episode_filters", revised}
+        };
+        QCOMPARE(delta(legacy), expectedLegacy);
+        QCOMPARE(legacy.serverPreferences(), expectedLegacy);
+        QCOMPARE(modern.serverPreferences(), initialModern);
+        withRSS([&](const Controls &c) {
+            QVERIFY(c.reader->isChecked() && c.autoDownload->isChecked());
+            QCOMPARE(c.interval->value(), 17);
+            QCOMPARE(c.delay->value(), 0);
+            QCOMPARE(c.articles->value(), 0);
+            QCOMPARE(c.filters->toPlainText(), revised);
+        });
+
+        tabs->setCurrentIndex(1);
+        withRSS([](const Controls &c) {
+            QVERIFY(c.reader->isChecked() && c.autoDownload->isChecked());
+            QCOMPARE(c.interval->value(), 30);
+            QCOMPARE(c.articles->value(), 500);
+            QCOMPARE(c.filters->toPlainText(), QStringLiteral("other"));
+            c.autoDownload->setChecked(false);
+            c.reader->setChecked(false);
+            QVERIFY(c.interval->isEnabled() && c.filters->isEnabled());
+            c.apply->click();
+            QTRY_VERIFY_WITH_TIMEOUT(c.reader->isEnabled() && !c.apply->isEnabled(), 6000);
+        });
+        const QJsonObject disableOnly{
+            {"rss_processing_enabled", false}, {"rss_auto_downloading_enabled", false}
+        };
+        QCOMPARE(delta(modern), disableOnly);
+        QJsonObject expectedModern = initialModern;
+        for (auto it = disableOnly.constBegin(); it != disableOnly.constEnd(); ++it)
+            expectedModern.insert(it.key(), it.value());
+        QCOMPARE(modern.serverPreferences(), expectedModern);
+
+        // Missing and malformed settings must not leak placeholder values.
+        expectedModern.remove("rss_refresh_interval");
+        expectedModern.insert("rss_fetch_delay", -1);
+        expectedModern.insert("rss_max_articles_per_feed", 1.5);
+        expectedModern.insert("rss_auto_downloading_enabled", "false");
+        expectedModern.insert("rss_smart_episode_filters", QJsonArray{});
+        modern.setServerPreferences(expectedModern);
+        withRSS([](const Controls &c) {
+            QVERIFY(!c.interval->isEnabled() && !c.delay->isEnabled() && !c.articles->isEnabled());
+            QVERIFY(!c.autoDownload->isEnabled() && !c.filters->isEnabled());
+            QVERIFY(c.repacks->isEnabled());
+            c.repacks->setChecked(true);
+            c.apply->click();
+            QTRY_VERIFY_WITH_TIMEOUT(c.reader->isEnabled() && !c.apply->isEnabled(), 6000);
+        });
+        const QJsonObject repacksOnly{{"rss_download_repack_proper_episodes", true}};
+        QCOMPARE(delta(modern), repacksOnly);
+        expectedModern.insert("rss_download_repack_proper_episodes", true);
+        QCOMPARE(modern.serverPreferences(), expectedModern);
+        QCOMPARE(legacy.serverPreferences(), expectedLegacy);
+    }
+
     void bitTorrentPrivacyFollowsSelectedServer()
     {
         DemoQbittorrentServer legacy(true), modern(true);
@@ -7327,7 +7751,7 @@ private slots:
         QCOMPARE(linkDriver.links, 1);
         QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor("/api/v2/torrents/add"), 2, 6000);
         QCOMPARE(QUrlQuery(QString::fromUtf8(server.lastCommandBody(
-            "/api/v2/torrents/add"))).queryItemValue(QStringLiteral("urls")), magnet);
+            "/api/v2/torrents/add"))).queryItemValue(QStringLiteral("urls"), QUrl::FullyDecoded), magnet);
 
         QMimeData irrelevant;
         irrelevant.setUrls({QUrl::fromLocalFile(temp.filePath(QStringLiteral("notes.txt")))});
@@ -8546,7 +8970,7 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor("/api/v2/torrents/add"), 1, 5000);
         const QUrlQuery addition(QString::fromUtf8(
             server.lastCommandBody("/api/v2/torrents/add")));
-        QVERIFY(addition.queryItemValue(QStringLiteral("urls"))
+        QVERIFY(addition.queryItemValue(QStringLiteral("urls"), QUrl::FullyDecoded)
                 .startsWith(QStringLiteral("magnet:?xt=")));
     }
 

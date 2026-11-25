@@ -6,6 +6,7 @@
 #include "gui/FilterSidebar.h"
 #include "gui/ConnectionDialog.h"
 #include "gui/RemotePreferencesDialog.h"
+#include "gui/RemoteRssDialog.h"
 #include "gui/RemoteCategoryDialog.h"
 #include "gui/RemoteSpeedLimitsDialog.h"
 #include "gui/RemoteAddTorrentDialog.h"
@@ -672,6 +673,19 @@ void MainWindow::setupActions()
     m_ui->menuView->addAction(m_ui->actionTopToolBar);
     m_ui->menuView->addAction(m_ui->actionShowStatusbar);
     m_ui->menuView->addAction(m_ui->actionShowFiltersSidebar);
+    m_rssAction = m_ui->menuView->addAction(tr("RSS Reader"));
+    m_rssAction->setObjectName(QStringLiteral("actionRemoteRSS"));
+    m_rssAction->setCheckable(true);
+    m_rssAction->setChecked(m_settings->value(QStringLiteral("Layout/ShowRSSReader"), false).toBool());
+    connect(m_rssAction, &QAction::toggled, this, [this](bool visible) {
+        m_settings->setValue(QStringLiteral("Layout/ShowRSSReader"), visible);
+        for (const auto &connection : m_connections)
+            connection->pane->setRssAvailable(connection->connected ? connection->session : nullptr, visible);
+        if (visible)
+            if (const auto server = activeConnection(); server && server->connected)
+                server->pane->showRss();
+        updateActiveUi();
+    });
     m_ui->menuView->addSeparator();
 
     // Local usability enhancement, absent from upstream qBittorrent.
@@ -1430,6 +1444,7 @@ QStringList MainWindow::selectedTorrentHashes() const
         return {};
 
     const ServerPane *pane = server->pane;
+    if (pane->isRssSelected()) return {};
     auto *selection = pane->table()->selectionModel();
     if (!selection)
         return {};
@@ -1544,8 +1559,9 @@ void MainWindow::applyLocalBehaviorPreferences()
 
     const bool hideZeroStatus = m_settings->value(
         QStringLiteral("Preferences/Behavior/HideZeroStatusFilters"), false).toBool();
+    const bool rssImages = m_settings->value(QStringLiteral("Preferences/RSS/LoadExternalImages"), false).toBool();
     const auto apply = [alternating, hideZero, mode, hideZeroStatus,
-                        stateColors, progressColor, separateTracker, contentDrag](ServerPane *pane) {
+                        stateColors, progressColor, separateTracker, contentDrag, rssImages](ServerPane *pane) {
         if (!pane)
             return;
         pane->table()->setAlternatingRowColors(alternating);
@@ -1554,6 +1570,7 @@ void MainWindow::applyLocalBehaviorPreferences()
         pane->model()->setUseStateColors(stateColors);
         pane->setProgressFollowsStateColors(progressColor);
         pane->setContentDragEnabled(contentDrag);
+        pane->setRssLoadExternalImages(rssImages);
         pane->setSeparateTrackerStatusFilter(separateTracker);
     };
     apply(m_emptyPane);
@@ -1887,8 +1904,9 @@ void MainWindow::updateActiveUi()
     }
 
     const bool ready = connection && connection->connected;
-    m_searchEdit->setEnabled(ready);
-    m_searchBy->setEnabled(ready);
+    const bool transfers = ready && pane && !pane->isRssSelected();
+    m_searchEdit->setEnabled(transfers);
+    m_searchBy->setEnabled(transfers);
     m_disconnectAction->setEnabled(connection && connection->session);
     m_reconnectAction->setEnabled(connection && !connection->session);
     m_closeTabAction->setEnabled(static_cast<bool>(connection));
@@ -2157,6 +2175,7 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
     auto connection = std::make_shared<SessionContext>();
     connection->profile = profile;
     connection->pane = new ServerPane(m_views);
+    connection->pane->setRssLoadExternalImages(m_settings->value(QStringLiteral("Preferences/RSS/LoadExternalImages"), false).toBool());
     connection->pane->setContentDragEnabled(m_settings->value(
         QStringLiteral("Preferences/Behavior/TorrentContentDragEnabled"), true).toBool());
     connection->pane->setContentPathMappings(
@@ -2180,6 +2199,9 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
     connection->session = new Remote::RemoteSession(this);
     auto *session = connection->session;
     m_connections.append(connection);
+    connect(connection->pane, &ServerPane::sectionChanged, this, [this, connection]() {
+        if (activeConnection() == connection) updateActiveUi();
+    });
 
     // The user may choose separate double-click actions for downloads and
     // completed torrents. All actions use this exact remote session.
@@ -2934,6 +2956,7 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
             connection->connected = true;
             connection->disconnectReason.clear();
             connection->pane->setEnabled(true);
+            connection->pane->setRssAvailable(connection->session, m_rssAction && m_rssAction->isChecked());
             updateServerTab(connection);
             connection->version = version;
             connection->apiVersion = apiVersion;

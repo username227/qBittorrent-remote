@@ -3624,6 +3624,22 @@ Disable encryption: Only connect to peers without protocol encryption</string>
              </widget>
             </item>
             <item>
+             <widget class="QGroupBox" name="groupRSSLocalDisplay">
+              <property name="title">
+               <string>Article display (local)</string>
+              </property>
+              <layout class="QVBoxLayout" name="rssLocalDisplayLayout">
+               <item>
+                <widget class="QCheckBox" name="checkRSSLoadExternalImages">
+                 <property name="text">
+                  <string>Load external images in RSS articles</string>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </widget>
+            </item>
+            <item>
              <widget class="QGroupBox" name="groupRSSAutoDownloader">
               <property name="title">
                <string>RSS Torrent Auto Downloader</string>

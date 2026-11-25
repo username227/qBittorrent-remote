@@ -62,6 +62,8 @@ private:
     void refreshProxyControls();
     void bindIPFilterControls();
     void bindSpeedControls();
+    void bindRSSControls();
+    bool validateRSSChanges(const QJsonObject &changes);
     void bindBitTorrentPrivacyControls();
     void bindBitTorrentQueueingControls();
     void bindBitTorrentSeedingLimits();
@@ -154,6 +156,7 @@ private:
     QHash<QString, QList<Remote::PathMapping>> m_staged;
     QSet<QString> m_changedProfiles;
     bool m_behaviorDirty = false;
+    bool m_rssImageBaseline = false;
     bool m_additionDirty = false;
     QStandardItemModel *m_watchedFoldersModel = nullptr;
     QJsonObject m_watchedFolders;
