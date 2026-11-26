@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>330</width>
-    <height>510</height>
+    <height>650</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -262,6 +262,89 @@
             <property name="text">
              <string notr="true">—</string>
             </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <widget class="QGroupBox" name="groupServerInformation">
+         <property name="title">
+          <string>Server information</string>
+         </property>
+         <layout class="QGridLayout" name="gridServerInformation">
+          <item row="0" column="0">
+           <widget class="QLabel" name="labelServerVersionText">
+            <property name="text"><string>qBittorrent version:</string></property>
+           </widget>
+          </item>
+          <item row="0" column="1" alignment="Qt::AlignmentFlag::AlignRight">
+           <widget class="QLabel" name="labelServerVersion">
+            <property name="text"><string notr="true">—</string></property>
+            <property name="textFormat"><enum>Qt::TextFormat::PlainText</enum></property>
+            <property name="textInteractionFlags"><set>Qt::TextInteractionFlag::TextSelectableByMouse</set></property>
+           </widget>
+          </item>
+          <item row="1" column="0">
+           <widget class="QLabel" name="labelApiVersionText">
+            <property name="text"><string>Web API version:</string></property>
+           </widget>
+          </item>
+          <item row="1" column="1" alignment="Qt::AlignmentFlag::AlignRight">
+           <widget class="QLabel" name="labelApiVersion">
+            <property name="text"><string notr="true">—</string></property>
+            <property name="textFormat"><enum>Qt::TextFormat::PlainText</enum></property>
+            <property name="textInteractionFlags"><set>Qt::TextInteractionFlag::TextSelectableByMouse</set></property>
+           </widget>
+          </item>
+          <item row="2" column="0">
+           <widget class="QLabel" name="labelLibtorrentVersionText">
+            <property name="text"><string>libtorrent version:</string></property>
+           </widget>
+          </item>
+          <item row="2" column="1" alignment="Qt::AlignmentFlag::AlignRight">
+           <widget class="QLabel" name="labelLibtorrentVersion">
+            <property name="text"><string notr="true">—</string></property>
+            <property name="textFormat"><enum>Qt::TextFormat::PlainText</enum></property>
+            <property name="textInteractionFlags"><set>Qt::TextInteractionFlag::TextSelectableByMouse</set></property>
+           </widget>
+          </item>
+          <item row="3" column="0">
+           <widget class="QLabel" name="labelQtVersionText">
+            <property name="text"><string>Qt version:</string></property>
+           </widget>
+          </item>
+          <item row="3" column="1" alignment="Qt::AlignmentFlag::AlignRight">
+           <widget class="QLabel" name="labelQtVersion">
+            <property name="text"><string notr="true">—</string></property>
+            <property name="textFormat"><enum>Qt::TextFormat::PlainText</enum></property>
+            <property name="textInteractionFlags"><set>Qt::TextInteractionFlag::TextSelectableByMouse</set></property>
+           </widget>
+          </item>
+          <item row="4" column="0">
+           <widget class="QLabel" name="labelLaunchTimeText">
+            <property name="text"><string>Launch time:</string></property>
+            <property name="toolTip"><string>Server launch time, displayed in the desktop's local time zone.</string></property>
+           </widget>
+          </item>
+          <item row="4" column="1" alignment="Qt::AlignmentFlag::AlignRight">
+           <widget class="QLabel" name="labelLaunchTime">
+            <property name="text"><string notr="true">—</string></property>
+            <property name="textFormat"><enum>Qt::TextFormat::PlainText</enum></property>
+            <property name="textInteractionFlags"><set>Qt::TextInteractionFlag::TextSelectableByMouse</set></property>
+           </widget>
+          </item>
+          <item row="5" column="0">
+           <widget class="QLabel" name="labelUptimeText">
+            <property name="text"><string>Estimated uptime:</string></property>
+            <property name="toolTip"><string>Calculated from the server launch timestamp and the desktop clock; clock differences may affect this estimate.</string></property>
+           </widget>
+          </item>
+          <item row="5" column="1" alignment="Qt::AlignmentFlag::AlignRight">
+           <widget class="QLabel" name="labelUptime">
+            <property name="text"><string notr="true">—</string></property>
+            <property name="textFormat"><enum>Qt::TextFormat::PlainText</enum></property>
+            <property name="textInteractionFlags"><set>Qt::TextInteractionFlag::TextSelectableByMouse</set></property>
            </widget>
           </item>
          </layout>

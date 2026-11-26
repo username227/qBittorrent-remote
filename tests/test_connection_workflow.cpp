@@ -231,6 +231,13 @@ public:
                             { code = 404; response = "Not found"; }
                             else m_creatorActive = false;
                         }
+                        else if (path == "/api/v2/app/processInfo" && hasCookie)
+                        {
+                            ++m_processInfoRequests;
+                            if (m_processInfo.isEmpty())
+                            { code = 404; response = "Unavailable"; }
+                            else response = QJsonDocument(m_processInfo).toJson(QJsonDocument::Compact);
+                        }
                         else if (path == "/api/v2/app/buildInfo" && hasCookie)
                         {
                             if (m_buildInfo.isEmpty())
@@ -1047,6 +1054,8 @@ public:
     QJsonObject rssItems() const { return m_rssItems; }
     QJsonObject rssRules() const { return m_rssRules; }
     void setBuildInfo(const QJsonObject &info) { m_buildInfo = info; }
+    void setProcessInfo(const QJsonObject &info) { m_processInfo = info; }
+    int processInfoRequests() const noexcept { return m_processInfoRequests; }
     void enableCreatorDemo(bool hold = false) { m_creatorDemo = true; m_creatorHold = hold; }
     int creatorDownloads() const { return m_creatorDownloads; }
     bool creatorActive() const { return m_creatorActive; }
@@ -1230,6 +1239,8 @@ private:
     int m_preferenceReads = 0;
     QJsonObject m_preferences;
     QJsonObject m_buildInfo;
+    QJsonObject m_processInfo;
+    int m_processInfoRequests = 0;
     bool m_creatorDemo = false;
     bool m_creatorHold = false;
     bool m_creatorActive = false;
@@ -9404,8 +9415,10 @@ private slots:
     {
         DemoQbittorrentServer legacy(true), modern(true);
         modern.enableModernResponses();
-        legacy.setBuildInfo({{"libtorrent", "1.2.20.0"}});
-        modern.setBuildInfo({{"libtorrent", "2.1.0.0"}});
+        legacy.setBuildInfo({{"libtorrent", "1.2.20.0"}, {"qt", "6.8.1"}});
+        modern.setBuildInfo({{"libtorrent", "2.1.0.0"}, {"qt", "6.10.1"}});
+        const qint64 launched = QDateTime::currentSecsSinceEpoch() - 90061;
+        modern.setProcessInfo({{"launch_time", QJsonValue(launched)}});
         const QJsonObject first{
             {"alltime_ul", 4096}, {"alltime_dl", 1024}, {"global_ratio", "4.00"},
             {"total_wasted_session", 64}, {"total_peer_connections", 8},
@@ -9445,6 +9458,15 @@ private slots:
         };
         QTRY_COMPARE_WITH_TIMEOUT(label(alpha, "labelPeers")->text(), QStringLiteral("8"), 6000);
         QTRY_VERIFY_WITH_TIMEOUT(label(alpha, "labelCacheHits")->isVisible(), 6000);
+        QCOMPARE(label(alpha, "labelServerVersion")->text(), legacy.reportedQbtVersion());
+        QCOMPARE(label(alpha, "labelApiVersion")->text(), legacy.reportedApiVersion());
+        QCOMPARE(label(alpha, "labelLibtorrentVersion")->text(), QStringLiteral("1.2.20.0"));
+        QCOMPARE(label(alpha, "labelQtVersion")->text(), QStringLiteral("6.8.1"));
+        QTRY_COMPARE_WITH_TIMEOUT(legacy.processInfoRequests(), 1, 6000);
+        const auto legacySyncAfterProbe = legacy.syncRequests();
+        QTRY_VERIFY_WITH_TIMEOUT(legacy.syncRequests() > legacySyncAfterProbe, 6000);
+        QCOMPARE(label(alpha, "labelLaunchTime")->text(), QStringLiteral("—"));
+        QCOMPARE(label(alpha, "labelUptime")->text(), QStringLiteral("—"));
         QCOMPARE(label(alpha, "labelAlltimeUL")->text(), QLocale().toString(4.0, 'f', 2) + " KiB");
         QCOMPARE(label(alpha, "labelGlobalRatio")->text(), QLocale().toString(4.0, 'f', 2));
         QCOMPARE(label(alpha, "labelCacheHits")->text(), QLocale().toString(12.5, 'f', 2) + "%");
@@ -9469,6 +9491,16 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(label(beta, "labelPeers")->text(), QStringLiteral("0"), 6000);
         QCOMPARE(label(beta, "labelQueuedTrackerAnnounces")->text(), QStringLiteral("99"));
         QVERIFY(!label(beta, "labelCacheHits")->isVisible());
+        QCOMPARE(label(beta, "labelServerVersion")->text(), modern.reportedQbtVersion());
+        QCOMPARE(label(beta, "labelApiVersion")->text(), modern.reportedApiVersion());
+        QTRY_COMPARE_WITH_TIMEOUT(label(beta, "labelQtVersion")->text(), QStringLiteral("6.10.1"), 6000);
+        QCOMPARE(label(beta, "labelLibtorrentVersion")->text(), QStringLiteral("2.1.0.0"));
+        QTRY_COMPARE_WITH_TIMEOUT(label(beta, "labelLaunchTime")->text(),
+            QLocale().toString(QDateTime::fromSecsSinceEpoch(launched), QLocale::ShortFormat), 6000);
+        QVERIFY(label(beta, "labelUptime")->text().startsWith(QStringLiteral("1 d 01:")));
+        QCOMPARE(modern.processInfoRequests(), 1);
+        QCOMPARE(label(alpha, "labelLaunchTime")->text(), QStringLiteral("—"));
+        QCOMPARE(label(alpha, "labelQtVersion")->text(), QStringLiteral("6.8.1"));
         legacy.queueCompletionPatch({{"server_state", QJsonObject{{"queued_tracker_announces", 6}}}});
         QTRY_COMPARE_WITH_TIMEOUT(label(alpha, "labelQueuedTrackerAnnounces")->text(), QStringLiteral("6"), 6000);
         QCOMPARE(label(alpha, "labelPeers")->text(), QStringLiteral("8"));
@@ -9477,6 +9509,24 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(label(beta, "labelPeers")->text(), QStringLiteral("2"), 6000);
         QCOMPARE(label(beta, "labelQueuedTrackerAnnounces")->text(), QStringLiteral("—"));
         QCOMPARE(label(alpha, "labelQueuedTrackerAnnounces")->text(), QStringLiteral("6"));
+        // Reopening after an invalid response must not reuse another dialog\'s data.
+        beta->close();
+        QTRY_COMPARE(window.findChildren<RemoteStatisticsDialog *>().size(), 1);
+        modern.setBuildInfo({{"libtorrent", false}, {"qt", 123}});
+        modern.setProcessInfo({{"launch_time", "not a timestamp"}});
+        action->trigger();
+        beta = nullptr;
+        for (auto *dialog : window.findChildren<RemoteStatisticsDialog *>())
+            if (dialog != alpha) beta = dialog;
+        QVERIFY(beta && beta->isVisible());
+        QTRY_COMPARE_WITH_TIMEOUT(modern.processInfoRequests(), 2, 6000);
+        const auto modernSyncAfterProbe = modern.syncRequests();
+        QTRY_VERIFY_WITH_TIMEOUT(modern.syncRequests() > modernSyncAfterProbe, 6000);
+        QCOMPARE(label(beta, "labelPeers")->text(), QStringLiteral("2"));
+        QCOMPARE(label(beta, "labelLibtorrentVersion")->text(), QStringLiteral("—"));
+        QCOMPARE(label(beta, "labelQtVersion")->text(), QStringLiteral("—"));
+        QCOMPARE(label(beta, "labelLaunchTime")->text(), QStringLiteral("—"));
+        QCOMPARE(label(beta, "labelUptime")->text(), QStringLiteral("—"));
         // Closing one server closes only its statistics window.
         auto *disconnect = window.findChild<QAction *>("disconnectServer");
         QVERIFY(disconnect && disconnect->isEnabled());
