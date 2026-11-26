@@ -135,6 +135,7 @@ bool ProfileStore::saveImpl(ServerProfile &profile, bool preservePaths)
         {
             PathMappingStore(m_settings).remove(profile.id);
             m_settings.remove(QStringLiteral("AddTorrent/LastRemoteSavePath/") + trustKey(profile.id));
+            m_settings.remove(QStringLiteral("TorrentCreator/Servers/") + trustKey(profile.id));
         }
         m_settings.sync();
         return m_settings.status() == QSettings::NoError;
@@ -156,6 +157,7 @@ bool ProfileStore::remove(const QString &id)
             PathMappingStore(m_settings).remove(id);
             m_settings.remove(QStringLiteral("AddTorrent/LastRemoteSavePath/")
                               + trustKey(id));
+            m_settings.remove(QStringLiteral("TorrentCreator/Servers/") + trustKey(id));
             m_settings.sync();
             return m_settings.status() == QSettings::NoError;
         }

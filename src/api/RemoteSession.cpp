@@ -1470,6 +1470,8 @@ void appendAddOptions(QUrlQuery &form, const AddTorrentOptions &options)
         form.addQueryItem(QStringLiteral("useDownloadPath"), QStringLiteral("true"));
         form.addQueryItem(QStringLiteral("downloadPath"), options.downloadPath);
     }
+    if (options.disableDownloadPath && !options.autoTMM)
+        form.addQueryItem(QStringLiteral("useDownloadPath"), QStringLiteral("false"));
     if (!options.category.isEmpty())
         form.addQueryItem(QStringLiteral("category"), options.category);
     if (!options.tags.isEmpty())
@@ -1909,7 +1911,7 @@ void RemoteSession::addTorrentFile(const QString &filename, const QByteArray &co
 
 void RemoteSession::addTorrentFiles(const QList<TorrentUpload> &files,
                                     const AddTorrentOptions &options,
-                                    std::function<void()> accepted)
+                                    std::function<void()> accepted, PreferencesError rejected)
 {
     const QString description = files.size() == 1
         ? tr("Add torrent file") : tr("Add %1 torrent files").arg(files.size());
@@ -1919,7 +1921,9 @@ void RemoteSession::addTorrentFiles(const QList<TorrentUpload> &files,
     constexpr qint64 maxBatchBytes = 128LL * 1024 * 1024;
     if (files.isEmpty() || files.size() > 256)
     {
-        emit operationFailed(description, tr("Select between 1 and 256 torrent files."));
+        const QString reason = tr("Select between 1 and 256 torrent files.");
+        if (rejected) rejected(reason);
+        else emit operationFailed(description, reason);
         return;
     }
     qint64 total = 0;
@@ -1928,8 +1932,9 @@ void RemoteSession::addTorrentFiles(const QList<TorrentUpload> &files,
         if (file.contents.isEmpty() || file.contents.size() > maxSingleBytes
             || total > maxBatchBytes - file.contents.size())
         {
-            emit operationFailed(description,
-                tr("Torrent metadata must be nonempty, at most 32 MiB each and 128 MiB total."));
+            const QString reason = tr("Torrent metadata must be nonempty, at most 32 MiB each and 128 MiB total.");
+            if (rejected) rejected(reason);
+            else emit operationFailed(description, reason);
             return; // No partially submitted batches.
         }
         total += file.contents.size();
@@ -1979,9 +1984,10 @@ void RemoteSession::addTorrentFiles(const QList<TorrentUpload> &files,
 
     // A single authenticated multipart POST passes shared remote add options
     // and all selected .torrent files to qBittorrent's real Web API.
+    const bool reportOperation = !rejected;
     queueOperation(QStringLiteral("api/v2/torrents/add"), body,
                    QByteArrayLiteral("multipart/form-data; boundary=") + boundary,
-                   description, true, std::move(accepted));
+                   description, true, std::move(accepted), std::move(rejected), reportOperation);
 }
 
 bool RemoteSession::isConnected() const noexcept

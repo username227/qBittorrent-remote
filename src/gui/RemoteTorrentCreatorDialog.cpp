@@ -3,6 +3,8 @@
 #include "api/TorrentMetadataReader.h"
 #include "ui_remotetorrentcreatordialog.h"
 
+#include <QCryptographicHash>
+#include <QVariantMap>
 #include <QDialogButtonBox>
 #include <QDragEnterEvent>
 #include <QDropEvent>
@@ -21,13 +23,65 @@
 #include <QStandardPaths>
 #include <limits>
 
+namespace
+{
+QString serverPath(QString path)
+{
+    path = path.trimmed();
+    if (path.size() >= 2 && path.at(1) == QLatin1Char(':'))
+        path.replace(QLatin1Char('\\'), QLatin1Char('/'));
+    return path.isEmpty() ? QString() : QDir::cleanPath(path);
+}
+
+bool absoluteServerPath(const QString &path)
+{
+    return !path.contains(QChar::Null) && (path.startsWith(QLatin1Char('/'))
+        || (path.size() >= 3 && path.at(0).isLetter() && path.at(1) == QLatin1Char(':')
+            && path.at(2) == QLatin1Char('/')));
+}
+
+QString serverParent(const QString &path)
+{
+    const qsizetype slash = path.lastIndexOf(QLatin1Char('/'));
+    if (slash == 0 || (slash == 2 && path.at(1) == QLatin1Char(':')))
+        return path.left(slash + 1);
+    return slash > 0 ? path.left(slash) : QString();
+}
+}
+
 RemoteTorrentCreatorDialog::RemoteTorrentCreatorDialog(QSettings &settings,
     const Remote::ServerProfile &profile, Remote::RemoteSession *session,
-    const QString &version, QWidget *parent)
+    const QString &version, QWidget *parent, const QList<SeedTarget> &seedTargets)
     : QDialog(parent), m_ui(std::make_unique<Ui::RemoteTorrentCreatorDialog>()),
-      m_session(session), m_mappings(Remote::PathMappingStore(settings).mappings(profile.id))
+      m_session(session), m_settings(settings),
+      m_settingsKey(profile.id.isEmpty() ? QString() : QStringLiteral("TorrentCreator/Servers/")
+          + QString::fromLatin1(QCryptographicHash::hash(profile.id.toUtf8(), QCryptographicHash::Sha256).toHex())),
+      m_mappings(Remote::PathMappingStore(settings).mappings(profile.id))
 {
     m_ui->setupUi(this);
+    m_seedTargets.append(SeedTarget{profile, session});
+    for (const auto &target : seedTargets)
+        if (target.session && target.session != session && target.session->isConnected())
+            m_seedTargets.append(target);
+    for (qsizetype i = 0; i < m_seedTargets.size(); ++i)
+    {
+        const auto &target = m_seedTargets.at(i);
+        m_ui->seedServerCombo->addItem(target.profile.name);
+        if (i == 0 || !target.session) continue;
+        const auto lost = [this, i] {
+            if (m_state == State::Seeding && m_seedTargetIndex == i)
+                finishCrossSeed(tr("Torrent saved locally. Seeding on %1 could not be confirmed: server disconnected.")
+                    .arg(m_seedTargets.at(i).profile.name));
+        };
+        connect(target.session, &Remote::RemoteSession::disconnected, this, lost);
+        connect(target.session, &Remote::RemoteSession::failed, this, [lost](const QString &) { lost(); });
+        connect(target.session, &QObject::destroyed, this, lost);
+    }
+    connect(m_ui->seedServerCombo, &QComboBox::currentIndexChanged, this, [this](int) { updateSeedTarget(true); });
+    connect(m_ui->checkStartSeeding, &QCheckBox::toggled, this, [this](bool) { updateSeedTarget(); });
+    connect(m_ui->textInputPath, &QLineEdit::textChanged, this, [this] { updateSeedTarget(); });
+    connect(m_ui->seedTargetPath, &QLineEdit::textEdited, this, [this] { m_seedPathEdited = true; });
+    updateSeedTarget(true);
     setObjectName(QStringLiteral("remoteTorrentCreatorDialog"));
     setWindowTitle(tr("Torrent Creator — %1").arg(profile.name));
     QString numeric = version;
@@ -92,7 +146,10 @@ RemoteTorrentCreatorDialog::RemoteTorrentCreatorDialog(QSettings &settings,
         self->m_ui->checkOptimizeAlignment->setVisible(!self->m_lt2);
         self->m_session->requestTorrentCreationStatus({}, [self](const QJsonArray &) {
             if (self && self->m_state == State::Loading)
+            {
+                self->loadSettings();
                 self->setState(State::Ready, tr("Files will be hashed by the selected server."));
+            }
         }, [self](const QString &error) {
             if (self && self->m_state == State::Loading)
                 self->setState(State::Disconnected, tr("Torrent creation API unavailable: %1").arg(error));
@@ -103,7 +160,130 @@ RemoteTorrentCreatorDialog::RemoteTorrentCreatorDialog(QSettings &settings,
     });
 }
 
-RemoteTorrentCreatorDialog::~RemoteTorrentCreatorDialog() = default;
+RemoteTorrentCreatorDialog::~RemoteTorrentCreatorDialog()
+{
+    saveSettings();
+}
+
+void RemoteTorrentCreatorDialog::loadSettings()
+{
+    if (m_settingsKey.isEmpty()) return;
+    const QVariantMap saved = m_settings.value(m_settingsKey).toMap();
+    m_ui->trackersList->setPlainText(saved.value("Trackers").toString());
+    m_ui->URLSeedsList->setPlainText(saved.value("WebSeeds").toString());
+    m_ui->txtComment->setPlainText(saved.value("Comment").toString());
+    m_ui->lineEditSource->setText(saved.value("Source").toString());
+    const int piece = m_ui->comboPieceSize->findData(saved.value("PieceSize", 0));
+    if (piece >= 0) m_ui->comboPieceSize->setCurrentIndex(piece);
+    m_ui->checkPrivate->setChecked(saved.value("Private", m_ui->checkPrivate->isChecked()).toBool());
+    m_ui->checkStartSeeding->setChecked(saved.value("StartSeeding", m_ui->checkStartSeeding->isChecked()).toBool());
+    if (m_modern)
+        m_ui->checkIgnoreDotfiles->setChecked(saved.value("IgnoreDotfiles", m_ui->checkIgnoreDotfiles->isChecked()).toBool());
+    if (m_lt2)
+    {
+        const int format = m_ui->comboTorrentFormat->findData(saved.value("Format", QStringLiteral("hybrid")));
+        if (format >= 0) m_ui->comboTorrentFormat->setCurrentIndex(format);
+    }
+    else
+    {
+        m_ui->checkOptimizeAlignment->setChecked(saved.value("OptimizeAlignment", m_ui->checkOptimizeAlignment->isChecked()).toBool());
+        m_ui->spinPaddedFileSizeLimit->setValue(saved.value("PaddedFileSizeLimit", m_ui->spinPaddedFileSizeLimit->value()).toInt());
+    }
+    m_lastSaveDirectory = saved.value("LastSaveDirectory").toString();
+    m_settingsLoaded = true;
+}
+
+void RemoteTorrentCreatorDialog::saveSettings()
+{
+    if (!m_settingsLoaded) return;
+    // Keep values for capabilities temporarily unavailable on this server.
+    // Tracker URLs may include private passkeys; keep them local to this profile.
+    QVariantMap saved = m_settings.value(m_settingsKey).toMap();
+    saved.insert("Trackers", m_ui->trackersList->toPlainText());
+    saved.insert("WebSeeds", m_ui->URLSeedsList->toPlainText());
+    saved.insert("Comment", m_ui->txtComment->toPlainText());
+    saved.insert("Source", m_ui->lineEditSource->text());
+    saved.insert("PieceSize", m_ui->comboPieceSize->currentData());
+    saved.insert("Private", m_ui->checkPrivate->isChecked());
+    saved.insert("StartSeeding", m_ui->checkStartSeeding->isChecked());
+    if (m_modern) saved.insert("IgnoreDotfiles", m_ui->checkIgnoreDotfiles->isChecked());
+    if (m_lt2) saved.insert("Format", m_ui->comboTorrentFormat->currentData());
+    else
+    {
+        saved.insert("OptimizeAlignment", m_ui->checkOptimizeAlignment->isChecked());
+        saved.insert("PaddedFileSizeLimit", m_ui->spinPaddedFileSizeLimit->value());
+    }
+    saved.insert("LastSaveDirectory", m_lastSaveDirectory);
+    m_settings.setValue(m_settingsKey, saved);
+    m_settings.sync();
+}
+
+void RemoteTorrentCreatorDialog::updateSeedTarget(bool resetPath)
+{
+    const int index = m_ui->seedServerCombo->currentIndex();
+    const bool enabled = m_ui->checkStartSeeding->isChecked();
+    m_ui->seedServerCombo->setEnabled(enabled);
+    const bool other = enabled && index > 0 && index < m_seedTargets.size();
+    m_ui->seedTargetRow->setVisible(other);
+    if (resetPath) m_seedPathEdited = false;
+    if (!other || m_seedPathEdited) return;
+    QString source = m_ui->textInputPath->text().trimmed();
+    const QString mapped = Remote::PathMappingStore::toRemote(source, m_mappings);
+    if (!mapped.isEmpty()) source = mapped;
+    source = serverPath(source);
+    QString destination;
+    if (absoluteServerPath(source))
+    {
+        const auto &target = m_seedTargets.at(index).profile;
+        const QString local = Remote::PathMappingStore::toLocal(source, m_mappings);
+        if (!local.isEmpty())
+            destination = Remote::PathMappingStore::toRemote(local,
+                Remote::PathMappingStore(m_settings).mappings(target.id));
+        // Separate instances on the same NAS commonly share absolute paths.
+        // This is only an editable suggestion, not a claim of shared storage.
+        if (destination.isEmpty() && QUrl(target.url).host() == QUrl(m_seedTargets.first().profile.url).host())
+            destination = source;
+    }
+    m_ui->seedTargetPath->setText(destination);
+}
+
+void RemoteTorrentCreatorDialog::seedOnTarget(const QString &filename, const QByteArray &bytes,
+    const QString &torrentName)
+{
+    setState(State::Seeding, tr("Torrent saved locally. Adding it to %1…")
+        .arg(m_seedTargets.at(m_seedTargetIndex).profile.name));
+    const auto &target = m_seedTargets.at(m_seedTargetIndex);
+    const QString name = target.profile.name;
+    if (!target.session || !target.session->isConnected())
+    {
+        finishCrossSeed(tr("Torrent saved locally. Seeding on %1 could not start: server disconnected.").arg(name));
+        return;
+    }
+    const QString parent = serverParent(m_seedTargetPath);
+    if (parent.isEmpty() || m_seedTargetPath.section(QLatin1Char('/'), -1) != torrentName)
+    {
+        finishCrossSeed(tr("Torrent saved locally. Seeding on %1 was not started: the target file or folder name does not match the torrent.").arg(name));
+        return;
+    }
+    Remote::AddTorrentOptions options;
+    options.savePath = parent;
+    options.disableDownloadPath = true;
+    options.seedMode = true;
+    options.stopCondition = QStringLiteral("None");
+    const QPointer<RemoteTorrentCreatorDialog> self(this);
+    target.session->addTorrentFiles({{filename, bytes}}, options, [self, name] {
+        if (self) self->finishCrossSeed(tr("Torrent saved locally. Immediate seeding was requested on %1.").arg(name));
+    }, [self, name](const QString &error) {
+        if (self) self->finishCrossSeed(tr("Torrent saved locally. Seeding on %1 could not be confirmed: %2").arg(name, error));
+    });
+}
+
+void RemoteTorrentCreatorDialog::finishCrossSeed(const QString &message)
+{
+    if (m_state != State::Seeding) return;
+    m_seedResult = message;
+    removeTask(true);
+}
 
 void RemoteTorrentCreatorDialog::setState(State state, const QString &message)
 {
@@ -120,7 +300,7 @@ void RemoteTorrentCreatorDialog::setState(State state, const QString &message)
     ok->setText(state == State::Finished ? tr("Save Torrent") :
         state == State::Uncertain ? tr("Retry Status") : state == State::Saved ? tr("Close") : tr("Create Torrent"));
     if (state == State::Uncertain && m_taskId.isEmpty()) ok->setEnabled(false);
-    cancel->setEnabled(state != State::Submitting && state != State::Retrieving && state != State::Cancelling);
+    cancel->setEnabled(state != State::Submitting && state != State::Retrieving && state != State::Seeding && state != State::Cancelling);
     cancel->setText(state == State::Running || state == State::Uncertain || state == State::Finished
         ? tr("Cancel Task") : tr("Close"));
     if (state == State::Running || state == State::Submitting || state == State::Loading)
@@ -179,7 +359,9 @@ void RemoteTorrentCreatorDialog::chooseOutput()
 {
     QString initial = m_output->text();
     if (initial.isEmpty())
-        initial = QDir(QStandardPaths::writableLocation(QStandardPaths::DownloadLocation)).filePath(suggestedFilename());
+        initial = QDir(m_lastSaveDirectory.isEmpty()
+            ? QStandardPaths::writableLocation(QStandardPaths::DownloadLocation)
+            : m_lastSaveDirectory).filePath(suggestedFilename());
     const QString path = QFileDialog::getSaveFileName(this, tr("Save torrent locally"), initial, tr("Torrent files (*.torrent)"));
     if (!path.isEmpty())
         m_output->setText(path.endsWith(QLatin1String(".torrent"), Qt::CaseInsensitive) ? path : path + QStringLiteral(".torrent"));
@@ -243,9 +425,32 @@ void RemoteTorrentCreatorDialog::createOrRetry()
     }
     m_source = source;
     m_seed = m_ui->checkStartSeeding->isChecked();
+    m_seedTargetIndex = m_seed ? m_ui->seedServerCombo->currentIndex() : 0;
+    m_seedResult.clear();
+    if (m_seedTargetIndex > 0)
+    {
+        const auto &target = m_seedTargets.at(m_seedTargetIndex);
+        m_seedTargetPath = serverPath(m_ui->seedTargetPath->text());
+        if (!target.session || !target.session->isConnected())
+        {
+            m_status->setText(tr("The selected seeding server is not connected."));
+            return;
+        }
+        if (!absoluteServerPath(m_seedTargetPath) || serverParent(m_seedTargetPath).isEmpty()
+            || m_seedTargetPath.section(QLatin1Char('/'), -1) != serverPath(source).section(QLatin1Char('/'), -1))
+        {
+            m_status->setText(tr("Enter the absolute existing file or folder path on the seeding server, with the same name as the source."));
+            return;
+        }
+        if (QMessageBox::question(this, tr("Seed on another server"),
+                tr("Start seeding on %1 using existing data at:\n%2\n\nOnly torrent metadata will be sent. Confirm that this is the same data and is accessible to that server.")
+                    .arg(target.profile.name, m_seedTargetPath),
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
+            return;
+    }
     const auto boolean = [](bool b) { return b ? QStringLiteral("true") : QStringLiteral("false"); };
     QMap<QString, QString> params{
-        {"sourcePath", source}, {"startSeeding", boolean(m_seed)},
+        {"sourcePath", source}, {"startSeeding", boolean(m_seed && m_seedTargetIndex == 0)},
         {"private", boolean(m_ui->checkPrivate->isChecked())},
         {"pieceSize", m_ui->comboPieceSize->currentData().toString()},
         {"trackers", trackers.join(QLatin1Char('|'))}, {"urlSeeds", seeds.join(QLatin1Char('|'))},
@@ -281,7 +486,8 @@ void RemoteTorrentCreatorDialog::poll()
     if (!m_session || !m_session->isConnected()) { disconnected(); return; }
     if (m_pollPending || m_taskId.isEmpty()) return;
     m_pollPending = true;
-    setState(State::Running, tr("Checking server creation task…"));
+    if (m_state != State::Running)
+        setState(State::Running, tr("Checking server creation task…"));
     const QPointer<RemoteTorrentCreatorDialog> self(this);
     m_session->requestTorrentCreationStatus(m_taskId, [self](const QJsonArray &reply) {
         if (!self) return;
@@ -354,7 +560,11 @@ void RemoteTorrentCreatorDialog::retrieve()
             return;
         }
         self->m_fileSaved = true;
-        self->removeTask(true);
+        self->m_lastSaveDirectory = QFileInfo(path).absolutePath();
+        if (self->m_seed && self->m_seedTargetIndex > 0)
+            self->seedOnTarget(QFileInfo(path).fileName(), bytes, metadata.name);
+        else
+            self->removeTask(true);
     }, [self](const QString &error) {
         if (self && self->m_state == State::Retrieving)
             self->setState(State::Finished, tr("Cannot retrieve torrent: %1. Retry saving.").arg(error));
@@ -371,21 +581,22 @@ void RemoteTorrentCreatorDialog::removeTask(bool saved)
         if (!self || self->m_state != State::Cancelling) return;
         self->m_taskId.clear();
         if (saved)
-            self->setState(State::Saved, self->m_seed
+            self->setState(State::Saved, !self->m_seedResult.isEmpty() ? self->m_seedResult : self->m_seed
                 ? tr("Torrent saved locally. Immediate seeding was requested on the server.")
                 : tr("Torrent saved locally. Seeding was not requested."));
         else self->QDialog::reject();
     }, [self, saved](const QString &error) {
         if (!self || self->m_state != State::Cancelling) return;
         self->setState(saved ? State::Saved : State::Uncertain,
-            tr("%1 Server task %2 could not be removed: %3").arg(saved ? tr("Torrent saved locally.") : tr("Cancellation not confirmed."),
+            tr("%1 Server task %2 could not be removed: %3").arg(saved ? (self->m_seedResult.isEmpty() ? tr("Torrent saved locally.") : self->m_seedResult)
+                : tr("Cancellation not confirmed."),
                 self->m_taskId, error));
     });
 }
 
 void RemoteTorrentCreatorDialog::reject()
 {
-    if (m_state == State::Submitting || m_state == State::Retrieving || m_state == State::Cancelling) return;
+    if (m_state == State::Submitting || m_state == State::Retrieving || m_state == State::Seeding || m_state == State::Cancelling) return;
     if (!m_taskId.isEmpty() && !m_fileSaved && m_session && m_session->isConnected() && m_state != State::Disconnected)
     {
         if (QMessageBox::question(this, tr("Remove torrent creation task"),

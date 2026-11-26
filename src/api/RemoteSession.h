@@ -52,6 +52,7 @@ struct AddTorrentOptions
     bool useServerDefaults = false;
     bool autoTMM = false;
     bool useDownloadPath = false;
+    bool disableDownloadPath = false; // Explicitly use final save path for cross-server seeding.
     bool stopped = false;
     bool sequential = false;
     bool firstLastPiece = false;
@@ -143,7 +144,7 @@ public:
                         const AddTorrentOptions &options);
     void addTorrentFiles(const QList<TorrentUpload> &files,
                          const AddTorrentOptions &options,
-                         std::function<void()> accepted = {});
+                         std::function<void()> accepted = {}, PreferencesError rejected = {});
     // Merge only explicitly supplied announce URLs into the existing remote
     // torrent; no local tracker traffic and no re-add of torrent metadata.
     void addTorrentTrackers(const QString &hash, const QStringList &urls);
