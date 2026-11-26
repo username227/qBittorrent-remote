@@ -46,6 +46,7 @@ public:
     const QSet<QString> &tagDefinitions() const { return m_tags; }
     const QHash<QString, QSet<QString>> &trackerDefinitions() const { return m_trackers; }
     bool hasFullSync() const { return m_hasFullSync; }
+    const QJsonObject &serverState() const noexcept { return m_serverState; }
     QSortFilterProxyModel *proxy() const noexcept { return m_proxy; }
 
     void setRssAvailable(Remote::RemoteSession *session, bool visible);
