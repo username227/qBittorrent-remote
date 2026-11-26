@@ -4979,7 +4979,8 @@ private slots:
             {"disk_cache_ttl", 60}, {"enable_coalesce_read_write", false},
             {"memory_working_set_limit", 256}, {"mark_of_the_web", false},
             {"announce_ip", ""}, {"announce_port", 0}, {"start_paused", false},
-            {"shutdown_timeout", -1}, {"python_executable_path", ""}
+            {"shutdown_timeout", -1}, {"python_executable_path", ""},
+            {"listen_port", 6881}, {"proxy_type", "None"}
         };
         legacy.setServerPreferences(values);
         modern.setServerPreferences(values);
@@ -5038,21 +5039,41 @@ private slots:
                 QVERIFY(!apply->isEnabled());
                 // Wheel events over real enabled editors, including focused
                 // editors, must not change values or stage remote writes.
-                const auto wheel = [](QWidget *editor) {
+                const auto wheel = [](QWidget *editor, int delta = -120) {
                     editor->setFocus();
                     const QPoint local = editor->rect().center();
                     QWheelEvent event(QPointF(local), QPointF(editor->mapToGlobal(local)),
-                        QPoint(), QPoint(0, 120), Qt::NoButton, Qt::NoModifier,
+                        QPoint(), QPoint(0, delta), Qt::NoButton, Qt::NoModifier,
                         Qt::NoScrollPhase, false);
                     QApplication::sendEvent(editor, &event);
                 };
                 const int memoryBefore = mem->value();
                 const int storageBefore = storage->currentIndex();
-                wheel(mem);
+                auto *advanced = dlg->findChild<QTableWidget *>("advancedSettingsTable");
+                QVERIFY(advanced);
+                advanced->scrollToTop();
+                QTRY_VERIFY(advanced->verticalScrollBar()->maximum() > 0);
                 wheel(storage);
+                QVERIFY(advanced->verticalScrollBar()->value() > 0);
+                wheel(mem);
                 QCOMPARE(mem->value(), memoryBefore);
                 QCOMPARE(storage->currentIndex(), storageBefore);
                 QVERIFY(!apply->isEnabled());
+
+                // Designer-created editors outside Advanced use the same
+                // application policy; this is not a special table workaround.
+                nav->setCurrentRow(3);
+                auto *proxy = dlg->findChild<QComboBox *>("comboProxyType");
+                auto *listen = dlg->findChild<QSpinBox *>("spinPort");
+                QVERIFY(proxy && listen && proxy->isEnabled() && listen->isEnabled());
+                const int proxyBefore = proxy->currentIndex();
+                const int listenBefore = listen->value();
+                wheel(proxy);
+                wheel(listen);
+                QCOMPARE(proxy->currentIndex(), proxyBefore);
+                QCOMPARE(listen->value(), listenBefore);
+                QVERIFY(!apply->isEnabled());
+                nav->setCurrentRow(9);
                 iface->setCurrentIndex(iface->findData(QStringLiteral("vpn&1")));
                 QTRY_VERIFY_WITH_TIMEOUT(addr->isEnabled() && addr->findData(QStringLiteral("10.2.0.3")) >= 0, 6000);
                 QCOMPARE(addr->findData(QStringLiteral("10.1.0.2")), -1);

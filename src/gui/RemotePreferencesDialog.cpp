@@ -29,7 +29,6 @@
 #include <QHeaderView>
 #include <QEvent>
 #include <QResizeEvent>
-#include <QWheelEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -125,25 +124,6 @@ private:
     const QString m_name;
     const QString m_url;
     QPointer<QWidget> m_editor;
-};
-
-// Scrolling the Advanced table must never stage changes to an engine
-// preference, even when a numeric editor or combo currently has focus.
-// Ignoring the wheel event lets the containing scroll area handle it.
-class AdvancedSpinBox final : public QSpinBox
-{
-public:
-    using QSpinBox::QSpinBox;
-protected:
-    void wheelEvent(QWheelEvent *event) override { event->ignore(); }
-};
-
-class AdvancedComboBox final : public QComboBox
-{
-public:
-    using QComboBox::QComboBox;
-protected:
-    void wheelEvent(QWheelEvent *event) override { event->ignore(); }
 };
 
 class AdvancedSettingsTable final : public QTableWidget
@@ -2852,7 +2832,7 @@ void RemotePreferencesDialog::buildAdvancedPage()
         return editor;
     };
     const auto spin = [table](int min, int max, const QString &suffix, const QString &special) {
-        auto *editor = new AdvancedSpinBox(table);
+        auto *editor = new QSpinBox(table);
         editor->setRange(min, max);
         editor->setSuffix(suffix);
         editor->setProperty("advancedNativeSpecialValueText", special);
@@ -2861,7 +2841,7 @@ void RemotePreferencesDialog::buildAdvancedPage()
         return editor;
     };
     const auto combo = [table](const QStringList &options) {
-        auto *editor = new AdvancedComboBox(table);
+        auto *editor = new QComboBox(table);
         editor->addItems(options);
         editor->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
         editor->setMinimumContentsLength(10);
