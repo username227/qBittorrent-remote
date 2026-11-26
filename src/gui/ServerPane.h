@@ -85,6 +85,8 @@ public:
 
 signals:
     void sectionChanged();
+    void rssCloseRequested();
+    void logCloseRequested();
     // Native torrent-list context menu delegates existing actions to the
     // owning MainWindow; the active server and its selection remain isolated.
     void torrentContextActionRequested(TorrentContextAction action);
@@ -114,6 +116,7 @@ private:
     RemoteRssWidget *m_rssWidget = nullptr;
     RemoteExecutionLogWidget *m_logWidget = nullptr;
     void updateSectionTabVisibility();
+    void addSectionCloseButton(QWidget *page, const QString &name, bool rss);
     bool m_rssLoadExternalImages = false;
     FilterSidebar *m_sidebar = nullptr;
     QTableView *m_table = nullptr;

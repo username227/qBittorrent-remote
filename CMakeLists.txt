@@ -278,6 +278,7 @@ if(BUILD_TESTING)
         queueControlsFollowSelectedServerCapability
         nativeCookiesEditOnlySelectedServer
         nativeExecutionLogUsesIndependentCursorsAndFilters
+        optionalTabCloseButtonsAndServerOrderStaySynchronized
     )
 
     add_remote_workflow_group(remote_tray_and_status_workflow 60

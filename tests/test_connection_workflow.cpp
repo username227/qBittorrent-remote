@@ -8840,6 +8840,71 @@ private slots:
         QVERIFY(aboutChecked);
     }
 
+    void optionalTabCloseButtonsAndServerOrderStaySynchronized()
+    {
+        DemoQbittorrentServer alpha(true), beta(true);
+        QVERIFY(alpha.start() && beta.start());
+        QTemporaryDir tmp;
+        QVERIFY(tmp.isValid());
+        QSettings settings(tmp.filePath("tab-order.ini"), QSettings::IniFormat);
+        Remote::ProfileStore store(settings);
+        Remote::ServerProfile first{QString(), "First", alpha.url(), "demo", true, true};
+        Remote::ServerProfile second{QString(), "Second", beta.url(), "demo", true, true};
+        QVERIFY(store.save(first) && store.save(second));
+        DemoCredentialVault vault;
+        vault.data.insert(vault.keyFor(first), "demo-password");
+        vault.data.insert(vault.keyFor(second), "demo-password");
+        settings.setValue("Layout/ActiveServer", second.id);
+        settings.setValue("Layout/ShowRSSReader", true);
+        settings.setValue("Layout/ShowExecutionLog", true);
+        {
+            MainWindow window(nullptr, &settings, &vault);
+            window.show();
+            auto *tabs = window.findChild<QTabWidget *>("serverTabs");
+            QVERIFY(tabs && tabs->isMovable());
+            QTRY_COMPARE_WITH_TIMEOUT(tabs->count(), 2, 6000);
+            QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains("Connected to Second"), 6000);
+            QWidget *selected = tabs->currentWidget();
+            tabs->tabBar()->moveTab(1, 0);
+            QCOMPARE(tabs->widget(0), selected);
+            QCOMPARE(tabs->currentWidget(), selected);
+            QCOMPARE(settings.value("Layout/ServerTabOrder").toStringList(), QStringList({second.id, first.id}));
+            auto *rss = window.findChild<QAction *>("actionRemoteRSS");
+            auto *log = window.findChild<QAction *>("actionExecutionLogs");
+            auto *sections = selected->findChild<QTabWidget *>("serverSectionTabs");
+            QVERIFY(rss && log && sections);
+            QTRY_VERIFY_WITH_TIMEOUT(selected->findChild<QToolButton *>("rssTabCloseButton"), 6000);
+            QTRY_VERIFY_WITH_TIMEOUT(selected->findChild<QToolButton *>("logTabCloseButton"), 6000);
+            QVERIFY(!sections->tabBar()->tabButton(0, QTabBar::RightSide));
+            auto *pane = qobject_cast<ServerPane *>(selected);
+            QVERIFY(pane);
+            pane->showRss();
+            selected->findChild<QToolButton *>("rssTabCloseButton")->click();
+            QVERIFY(!rss->isChecked());
+            QVERIFY(pane->isTransfersSelected());
+            QVERIFY(!settings.value("Layout/ShowRSSReader").toBool());
+            pane->showLog();
+            selected->findChild<QToolButton *>("logTabCloseButton")->click();
+            QTRY_VERIFY(!log->isChecked());
+            QVERIFY(pane->isTransfersSelected());
+            QVERIFY(!settings.value("Layout/ShowExecutionLog").toBool());
+            QVERIFY(!sections->tabBar()->isVisible());
+            rss->setChecked(true);
+            log->setChecked(true);
+            QVERIFY(sections->tabBar()->isVisible());
+            QVERIFY(selected->findChild<QToolButton *>("rssTabCloseButton"));
+            QVERIFY(selected->findChild<QToolButton *>("logTabCloseButton"));
+            QVERIFY(window.close());
+        }
+        MainWindow reopened(nullptr, &settings, &vault);
+        reopened.show();
+        auto *tabs = reopened.findChild<QTabWidget *>("serverTabs");
+        QTRY_COMPARE_WITH_TIMEOUT(tabs->count(), 2, 6000);
+        QCOMPARE(tabs->tabText(0), QStringLiteral("Second"));
+        QCOMPARE(tabs->tabText(1), QStringLiteral("First"));
+        QTRY_VERIFY_WITH_TIMEOUT(reopened.statusBar()->currentMessage().contains("Connected to Second"), 6000);
+    }
+
     void nativeExecutionLogUsesIndependentCursorsAndFilters()
     {
         DemoQbittorrentServer alpha(true), beta(true);

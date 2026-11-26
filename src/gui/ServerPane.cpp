@@ -38,6 +38,7 @@
 #include <QVBoxLayout>
 #include <QTabWidget>
 #include <QTabBar>
+#include <QToolButton>
 
 #ifdef Q_OS_LINUX
 #include <QMouseEvent>
@@ -374,7 +375,9 @@ void ServerPane::setRssAvailable(Remote::RemoteSession *session, bool visible)
         m_rssWidget->setLoadExternalImages(m_rssLoadExternalImages);
         if (m_layoutSettings && !m_layoutPrefix.isEmpty())
             m_rssWidget->restoreLayout(*m_layoutSettings, m_layoutPrefix);
-        m_sectionTabs->addTab(m_rssWidget, tr("RSS"));
+        const int index = m_logWidget ? m_sectionTabs->indexOf(m_logWidget) : m_sectionTabs->count();
+        m_sectionTabs->insertTab(index, m_rssWidget, tr("RSS"));
+        addSectionCloseButton(m_rssWidget, tr("RSS"), true);
     }
     if (m_rssWidget)
     {
@@ -383,6 +386,23 @@ void ServerPane::setRssAvailable(Remote::RemoteSession *session, bool visible)
         m_sectionTabs->setTabVisible(m_sectionTabs->indexOf(m_rssWidget), visible);
     }
     updateSectionTabVisibility();
+}
+
+void ServerPane::addSectionCloseButton(QWidget *page, const QString &name, bool rss)
+{
+    auto *button = new QToolButton(m_sectionTabs->tabBar());
+    button->setObjectName(rss ? QStringLiteral("rssTabCloseButton") : QStringLiteral("logTabCloseButton"));
+    button->setText(QStringLiteral("×"));
+    button->setAccessibleName(tr("Close %1 tab").arg(name));
+    button->setToolTip(tr("Close %1 tab").arg(name));
+    button->setAutoRaise(true);
+    button->setFocusPolicy(Qt::NoFocus);
+    button->setStyleSheet(QStringLiteral("QToolButton { color: #e53935; font-weight: bold; }"));
+    m_sectionTabs->tabBar()->setTabButton(m_sectionTabs->indexOf(page), QTabBar::RightSide, button);
+    connect(button, &QToolButton::clicked, this, [this, rss] {
+        if (rss) emit rssCloseRequested();
+        else emit logCloseRequested();
+    });
 }
 
 void ServerPane::updateSectionTabVisibility()
@@ -406,6 +426,7 @@ void ServerPane::setLogAvailable(Remote::RemoteSession *session, bool visible, i
     {
         m_logWidget = new RemoteExecutionLogWidget(session, m_sectionTabs);
         m_sectionTabs->addTab(m_logWidget, tr("Execution Log"));
+        addSectionCloseButton(m_logWidget, tr("Execution Log"), false);
     }
     if (m_logWidget) m_logWidget->setMessageTypes(types);
     updateSectionTabVisibility();

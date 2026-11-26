@@ -507,7 +507,16 @@ MainWindow::MainWindow(QWidget *parent, QSettings *settings,
     QTimer::singleShot(0, this, [this]() {
         m_restoringStartup = true;
         Remote::ProfileStore store(*m_settings);
-        for (const auto &profile : store.profiles())
+        auto profiles = store.profiles();
+        const QStringList order = m_settings->value(QStringLiteral("Layout/ServerTabOrder")).toStringList();
+        const auto rank = [&order](const Remote::ServerProfile &profile) {
+            const qsizetype index = order.indexOf(profile.id);
+            return index < 0 ? order.size() : index;
+        };
+        std::stable_sort(profiles.begin(), profiles.end(), [&rank](const auto &a, const auto &b) {
+            return rank(a) < rank(b);
+        });
+        for (const auto &profile : profiles)
             if (profile.autoConnect)
                 connectToProfile(profile, QString());
         m_restoringStartup = false;
@@ -555,6 +564,28 @@ void MainWindow::setupMainArea()
             [this](int) { updateActiveUi(); });
 
     auto *tabBar = m_views->tabBar();
+    m_views->setMovable(true);
+    connect(tabBar, &QTabBar::tabMoved, this, [this](int, int) {
+        // QTabWidget moves its pages with the tab. Derive session ordering
+        // by identity, not by the old index; callbacks retain their session.
+        QList<std::shared_ptr<SessionContext>> ordered;
+        QStringList ids;
+        for (int i = 0; i < m_views->count(); ++i)
+            for (const auto &connection : m_connections)
+                if (connection->pane == m_views->widget(i))
+                {
+                    ordered.append(connection);
+                    ids.append(connection->profile.id);
+                    break;
+                }
+        if (ordered.size() != m_connections.size()) return;
+        m_connections = ordered;
+        const auto previous = m_settings->value(QStringLiteral("Layout/ServerTabOrder")).toStringList();
+        for (const auto &id : previous)
+            if (!ids.contains(id)) ids.append(id);
+        m_settings->setValue(QStringLiteral("Layout/ServerTabOrder"), ids);
+        updateActiveUi();
+    });
     tabBar->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(tabBar, &QTabBar::customContextMenuRequested, this,
         [this, tabBar](const QPoint &position) {
@@ -2533,6 +2564,13 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
     connect(connection->pane, &ServerPane::sectionChanged, this, [this, connection]() {
         if (activeConnection() == connection) updateActiveUi();
     });
+    connect(connection->pane, &ServerPane::rssCloseRequested, this, [this] {
+        m_rssAction->setChecked(false);
+    });
+    // Defer removal of the log page/button until its clicked signal returns.
+    connect(connection->pane, &ServerPane::logCloseRequested, this, [this] {
+        m_ui->actionExecutionLogs->setChecked(false);
+    }, Qt::QueuedConnection);
 
     // The user may choose separate double-click actions for downloads and
     // completed torrents. All actions use this exact remote session.
