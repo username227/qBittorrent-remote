@@ -187,7 +187,12 @@ QVariant TorrentModel::data(const QModelIndex &index, int role) const
         // Color::Primer in color.h), not the desktop's ordinary Text color.
         // In particular, stalled seeding must stay BLUE, not become black
         // on light themes; stalled downloads remain GREEN.
-        if (state == QLatin1String("error") || state == QLatin1String("missingFiles"))
+        // Remote-client divergence: surface the same server-reported errors
+        // as the Tracker error and Other error sidebar filters. Do not infer
+        // errors from missing tracker data, warnings, or an idle torrent.
+        if (state == QLatin1String("error") || state == QLatin1String("missingFiles")
+            || record.value(QStringLiteral("has_tracker_error")).toBool()
+            || record.value(QStringLiteral("has_other_announce_error")).toBool())
             return QColor(dark ? QStringLiteral("#f85149") : QStringLiteral("#cf222e"));
         if (state == QLatin1String("downloading") || state == QLatin1String("forcedDL")
             || state == QLatin1String("metaDL") || state == QLatin1String("forcedMetaDL")
