@@ -10,6 +10,10 @@
 #include <QAction>
 #include <QDateTime>
 #include <QDesktopServices>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QPlainTextEdit>
+#include <QMessageBox>
 #include <QFileInfo>
 #include <QIcon>
 #include <QItemSelectionModel>
@@ -765,6 +769,7 @@ TorrentDetailsWidget::TorrentDetailsWidget(QWidget *parent)
         });
     }
 
+    connect(m_ui->editCommentButton, &QPushButton::clicked, this, &TorrentDetailsWidget::editComment);
     m_speedGraph = new SpeedGraphWidget(m_ui->pageSpeed);
     m_ui->speedLayout->addWidget(m_speedGraph);
 
@@ -808,6 +813,7 @@ void TorrentDetailsWidget::showTab(int tab)
         m_trackerTiersKnown = false;
     m_currentTab = tab;
     m_ui->stackedProperties->setCurrentIndex(tab);
+    updateCommentEditor();
     updateTrackerTierButtons();
     m_error->hide();
 }
@@ -843,6 +849,8 @@ void TorrentDetailsWidget::resetPages()
         "labelCommentVal"
     })
         setValue(name, QStringLiteral("—"));
+    m_commentKnown = false;
+    updateCommentEditor();
     m_progressBar->setValue(0);
     m_progressBar->clearPieces();
     m_availabilityBar->clearPieces();
@@ -946,11 +954,86 @@ void TorrentDetailsWidget::displayGeneral(const QJsonObject &p)
     setValue("labelSavePathVal",
              p.value(QStringLiteral("save_path")).toString(
                  m_summary.value(QStringLiteral("save_path")).toString(QStringLiteral("—"))));
-    setValue("labelCommentVal", p.value(QStringLiteral("comment")).toString(QStringLiteral("—")));
+    const auto comment = p.value(QStringLiteral("comment"));
+    m_commentKnown = comment.isString();
+    setValue("labelCommentVal", comment.toString(QStringLiteral("—")));
+    updateCommentEditor();
     const auto copies = p.value(QStringLiteral("availability"));
     setValue("labelAverageAvailabilityVal", copies.isDouble() && copies.toDouble() >= 0
         && std::isfinite(copies.toDouble()) ? QLocale().toString(copies.toDouble(), 'f', 3)
         : QStringLiteral("—"));
+}
+
+void TorrentDetailsWidget::setCommentEditingSupported(bool supported)
+{
+    m_commentEditingSupported = supported;
+    updateCommentEditor();
+}
+
+void TorrentDetailsWidget::updateCommentEditor()
+{
+    m_ui->editCommentButton->setEnabled(m_commentEditingSupported
+        && m_commentKnown && !m_hash.isEmpty() && m_pendingCommentHash.isEmpty()
+        && m_currentTab == 0);
+    m_ui->editCommentButton->setToolTip(!m_commentEditingSupported
+        ? tr("Comment editing requires qBittorrent 5.2 or newer.")
+        : tr("Edit the selected torrent's comment on this server."));
+}
+
+void TorrentDetailsWidget::editComment()
+{
+    if (!m_ui->editCommentButton->isEnabled()) return;
+    const QString hash = m_hash;
+    const QString original = m_lastGeneral.value(QStringLiteral("comment")).toString();
+    auto *dialog = new QDialog(this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setObjectName(QStringLiteral("remoteEditCommentDialog"));
+    dialog->setWindowTitle(tr("Edit torrent comment"));
+    auto *layout = new QVBoxLayout(dialog);
+    auto *name = new QLabel(m_summary.value(QStringLiteral("name")).toString(), dialog);
+    name->setTextFormat(Qt::PlainText);
+    name->setWordWrap(true);
+    layout->addWidget(name);
+    auto *editor = new QPlainTextEdit(dialog);
+    editor->setObjectName(QStringLiteral("remoteCommentEditor"));
+    editor->setPlainText(original);
+    layout->addWidget(editor);
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, dialog);
+    layout->addWidget(buttons);
+    connect(buttons, &QDialogButtonBox::accepted, dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
+    connect(dialog, &QDialog::accepted, this, [this, hash, original, editor]() {
+        const QString edited = editor->toPlainText().trimmed(); // upstream trims too
+        if (edited == original) return;
+        // Polling may change metadata while a modal editor is open. Never
+        // redirect an edit or overwrite a newly observed comment silently.
+        if (hash != m_hash || !m_ui->editCommentButton->isEnabled()
+            || m_lastGeneral.value(QStringLiteral("comment")).toString() != original)
+        {
+            QMessageBox::warning(this, tr("Edit torrent comment"),
+                tr("The torrent selection or comment changed. Reopen the editor and try again."));
+            return;
+        }
+        m_pendingCommentHash = hash;
+        updateCommentEditor();
+        emit commentEditRequested(hash, edited);
+    });
+    dialog->resize(500, 260);
+    editor->setFocus();
+    dialog->open();
+}
+
+void TorrentDetailsWidget::finishCommentEdit(const QString &hash)
+{
+    if (m_pendingCommentHash != hash) return;
+    m_pendingCommentHash.clear();
+    if (m_hash == hash)
+    {
+        // Do not enable editing against a stale pre-write snapshot.
+        m_commentKnown = false;
+        m_lastGeneral.remove(QStringLiteral("comment"));
+    }
+    updateCommentEditor();
 }
 
 void TorrentDetailsWidget::setTrackerTierEditingSupported(bool supported)
@@ -1532,6 +1615,11 @@ void TorrentDetailsWidget::displayError(const QString &hash, int tab, const QStr
         return;
     }
     if (tab != m_currentTab) return;
+    if (tab == 0)
+    {
+        m_commentKnown = false;
+        updateCommentEditor();
+    }
     if (tab == 1)
     {
         m_trackerTiersKnown = false;

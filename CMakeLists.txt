@@ -323,6 +323,7 @@ if(BUILD_TESTING)
     )
 
     add_remote_workflow_group(remote_content_workflow 75
+        torrentCommentsUseSelectedServerAndRespectCapability
         nativeTorrentDetailsUseSelectedRemoteServerAndFilePriorityApis
         contentRefreshPreservesUserFolderExpansion
         contentDragPreferenceIsEnabledAndControlsNativeDragMode

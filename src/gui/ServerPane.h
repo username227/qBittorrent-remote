@@ -80,6 +80,8 @@ public:
     void refreshSelectedDetails();
     void setTrackerTierEditingSupported(bool supported);
     void finishTrackerTierEdit(const QString &hash);
+    void setCommentEditingSupported(bool supported);
+    void finishCommentEdit(const QString &hash);
     void refreshFontMetrics();
     void saveLayout(QSettings &settings, const QString &profileId) const;
     void restoreLayout(QSettings &settings, const QString &profileId);
@@ -103,6 +105,7 @@ signals:
     void torrentDetailsRequested(const QString &hash, int tab, bool availability);
     void filePriorityRequested(const QString &hash, const QList<int> &ids, int priority);
     void trackerTiersRequested(const QString &hash, const QJsonObject &tiers);
+    void commentEditRequested(const QString &hash, const QString &comment);
 
 private:
     void showTorrentContextMenu(const QPoint &position);

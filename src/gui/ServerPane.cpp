@@ -436,6 +436,8 @@ ServerPane::ServerPane(QWidget *parent) : QWidget(parent)
             this, &ServerPane::filePriorityRequested);
     connect(m_details, &TorrentDetailsWidget::trackerTiersRequested,
             this, &ServerPane::trackerTiersRequested);
+    connect(m_details, &TorrentDetailsWidget::commentEditRequested,
+            this, &ServerPane::commentEditRequested);
     m_detailTabs->setCurrentIndex(0);
 
     connect(m_table->selectionModel(), &QItemSelectionModel::selectionChanged,
@@ -1241,6 +1243,17 @@ void ServerPane::requestSelectedDetails()
         emit torrentDetailsRequested(m_selectedHash, m_details->currentTab(), m_details->wantsPieceAvailability());
     else
         emit torrentDetailsRequested({}, -1, false);
+}
+
+void ServerPane::setCommentEditingSupported(bool supported)
+{
+    m_details->setCommentEditingSupported(supported);
+}
+
+void ServerPane::finishCommentEdit(const QString &hash)
+{
+    m_details->finishCommentEdit(hash);
+    requestSelectedDetails();
 }
 
 void ServerPane::setTrackerTierEditingSupported(bool supported)
