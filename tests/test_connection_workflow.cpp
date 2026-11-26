@@ -2795,13 +2795,40 @@ private slots:
             auto *savePath = dialog->findChild<RemoteFileSystemPathComboEdit *>(QStringLiteral("comboSavePath"));
             auto *buttons = dialog->findChild<QDialogButtonBox *>(QStringLiteral("buttonBox"));
             QVERIFY(categoryName && savePath && buttons);
+            auto *browse = savePath->findChild<QToolButton *>("browseFolderButton");
+            QVERIFY(browse && browse->menu());
+            QCOMPARE(browse->popupMode(), QToolButton::MenuButtonPopup);
+            QVERIFY(browse->menu()->findChild<QAction *>("browseRemoteFilesystem")->isEnabled());
             if (edit)
             {
                 QCOMPARE(categoryName->text(), name);
                 QCOMPARE(savePath->currentText(), QStringLiteral("/share/Classical"));
                 QVERIFY(!categoryName->isEnabled());
             }
-            else categoryName->setText(name);
+            else
+            {
+                categoryName->setText(name);
+                savePath->setEditText("/browse");
+                QTimer drive;
+                connect(&drive, &QTimer::timeout, &drive, [&] {
+                    auto *picker = qobject_cast<RemoteFileDialog *>(QApplication::activeModalWidget());
+                    if (!picker) return;
+                    auto *box = picker->findChild<QDialogButtonBox *>();
+                    if (box && box->button(QDialogButtonBox::Ok)->isEnabled())
+                        box->button(QDialogButtonBox::Ok)->click();
+                });
+                QTimer timeout;
+                timeout.setSingleShot(true);
+                connect(&timeout, &QTimer::timeout, &timeout, [] {
+                    if (auto *picker = qobject_cast<RemoteFileDialog *>(QApplication::activeModalWidget()))
+                        picker->reject();
+                    if (auto *popup = QApplication::activePopupWidget()) popup->close();
+                });
+                drive.start(10);
+                timeout.start(4000);
+                browse->click();
+                QCOMPARE(savePath->property("explicitRemotePath").toString(), QStringLiteral("/browse"));
+            }
             savePath->setEditText(path);
             buttons->button(QDialogButtonBox::Ok)->click();
         };
@@ -3340,7 +3367,7 @@ private slots:
             auto *categoryPath = dialog->findChild<QComboBox *>(QStringLiteral("comboCategoryChanged"));
             auto *manualPaths = dialog->findChild<QCheckBox *>(QStringLiteral("checkUseCategoryPaths"));
             auto *buttons = dialog->findChild<QDialogButtonBox *>(QStringLiteral("buttonBox"));
-            auto *browse = dialog->findChild<QAction *>(QStringLiteral("textSavePathBrowse"));
+            auto *browse = dialog->findChild<QToolButton *>(QStringLiteral("textSavePathBrowse"));
             QVERIFY(nav && selector && save && incomplete && useIncomplete && preallocate
                     && extension && unwanted && mode && category && defaultPath && categoryPath
                     && manualPaths && buttons && browse);
@@ -3363,17 +3390,49 @@ private slots:
             QCOMPARE(categoryPath->currentText(), QStringLiteral("Relocate affected torrents"));
             QVERIFY(!manualPaths->isChecked() && !apply->isEnabled());
 
+            // Browse the remote settings target, independently of the
+            // mapping page's other-server selection.
+            auto *remoteBrowse = browse->menu()->findChild<QAction *>("browseRemoteFilesystem");
+            QVERIFY(remoteBrowse);
+            save->setText("/browse");
+            {
+                QTimer pick;
+                connect(&pick, &QTimer::timeout, &pick, [&] {
+                    auto *picker = qobject_cast<RemoteFileDialog *>(QApplication::activeModalWidget());
+                    if (!picker) return;
+                    auto *box = picker->findChild<QDialogButtonBox *>();
+                    auto *tree = picker->findChild<QTreeWidget *>("remoteBrowserEntries");
+                    if (box && tree && tree->topLevelItemCount() && box->button(QDialogButtonBox::Ok)->isEnabled())
+                    {
+                        tree->setCurrentItem(tree->topLevelItem(0));
+                        box->button(QDialogButtonBox::Ok)->click();
+                    }
+                });
+                QTimer deadline;
+                deadline.setSingleShot(true);
+                connect(&deadline, &QTimer::timeout, &deadline, [] {
+                    if (auto *picker = qobject_cast<RemoteFileDialog *>(QApplication::activeModalWidget())) picker->reject();
+                    if (auto *popup = QApplication::activePopupWidget()) popup->close();
+                });
+                pick.start(10);
+                deadline.start(4000);
+                remoteBrowse->trigger();
+                QCOMPARE(save->text(), QStringLiteral("/browse/Space & 100%"));
+            }
             save->setText(QStringLiteral("relative/path"));
             apply->click();
             QCOMPARE(invalidCount, 1);
             QCOMPARE(first.serverPreferences(), initial);
 
+            QVERIFY(browse->menu() && browse->popupMode() == QToolButton::MenuButtonPopup);
+            auto *mounted = browse->menu()->findChild<QAction *>("browseMountedFilesystem");
+            QVERIFY(mounted && mounted->isEnabled());
             nextFolder = temp.filePath(QStringLiteral("unmapped"));
-            browse->trigger();
+            mounted->trigger();
             QCOMPARE(unmappedCount, 1);
             QCOMPARE(save->text(), QStringLiteral("relative/path"));
             nextFolder = mapped;
-            browse->trigger();
+            browse->click();
             QCOMPARE(pickers, 2);
             QCOMPARE(save->text(), QStringLiteral("/share/First/finished"));
 
@@ -9254,6 +9313,58 @@ private slots:
                 QCOMPARE(format->isVisible(), newer);
                 QCOMPARE(dotfiles->isVisible(), newer);
                 QCOMPARE(alignment->isVisible(), !newer);
+                auto *folderBrowse = dlg->findChild<QToolButton *>("addFolderButton");
+                auto *fileBrowse = dlg->findChild<QToolButton *>("addFileButton");
+                QVERIFY(folderBrowse && fileBrowse && folderBrowse->menu() && fileBrowse->menu());
+                QCOMPARE(folderBrowse->popupMode(), QToolButton::MenuButtonPopup);
+                QCOMPARE(fileBrowse->popupMode(), QToolButton::MenuButtonPopup);
+                input->setText("/browse/Space & 100%/sample file.txt");
+                {
+                    QTimer pick;
+                    connect(&pick, &QTimer::timeout, &pick, [] {
+                        auto *picker = qobject_cast<RemoteFileDialog *>(QApplication::activeModalWidget());
+                        if (!picker) return;
+                        auto *tree = picker->findChild<QTreeWidget *>("remoteBrowserEntries");
+                        auto *box = picker->findChild<QDialogButtonBox *>();
+                        if (!tree || !box) return;
+                        for (int i = 0; i < tree->topLevelItemCount(); ++i)
+                            if (tree->topLevelItem(i)->text(0) == QStringLiteral("sample file.txt"))
+                                tree->setCurrentItem(tree->topLevelItem(i));
+                        if (box->button(QDialogButtonBox::Ok)->isEnabled())
+                            box->button(QDialogButtonBox::Ok)->click();
+                    });
+                    QTimer deadline;
+                    deadline.setSingleShot(true);
+                    connect(&deadline, &QTimer::timeout, &deadline, [] {
+                        if (auto *picker = qobject_cast<RemoteFileDialog *>(QApplication::activeModalWidget())) picker->reject();
+                        if (auto *popup = QApplication::activePopupWidget()) popup->close();
+                    });
+                    pick.start(10);
+                    deadline.start(4000);
+                    fileBrowse->click();
+                    QCOMPARE(input->property("explicitRemotePath").toString(), QStringLiteral("/browse/Space & 100%/sample file.txt"));
+                }
+                input->setText("/browse");
+                {
+                QTimer pick;
+                connect(&pick, &QTimer::timeout, &pick, [&] {
+                    auto *picker = qobject_cast<RemoteFileDialog *>(QApplication::activeModalWidget());
+                    if (!picker) return;
+                    auto *box = picker->findChild<QDialogButtonBox *>();
+                    if (box && box->button(QDialogButtonBox::Ok)->isEnabled())
+                        box->button(QDialogButtonBox::Ok)->click();
+                });
+                QTimer deadline;
+                deadline.setSingleShot(true);
+                connect(&deadline, &QTimer::timeout, &deadline, [] {
+                    if (auto *picker = qobject_cast<RemoteFileDialog *>(QApplication::activeModalWidget())) picker->reject();
+                    if (auto *popup = QApplication::activePopupWidget()) popup->close();
+                });
+                pick.start(10);
+                deadline.start(4000);
+                    folderBrowse->click();
+                    QCOMPARE(input->property("explicitRemotePath").toString(), QStringLiteral("/browse"));
+                }
                 input->setText("/share/Media & Music/Album");
                 output->setText(destination);
                 piece->setCurrentIndex(piece->findData(262144));
@@ -9410,6 +9521,39 @@ private slots:
             seed->setChecked(true);
             server->setCurrentIndex(server->findText("Modern"));
             QCOMPARE(path->text(), QStringLiteral("/share/modern/test"));
+            auto *targetBrowse = dlg->findChild<QToolButton *>("seedBrowseFolder");
+            auto *targetFile = dlg->findChild<QToolButton *>("seedBrowseFile");
+            QVERIFY(targetBrowse && targetFile && targetBrowse->menu() && targetFile->menu());
+            QCOMPARE(targetBrowse->popupMode(), QToolButton::MenuButtonPopup);
+            path->setText("/browse");
+            {
+                bool correctTarget = false;
+                QTimer pick;
+                connect(&pick, &QTimer::timeout, &pick, [&] {
+                    auto *picker = qobject_cast<RemoteFileDialog *>(QApplication::activeModalWidget());
+                    if (!picker) return;
+                    correctTarget = picker->windowTitle().contains("Modern");
+                    auto *box = picker->findChild<QDialogButtonBox *>();
+                    auto *tree = picker->findChild<QTreeWidget *>("remoteBrowserEntries");
+                    if (box && tree && tree->topLevelItemCount() && box->button(QDialogButtonBox::Ok)->isEnabled())
+                    {
+                        tree->setCurrentItem(tree->topLevelItem(0));
+                        box->button(QDialogButtonBox::Ok)->click();
+                    }
+                });
+                QTimer deadline;
+                deadline.setSingleShot(true);
+                connect(&deadline, &QTimer::timeout, &deadline, [] {
+                    if (auto *picker = qobject_cast<RemoteFileDialog *>(QApplication::activeModalWidget())) picker->reject();
+                    if (auto *popup = QApplication::activePopupWidget()) popup->close();
+                });
+                pick.start(10);
+                deadline.start(4000);
+                targetBrowse->click();
+                QVERIFY(correctTarget);
+                QCOMPARE(path->text(), QStringLiteral("/browse/Space & 100%"));
+            }
+            path->setText("/share/modern/test");
             QTimer driver;
             connect(&driver, &QTimer::timeout, dlg, [] {
                 if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget()))
@@ -9571,6 +9715,76 @@ private slots:
                     checkBrowse(button, mounted, false);
                 }
             }
+
+            // Mapping creation must browse the explicitly selected profile,
+            // never inherit the Add Torrent local/remote preference.
+            QVERIFY(Remote::ProfileStore(settings).save(profile));
+            Remote::ServerProfile offline{"offline", "Offline", "http://127.0.0.1:65534", "demo", false, false};
+            QVERIFY(Remote::ProfileStore(settings).save(offline));
+            RemotePreferencesDialog prefs(settings, id, nullptr, &session, nullptr, {},
+                [&](const QString &requested) -> Remote::RemoteSession * {
+                    return requested == id ? &session : nullptr;
+                });
+            prefs.show();
+            auto *profiles = prefs.findChild<QComboBox *>("remotePathsServer");
+            auto *addMapping = prefs.findChild<QPushButton *>("addPathMapping");
+            auto *sections = prefs.findChild<QListWidget *>("preferencesSections");
+            QVERIFY(profiles && addMapping && sections);
+            sections->setCurrentRow(0);
+            profiles->setCurrentIndex(profiles->findData(id));
+            bool verified = false;
+            QTimer::singleShot(0, &prefs, [&] {
+                auto *editor = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+                if (!editor || editor->objectName() != "mappingEditor") return;
+                const auto cleanup = qScopeGuard([editor] { if (editor->isVisible()) editor->reject(); });
+                auto *local = editor->findChild<QLineEdit *>("mappingLocalPath");
+                auto *remote = editor->findChild<QLineEdit *>("mappingRemotePath");
+                auto *localButton = editor->findChild<QPushButton *>("mappingBrowseLocal");
+                auto *remoteButton = editor->findChild<QPushButton *>("mappingBrowseRemote");
+                QVERIFY(local && remote && localButton && remoteButton);
+                QVERIFY(localButton->isEnabled() && remoteButton->isEnabled() && !remoteButton->menu());
+                local->setText(temp.path());
+                remote->setText("/browse");
+                QTimer drive;
+                connect(&drive, &QTimer::timeout, &drive, [] {
+                    auto *picker = qobject_cast<RemoteFileDialog *>(QApplication::activeModalWidget());
+                    if (!picker) return;
+                    auto *box = picker->findChild<QDialogButtonBox *>();
+                    if (box && box->button(QDialogButtonBox::Ok)->isEnabled())
+                    {
+                        auto *tree = picker->findChild<QTreeWidget *>("remoteBrowserEntries");
+                        if (tree && tree->topLevelItemCount()) tree->setCurrentItem(tree->topLevelItem(0));
+                        box->button(QDialogButtonBox::Ok)->click();
+                    }
+                });
+                QTimer timeout;
+                timeout.setSingleShot(true);
+                connect(&timeout, &QTimer::timeout, &timeout, [] {
+                    if (auto *picker = qobject_cast<QDialog *>(QApplication::activeModalWidget())) picker->reject();
+                });
+                drive.start(10);
+                timeout.start(4000);
+                remoteButton->click();
+                QCOMPARE(remote->text(), QStringLiteral("/browse/Space & 100%"));
+                QCOMPARE(local->text(), temp.path());
+                verified = true;
+            });
+            addMapping->click();
+            QVERIFY(verified);
+            profiles->setCurrentIndex(profiles->findData(offline.id));
+            bool offlineVerified = false;
+            QTimer::singleShot(0, &prefs, [&] {
+                auto *editor = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+                if (!editor || editor->objectName() != "mappingEditor") return;
+                const auto cleanup = qScopeGuard([editor] { editor->reject(); });
+                auto *remote = editor->findChild<QLineEdit *>("mappingRemotePath");
+                auto *remoteButton = editor->findChild<QPushButton *>("mappingBrowseRemote");
+                QVERIFY(remote && remoteButton && !remoteButton->isEnabled() && remote->isEnabled());
+                offlineVerified = true;
+            });
+            addMapping->click();
+            QVERIFY(offlineVerified);
+            prefs.reject();
             QCOMPARE(server->commandsFor("/api/v2/torrents/add"), 0);
         }
     }
@@ -10644,8 +10858,40 @@ private slots:
                         dialog->reject();
                         return;
                     }
-                    // User enters a mapped local folder; the application
-                    // must translate it to the selected NAS's remote path.
+                    auto *edit = dialog->findChild<RemoteFileSystemPathComboEdit *>("setTorrentLocationSelector");
+                    auto *browse = edit ? edit->findChild<QToolButton *>("browseFolderButton") : nullptr;
+                    if (!browse || !browse->menu() || browse->popupMode() != QToolButton::MenuButtonPopup)
+                    {
+                        error = QStringLiteral("Set Location does not provide the shared split browse button");
+                        dialog->reject();
+                        return;
+                    }
+                    selector->setEditText("/browse");
+                    QTimer drive;
+                    QObject::connect(&drive, &QTimer::timeout, &drive, [] {
+                        auto *picker = qobject_cast<RemoteFileDialog *>(QApplication::activeModalWidget());
+                        if (!picker) return;
+                        auto *box = picker->findChild<QDialogButtonBox *>();
+                        if (box && box->button(QDialogButtonBox::Ok)->isEnabled())
+                            box->button(QDialogButtonBox::Ok)->click();
+                    });
+                    QTimer timeout;
+                    timeout.setSingleShot(true);
+                    QObject::connect(&timeout, &QTimer::timeout, &timeout, [] {
+                        if (auto *picker = qobject_cast<RemoteFileDialog *>(QApplication::activeModalWidget()))
+                            picker->reject();
+                        if (auto *popup = QApplication::activePopupWidget()) popup->close();
+                    });
+                    drive.start(10);
+                    timeout.start(4000);
+                    browse->click();
+                    if (edit->property("explicitRemotePath").toString() != QStringLiteral("/browse"))
+                    {
+                        error = QStringLiteral("Remote browsing did not select the server directory");
+                        dialog->reject();
+                        return;
+                    }
+                    // Manual local path translation must still work after browsing.
                     selector->setEditText(property("localPath").toString());
                     buttons->button(QDialogButtonBox::Ok)->click();
                 });

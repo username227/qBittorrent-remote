@@ -1511,7 +1511,13 @@ void MainWindow::openPreferences(const std::shared_ptr<SessionContext> &server)
     RemotePreferencesDialog dialog(*m_settings, profileId, this,
                                   server && server->connected ? server->session : nullptr,
                                   server && server->connected ? server->pane->model() : nullptr,
-                                  server && server->connected ? server->version : QString());
+                                  server && server->connected ? server->version : QString(),
+                                  [this](const QString &id) -> Remote::RemoteSession * {
+        for (const auto &candidate : m_connections)
+            if (candidate->profile.id == id && candidate->connected)
+                return candidate->session;
+        return nullptr;
+    });
     connect(&dialog, &RemotePreferencesDialog::localBehaviorApplied,
             this, &MainWindow::applyLocalBehaviorPreferences);
     QString newUrl, newUsername, newPassword, fingerprint;
@@ -1586,9 +1592,7 @@ void MainWindow::setSelectedTorrentLocation()
     const Remote::PathMappingStore store(*m_settings);
     const auto mappings = store.mappings(connection->profile.id);
 
-    // Unlike the original local qBittorrent, we cannot browse the NAS's
-    // filesystem directly. Accept an absolute server path, or browse a
-    // configured local mount and translate it to a remote POSIX path.
+    // Browse the owning server directly or translate a configured local mount.
     QDialog dialog(this);
     dialog.setObjectName(QStringLiteral("setTorrentLocationDialog"));
     dialog.setWindowTitle(tr("Set Location"));
@@ -1602,11 +1606,14 @@ void MainWindow::setSelectedTorrentLocation()
     destination->comboBox()->setObjectName(QStringLiteral("remoteSetLocationPath"));
     destination->setInsertPolicy(QComboBox::NoInsert);
     destination->setToolTip(tr("Enter an absolute path on the remote server "
-        "(for example /share/Downloads), or browse a mapped local NAS mount."));
+        "(for example /share/Downloads), or use remote or mapped local browsing."));
     for (const auto &mapping : mappings)
         destination->addItem(mapping.remoteRoot);
     destination->setCurrentIndex(-1);
     destination->setEditText(previousPath);
+    destination->setProperty("explicitRemotePath", previousPath);
+    destination->configureDirectoryBrowse(*m_settings, connection->profile.id,
+        connection->profile.name, connection->session, mappings, true);
     layout->addWidget(destination);
     auto *warning = new QLabel(tr(
         "qBittorrent will move the selected torrents' data on the remote "
@@ -1619,35 +1626,12 @@ void MainWindow::setSelectedTorrentLocation()
     buttons->setObjectName(QStringLiteral("setTorrentLocationButtons"));
     layout->addWidget(buttons);
     connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-    connect(destination, &RemoteFileSystemPathComboEdit::browseRequested,
-            &dialog, [&, this]() {
-        if (mappings.isEmpty())
-        {
-            QMessageBox::information(&dialog, tr("No path mappings"),
-                tr("Configure a local NAS mount in Preferences → Servers, "
-                   "or enter an absolute remote server path."));
-            return;
-        }
-        const QString local = QFileDialog::getExistingDirectory(
-            &dialog, tr("Choose mapped local NAS directory"),
-            mappings.first().localRoot);
-        if (local.isEmpty())
-            return;
-        const QString remote = Remote::PathMappingStore::toRemote(local, mappings);
-        if (remote.isEmpty())
-        {
-            QMessageBox::warning(&dialog, tr("Unmapped directory"),
-                tr("The chosen directory is not covered by this server's path mappings."));
-            return;
-        }
-        destination->setEditText(remote);
-    });
-
     QString chosenLocation;
     connect(buttons, &QDialogButtonBox::accepted, &dialog, [&, this]() {
         const QString input = destination->currentText().trimmed();
         const QString mapped = Remote::PathMappingStore::toRemote(input, mappings);
-        const QString remote = mapped.isEmpty() ? input : mapped;
+        const QString remote = destination->property("explicitRemotePath").toString() == input
+            || mapped.isEmpty() ? input : mapped;
         if (remote.isEmpty() || remote == QLatin1String("/")
             || !remote.startsWith(QLatin1Char('/'))
             || remote.contains(QLatin1Char('\\'))
@@ -3067,6 +3051,8 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
         Remote::PathMappingStore store(*m_settings);
         RemoteCategoryDialog dialog(name, edit, definition, capabilities, existing,
                                     store.mappings(connection->profile.id), this);
+        dialog.configurePathBrowsing(*m_settings, connection->profile.id,
+            connection->profile.name, session);
         trackDialogGeometry(dialog, QStringLiteral("TorrentCategory"));
         if (dialog.exec() != QDialog::Accepted || !groupValid()) return;
         const auto fields = dialog.fields();

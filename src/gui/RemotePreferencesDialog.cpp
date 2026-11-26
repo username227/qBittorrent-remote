@@ -9,6 +9,8 @@
 #include "api/ServerProfile.h"
 #include "api/ServerAddress.h"
 #include "api/RemoteSession.h"
+#include "gui/RemoteFileDialog.h"
+#include "gui/RemoteFileSystemPathComboEdit.h"
 #include "ui_optionsdialog.h"
 
 #include <QAbstractButton>
@@ -223,7 +225,8 @@ QIcon icon(const char *name)
                  + QString::fromLatin1(name) + QStringLiteral(".svg"));
 }
 
-bool mappingEditor(QWidget *parent, Remote::PathMapping &mapping)
+bool mappingEditor(QWidget *parent, Remote::PathMapping &mapping, QSettings &settings,
+    const QString &profileId, const QString &serverName, Remote::RemoteSession *session)
 {
     QDialog dialog(parent);
     dialog.setObjectName(QStringLiteral("mappingEditor"));
@@ -254,13 +257,51 @@ bool mappingEditor(QWidget *parent, Remote::PathMapping &mapping)
     remote->setObjectName(QStringLiteral("mappingRemotePath"));
     remote->setText(mapping.remoteRoot);
     remote->setPlaceholderText(QStringLiteral("/share/CACHEDEV1_DATA/..."));
-    form->addRow(QObject::tr("Server directory:"), remote);
+    auto *remoteRow = new QWidget(&dialog);
+    auto *remoteLayout = new QHBoxLayout(remoteRow);
+    remoteLayout->setContentsMargins(0, 0, 0, 0);
+    remoteLayout->addWidget(remote, 1);
+    auto *remoteBrowse = new QPushButton(QObject::tr("Browse…"), remoteRow);
+    remoteBrowse->setObjectName(QStringLiteral("mappingBrowseRemote"));
+    remoteLayout->addWidget(remoteBrowse);
+    const QPointer<Remote::RemoteSession> connection(session);
+    remoteBrowse->setEnabled(connection && connection->isConnected());
+    remoteBrowse->setToolTip(remoteBrowse->isEnabled()
+        ? QObject::tr("Browse the selected server's filesystem")
+        : QObject::tr("Connect to this saved server to browse its filesystem. Manual entry remains available."));
+    if (connection)
+    {
+        QObject::connect(connection.data(), &QObject::destroyed, remoteBrowse, [remoteBrowse] {
+            remoteBrowse->setEnabled(false);
+        });
+        QObject::connect(connection.data(), &Remote::RemoteSession::connected, remoteBrowse, [remoteBrowse] {
+            remoteBrowse->setEnabled(true);
+            remoteBrowse->setToolTip(QObject::tr("Browse the selected server's filesystem"));
+        });
+        QObject::connect(connection.data(), &Remote::RemoteSession::disconnected, remoteBrowse, [remoteBrowse] {
+            remoteBrowse->setEnabled(false);
+            remoteBrowse->setToolTip(QObject::tr("Connect to this saved server to browse its filesystem. Manual entry remains available."));
+        });
+    }
+    QObject::connect(remoteBrowse, &QPushButton::clicked, &dialog,
+        [&dialog, &settings, remote, connection, profileId, serverName, remoteBrowse] {
+            if (!connection || !connection->isConnected())
+            {
+                remoteBrowse->setEnabled(false);
+                return;
+            }
+            RemoteFileDialog picker(connection.data(), serverName, profileId, settings,
+                remote->text(), RemoteFileDialog::Mode::Directory, &dialog);
+            if (picker.exec() == QDialog::Accepted)
+                remote->setText(picker.selectedPath());
+        });
+    form->addRow(QObject::tr("Server directory:"), remoteRow);
     layout->addLayout(form);
 
     auto *note = new QLabel(QObject::tr(
         "The local directory is a mount on THIS computer. The server directory "
         "must be an absolute path visible to qBittorrent on the selected server. "
-        "The Web API does not provide remote filesystem browsing."), &dialog);
+        "Browse each filesystem independently or enter the paths manually."), &dialog);
     note->setWordWrap(true);
     layout->addWidget(note);
 
@@ -301,13 +342,15 @@ RemotePreferencesDialog::RemotePreferencesDialog(QSettings &settings,
                                                  QWidget *parent,
                                                  Remote::RemoteSession *session,
                                                  TorrentModel *torrentModel,
-                                                 const QString &serverVersion)
+                                                 const QString &serverVersion,
+                                                 std::function<Remote::RemoteSession *(const QString &)> sessionForProfile)
     : QDialog(parent)
     , m_settings(settings)
     , m_remoteProfileId(preferredProfileId)
     , m_mappingStore(settings)
     , m_ui(std::make_unique<Ui::OptionsDialog>())
     , m_remoteSession(session)
+    , m_sessionForProfile(std::move(sessionForProfile))
     , m_torrentModel(torrentModel)
 {
     m_ui->setupUi(this);
@@ -822,6 +865,8 @@ void RemotePreferencesDialog::bindWebUIControls()
     const auto tls = [this] { return m_webUIDirect && m_ui->checkWebUIHttps->isChecked(); };
     bindRemoteControl("web_ui_https_cert_path", m_ui->textWebUIHttpsCert, tls, directTip);
     bindRemoteControl("web_ui_https_key_path", m_ui->textWebUIHttpsKey, tls, directTip);
+    installPathBrowser(m_ui->textWebUIHttpsCert, false);
+    installPathBrowser(m_ui->textWebUIHttpsKey, false);
     bindRemoteControl("web_ui_username", m_ui->textWebUIUsername, direct, directTip);
     m_ui->textWebUIPassword->setToolTip(tr("Enter a new password only when changing it. The current password is never returned by the server. If authentication is bypassed, a fresh connection may not independently verify the new password."));
     m_ui->textWebUIPassword->clear();
@@ -905,6 +950,7 @@ void RemotePreferencesDialog::bindWebUIControls()
     bindRemoteControl("alternative_webui_path", m_ui->textWebUIRootFolder, [this] {
         return remoteFieldAvailable("alternative_webui_enabled") && m_ui->groupAltWebUI->isChecked();
     }, tr("Directory on the connected server, not the desktop. Changes its native browser WebUI, not qBittorrent Remote."));
+    installPathBrowser(m_ui->textWebUIRootFolder);
     m_ui->lblAltWebUIList->setToolTip(alternateTip);
     bindRemoteControl("web_ui_clickjacking_protection_enabled", m_ui->checkClickjacking);
     bindRemoteControl("web_ui_csrf_protection_enabled", m_ui->checkCSRFProtection);
@@ -1674,15 +1720,9 @@ void RemotePreferencesDialog::bindIPFilterControls()
     bindRemoteControl("ip_filter_enabled", m_ui->checkIPFilter);
     bindRemoteControl("ip_filter_path", m_ui->textFilterPath, [this]() {
         return remoteFieldAvailable("ip_filter_enabled") && m_ui->checkIPFilter->isChecked();
-    }, tr("Absolute IP filter file path on the connected server. Browse a mapped NAS file or enter the server path."));
-    auto *browse = m_ui->textFilterPath->addAction(style()->standardIcon(QStyle::SP_DirOpenIcon),
-                                                   QLineEdit::TrailingPosition);
-    browse->setObjectName(QStringLiteral("textFilterPathBrowse"));
-    browse->setToolTip(tr("Choose a mapped local NAS filter file"));
-    connect(browse, &QAction::triggered, this, [this]() {
-        if (m_ui->textFilterPath->isEnabled())
-            browseRemotePath(m_ui->textFilterPath, true);
-    });
+    }, tr("Absolute IP filter file path on the connected server. Browse remotely, select a mapped NAS file, or enter the server path."));
+    installPathBrowser(m_ui->textFilterPath, false,
+        tr("All supported filters (*.dat *.p2p *.p2b);;.dat (*.dat);;.p2p (*.p2p);;.p2b (*.p2b)"));
     bindRemoteControl("ip_filter_trackers", m_ui->checkIpFilterTrackers);
     m_ui->IpFilterRefreshBtn->setIcon(icon("view-refresh"));
     m_ui->IpFilterRefreshBtn->setEnabled(false);
@@ -1740,6 +1780,7 @@ void RemotePreferencesDialog::bindServerBehaviorControls()
     bindRemoteControl("file_log_enabled", m_ui->checkFileLog);
     bindRemoteControl("file_log_path", m_ui->textFileLogPath, {},
         tr("Directory on the connected server, not this desktop."));
+    installPathBrowser(m_ui->textFileLogPath);
     bindRemoteControl("file_log_backup_enabled", m_ui->checkFileLogBackup);
     bindRemoteControl("file_log_max_size", m_ui->spinFileLogSize, [this]() {
         return remoteFieldAvailable("file_log_backup_enabled") && m_ui->checkFileLogBackup->isChecked();
@@ -2162,15 +2203,8 @@ void RemotePreferencesDialog::editWatchedFolder(bool existing)
     mode->addItem(tr("Custom save path"), 2);
     auto *destination = new QLineEdit(previous.toString(), &dialog);
     destination->setObjectName(QStringLiteral("watchedFolderDestinationPath"));
-    const auto addBrowse = [this](QLineEdit *line) {
-        auto *action = line->addAction(style()->standardIcon(QStyle::SP_DirOpenIcon), QLineEdit::TrailingPosition);
-        action->setToolTip(tr("Choose mapped local NAS directory"));
-        connect(action, &QAction::triggered, this, [this, line]() {
-            if (line->isEnabled() && !line->isReadOnly()) browseRemotePath(line);
-        });
-    };
-    if (!existing) addBrowse(folder);
-    addBrowse(destination);
+    if (!existing) installPathBrowser(folder);
+    installPathBrowser(destination);
     mode->setCurrentIndex(previous == QJsonValue(1) ? 0 : previous == QJsonValue(0) ? 1 : 2);
     // In upstream's deprecated setter, 1 does not clear an existing custom
     // save path. Never silently promise a reset the API cannot perform.
@@ -2226,52 +2260,29 @@ void RemotePreferencesDialog::editWatchedFolder(bool existing)
 void RemotePreferencesDialog::bindRemotePath(const char *key, QLineEdit *line,
     std::function<bool()> dependency)
 {
-    // The text always represents a server path. Browsing is explicitly a
-    // translation from a locally mounted directory, not remote filesystem I/O.
     bindRemoteControl(key, line, std::move(dependency),
-        tr("Absolute directory on the connected server. Type a server path, "
-           "or use the folder button to select a mapped local NAS directory."));
-    auto *browse = line->addAction(style()->standardIcon(QStyle::SP_DirOpenIcon),
-                                   QLineEdit::TrailingPosition);
-    browse->setObjectName(line->objectName() + QStringLiteral("Browse"));
-    browse->setToolTip(tr("Choose mapped local NAS directory"));
-    connect(browse, &QAction::triggered, this, [this, line]() {
-        if (line->isEnabled())
-            browseRemotePath(line);
-    });
+        tr("Absolute directory on the connected server. Type a server path, browse remotely, or select a mapped local NAS directory."));
+    installPathBrowser(line);
 }
 
-void RemotePreferencesDialog::browseRemotePath(QLineEdit *line, bool filterFile)
+void RemotePreferencesDialog::installPathBrowser(QLineEdit *line, bool directory, const QString &fileFilter)
 {
-    // The Servers page selector edits local mappings only. Always use the
-    // authenticated profile captured when this Preferences dialog opened.
-    const auto entries = m_staged.contains(m_remoteProfileId)
-        ? m_staged.value(m_remoteProfileId) : m_mappingStore.mappings(m_remoteProfileId);
-    if (entries.isEmpty())
-    {
-        QMessageBox::information(this, tr("No path mappings"),
-            tr("Configure a local NAS mount in Preferences → Servers first, "
-               "or type the absolute server path manually."));
-        return;
-    }
-    QString initial = Remote::PathMappingStore::toLocal(line->text(), entries);
-    if (initial.isEmpty() || (!QDir(initial).exists() && !(filterFile && QFileInfo(initial).isFile())))
-        initial = entries.constFirst().localRoot;
-    const QString local = filterFile
-        ? QFileDialog::getOpenFileName(this, tr("Choose an IP filter file"), initial,
-            tr("All supported filters (*.dat *.p2p *.p2b);;.dat (*.dat);;.p2p (*.p2p);;.p2b (*.p2b)"))
-        : QFileDialog::getExistingDirectory(this, tr("Choose mapped local NAS directory"), initial);
-    if (local.isEmpty())
-        return;
-    const QString remote = Remote::PathMappingStore::toRemote(local, entries);
-    if (remote.isEmpty())
-    {
-        QMessageBox::warning(this, filterFile ? tr("Unmapped local file") : tr("Unmapped local directory"),
-            tr("The selected path is not covered by a mapping for this connected server. "
-               "The server path has not been changed."));
-        return;
-    }
-    line->setText(remote);
+    using Button = RemoteFilesystemBrowseButton;
+    auto *button = Button::attachToLineEdit(line);
+    button->configurePath(m_settings, [this, line, directory, fileFilter] {
+        const auto entries = m_staged.contains(m_remoteProfileId)
+            ? m_staged.value(m_remoteProfileId) : m_mappingStore.mappings(m_remoteProfileId);
+        return Button::PathContext{m_remoteProfileId, m_remoteTargetName, m_remoteSession.data(),
+            entries, line->text(), directory, fileFilter};
+    }, [line](const QString &path) {
+        if (line->isEnabled() && !line->isReadOnly()) line->setText(path);
+    });
+    const auto margins = line->textMargins();
+    line->setTextMargins(margins.left(), margins.top(),
+        margins.right() + button->sizeHint().width() + 4, margins.bottom());
+    connect(button, &Button::preferenceChanged, this, [this] {
+        for (auto *other : findChildren<Button *>()) other->refresh();
+    });
 }
 
 void RemotePreferencesDialog::bindDownloadsSavingControls()
@@ -3128,7 +3139,11 @@ void RemotePreferencesDialog::bindAdvancedRemoteControls()
             bindStringCombo(entry.key, qobject_cast<QComboBox *>(widget),
                 {QStringLiteral("Legacy"), QStringLiteral("SQLite")}, dependency);
         else
+        {
             bindRemoteControl(entry.key, widget, dependency, tooltip);
+            if (key == QLatin1String("python_executable_path"))
+                if (auto *line = qobject_cast<QLineEdit *>(widget)) installPathBrowser(line, false);
+        }
     }
 }
 
@@ -3570,7 +3585,9 @@ void RemotePreferencesDialog::editMapping(bool existing)
         return;
     Remote::PathMapping value = existing
         ? entries.at(selected) : Remote::PathMapping{};
-    if (!mappingEditor(this, value))
+    auto *session = m_sessionForProfile ? m_sessionForProfile(profileId)
+        : (profileId == m_remoteProfileId ? m_remoteSession.data() : nullptr);
+    if (!mappingEditor(this, value, m_settings, profileId, m_serverSelector->currentText(), session))
         return;
 
     if (existing)

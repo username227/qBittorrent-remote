@@ -560,8 +560,18 @@ private slots:
                 auto *remoteField = modal->findChild<QLineEdit *>(
                     QStringLiteral("mappingRemotePath"));
                 auto *buttons = modal->findChild<QDialogButtonBox *>();
-                if (!localField || !remoteField || !buttons)
+                auto *remoteBrowse = modal->findChild<QPushButton *>("mappingBrowseRemote");
+                if (!localField || !remoteField || !buttons || !remoteBrowse)
+                {
+                    modal->reject();
                     return;
+                }
+                // An offline saved profile still allows typed mappings.
+                if (remoteBrowse->isEnabled() || !remoteField->isEnabled())
+                {
+                    modal->reject();
+                    return;
+                }
                 localField->setText(local);
                 remoteField->setText(remotePath);
                 editorOpened = true;

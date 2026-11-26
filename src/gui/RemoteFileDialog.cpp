@@ -76,6 +76,14 @@ bool RemoteFileDialog::isAbsoluteServerPath(const QString &path)
     return true;
 }
 
+QString RemoteFileDialog::parentDirectory(const QString &path)
+{
+    if (!isAbsoluteServerPath(path)) return {};
+    const QString p = normalized(path);
+    const QString parent = parentOf(p);
+    return parent.isEmpty() ? p : parent;
+}
+
 RemoteFileDialog::RemoteFileDialog(Remote::RemoteSession *session, const QString &serverName,
     const QString &profileId, QSettings &settings, const QString &initial, Mode mode, QWidget *parent)
     : QDialog(parent), m_session(session), m_settings(settings),

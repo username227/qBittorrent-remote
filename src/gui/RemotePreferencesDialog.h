@@ -43,7 +43,8 @@ public:
                                      QWidget *parent = nullptr,
                                      Remote::RemoteSession *session = nullptr,
                                      TorrentModel *torrentModel = nullptr,
-                                     const QString &serverVersion = {});
+                                     const QString &serverVersion = {},
+                                     std::function<Remote::RemoteSession *(const QString &)> sessionForProfile = {});
     ~RemotePreferencesDialog() override;
 
 signals:
@@ -114,7 +115,7 @@ private:
                           const QString &tooltip);
     void bindRemotePath(const char *key, QLineEdit *line,
                         std::function<bool()> dependency = {});
-    void browseRemotePath(QLineEdit *line, bool filterFile = false);
+    void installPathBrowser(QLineEdit *line, bool directory = true, const QString &fileFilter = {});
     bool validateDownloadChanges(const QJsonObject &changes);
     void remoteFieldChanged();
     // Register typed controls, including custom enum/compound bindings for
@@ -220,5 +221,6 @@ private:
     QCheckBox *m_legacySmtpSsl = nullptr;
     bool m_closeAfterApply = false;
     QPointer<Remote::RemoteSession> m_remoteSession;
+    std::function<Remote::RemoteSession *(const QString &)> m_sessionForProfile;
     QPointer<TorrentModel> m_torrentModel;
 };
