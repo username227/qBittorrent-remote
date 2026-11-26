@@ -6,6 +6,8 @@
 #include <QApplication>
 #include <QMessageBox>
 #include <QStandardPaths>
+#include <QSettings>
+#include <QStyleHints>
 
 int main(int argc, char *argv[])
 {
@@ -39,6 +41,14 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+    const auto scheme = QSettings().value(QStringLiteral("Appearance/ColorScheme"),
+        QStringLiteral("system")).toString();
+    if (scheme == QLatin1String("light"))
+        app.styleHints()->setColorScheme(Qt::ColorScheme::Light);
+    else if (scheme == QLatin1String("dark"))
+        app.styleHints()->setColorScheme(Qt::ColorScheme::Dark);
+#endif
     MainWindow window;
     mainWindow = &window;
     window.showForStartup();

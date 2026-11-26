@@ -289,7 +289,7 @@ private slots:
         auto *advanced = dialog.findChild<QTableWidget *>(
             QStringLiteral("advancedSettingsTable"));
         QVERIFY(advanced);
-        QCOMPARE(advanced->rowCount(), 92);
+        QCOMPARE(advanced->rowCount(), 93);
         int hiddenRows = 0;
         for (int row = 0; row < advanced->rowCount(); ++row)
         {

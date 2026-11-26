@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/RemotePreferencesDialog.h"
+#include "gui/DatePresentation.h"
 #include "gui/RemoteBanListDialog.h"
 #include "gui/RemoteRssDialog.h"
 #include <QFileInfo>
@@ -566,6 +567,27 @@ void RemotePreferencesDialog::loadLocalBehaviorControls()
             combo->view()->setEnabled(true);
     };
     unlock(m_ui->confirmDeletion);
+    unlock(m_ui->checkBoxFullTrackerURL, tr("Show the complete tracker URL in the transfer list. URLs may contain private tracker passkeys."));
+    m_ui->checkBoxFullTrackerURL->setChecked(m_settings.value(
+        QStringLiteral("Preferences/Behavior/FullTrackerURL"), false).toBool());
+    unlock(m_ui->comboDateFormat);
+    m_ui->comboDateFormat->addItem(tr("System default"), QString());
+    const auto example = QDateTime::currentSecsSinceEpoch();
+    for (const auto &pattern : DatePresentation::patterns())
+        if (!pattern.isEmpty())
+            m_ui->comboDateFormat->addItem(DatePresentation::format(example, pattern), pattern);
+    m_ui->comboDateFormat->setCurrentIndex(qMax(0, m_ui->comboDateFormat->findData(
+        m_settings.value(QStringLiteral("Preferences/Behavior/DateFormat"), QString()).toString())));
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+    unlock(m_ui->comboColorScheme, tr("Local desktop appearance. Requires application restart."));
+    m_ui->comboColorScheme->addItem(tr("System"), QStringLiteral("system"));
+    m_ui->comboColorScheme->addItem(tr("Light"), QStringLiteral("light"));
+    m_ui->comboColorScheme->addItem(tr("Dark"), QStringLiteral("dark"));
+    m_ui->comboColorScheme->setCurrentIndex(qMax(0, m_ui->comboColorScheme->findData(
+        m_settings.value(QStringLiteral("Appearance/ColorScheme"), QStringLiteral("system")).toString())));
+#else
+    m_ui->comboColorScheme->setToolTip(tr("Requires Qt 6.8 or newer."));
+#endif
     unlock(m_ui->checkTorrentContentDrag,
         tr("Allow dragging files from the Content tab into a file manager. "
            "Hold Alt to invert drag versus selection behavior. "
@@ -704,6 +726,13 @@ void RemotePreferencesDialog::loadLocalBehaviorControls()
     connect(m_ui->comboTrayIcon, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [dirty](int) { dirty(); });
     connect(m_ui->confirmDeletion, &QCheckBox::toggled, this, dirty);
+    connect(m_ui->checkBoxFullTrackerURL, &QCheckBox::toggled, this, dirty);
+    connect(m_ui->comboDateFormat, QOverload<int>::of(&QComboBox::currentIndexChanged),
+        this, [dirty](int) { dirty(); });
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+    connect(m_ui->comboColorScheme, QOverload<int>::of(&QComboBox::currentIndexChanged),
+        this, [dirty](int) { dirty(); });
+#endif
     connect(m_ui->checkProgramExitConfirm, &QCheckBox::toggled, this, dirty);
     connect(m_ui->checkTorrentContentDrag, &QCheckBox::toggled, this, dirty);
     connect(m_ui->checkUseTorrentStatesColors, &QCheckBox::toggled, this, dirty);
@@ -2933,6 +2962,7 @@ void RemotePreferencesDialog::buildAdvancedPage()
     section(tr("libtorrent Section"), "https://www.libtorrent.org/reference-Settings.html");
     row("BDECODE_DEPTH_LIMIT", tr("Bdecode depth limit"), spin(0, std::numeric_limits<int>::max(), tr(""), tr("")), "https://www.libtorrent.org/reference-Bdecoding.html#bdecode()");
     row("BDECODE_TOKEN_LIMIT", tr("Bdecode token limit"), spin(0, std::numeric_limits<int>::max(), tr(""), tr("")), "https://www.libtorrent.org/reference-Bdecoding.html#bdecode()");
+    row("LOAD_TORRENT_MAX_DIRECTORY_DEPTH", tr("Maximum directory depth when loading torrents"), spin(0, std::numeric_limits<int>::max(), QString(), QString()), "https://www.libtorrent.org/reference-Torrent_Info.html#max_directory_depth");
     row("ASYNC_IO_THREADS", tr("Asynchronous I/O threads"), spin(1, 1024, tr(""), tr("")), "https://www.libtorrent.org/reference-Settings.html#aio_threads");
     row("HASHING_THREADS", tr("Hashing threads"), spin(1, 1024, tr(""), tr("")), "https://www.libtorrent.org/reference-Settings.html#hashing_threads");
     row("FILE_POOL_SIZE", tr("File pool size"), spin(1, std::numeric_limits<int>::max(), tr(""), tr("")), "https://www.libtorrent.org/reference-Settings.html#file_pool_size");
@@ -3026,6 +3056,7 @@ void RemotePreferencesDialog::bindAdvancedRemoteControls()
         {"IGNORE_SSL_ERRORS", "ignore_ssl_errors", 1},
         {"BDECODE_DEPTH_LIMIT", "bdecode_depth_limit", 1},
         {"BDECODE_TOKEN_LIMIT", "bdecode_token_limit", 1},
+        {"LOAD_TORRENT_MAX_DIRECTORY_DEPTH", "load_torrent_max_directory_depth", 1},
         {"ASYNC_IO_THREADS", "async_io_threads", 1},
         {"FILE_POOL_SIZE", "file_pool_size", 1},
         {"DISK_QUEUE_SIZE", "disk_queue_size", 1024},
@@ -4143,6 +4174,13 @@ bool RemotePreferencesDialog::applyLocalChanges()
             m_ui->comboTrayIcon->currentIndex());
         m_settings.setValue(QStringLiteral("Preferences/Behavior/ConfirmTorrentDeletion"),
             m_ui->confirmDeletion->isChecked());
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/FullTrackerURL"),
+            m_ui->checkBoxFullTrackerURL->isChecked());
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/DateFormat"),
+            m_ui->comboDateFormat->currentData().toString());
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+        m_settings.setValue(QStringLiteral("Appearance/ColorScheme"), m_ui->comboColorScheme->currentData().toString());
+#endif
         m_settings.setValue(QStringLiteral("Preferences/Behavior/ConfirmExit"),
             m_ui->checkProgramExitConfirm->isChecked());
         m_settings.setValue(QStringLiteral("Preferences/Behavior/TorrentContentDragEnabled"),

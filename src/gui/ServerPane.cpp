@@ -40,9 +40,11 @@
 #include <QTabBar>
 #include <QToolButton>
 
-#ifdef Q_OS_LINUX
 #include <QMouseEvent>
 #include <QScrollBar>
+#include <QTimer>
+#include <QStyle>
+#ifdef Q_OS_LINUX
 #include <QStyleOptionSlider>
 #endif
 
@@ -108,6 +110,130 @@ protected:
     }
 };
 #endif
+
+// Native header moving, sorting and double-click sizing remain Qt's.
+// Only an interactive resize grip gets an edge-scroll extension. Qt's
+// ordinary resize gesture cannot advance past the physical screen edge.
+class ScrollableTransferHeader final : public QHeaderView
+{
+public:
+    explicit ScrollableTransferHeader(QTableView *table)
+        : QHeaderView(Qt::Horizontal, table), m_table(table)
+    {
+        m_edgeTimer.setInterval(40);
+        connect(&m_edgeTimer, &QTimer::timeout, this, [this] {
+            if (m_section < 0 || !atTrailingEdge()) { m_edgeTimer.stop(); return; }
+            const int before = sectionSize(m_section);
+            resizeSection(m_section, qMin(maximumSectionSize(), before + 16));
+            // Follow the moving divider, including when the resize itself
+            // is what first makes horizontal scrolling necessary.
+            const int end = isRightToLeft() ? viewport()->width() - sectionViewportPosition(m_section)
+                : sectionViewportPosition(m_section) + sectionSize(m_section);
+            auto *bar = m_table->horizontalScrollBar();
+            bar->setValue(bar->value() + qMax(0, end - viewport()->width() + 2));
+            m_anchorSize = sectionSize(m_section);
+            m_anchorPos = m_lastPos;
+            m_anchorOffset = offset();
+            if (before == m_anchorSize) m_edgeTimer.stop();
+        });
+    }
+
+protected:
+    void mousePressEvent(QMouseEvent *event) override
+    {
+        if (event->button() == Qt::LeftButton)
+        {
+            const int pos = event->position().toPoint().x();
+            const int logical = logicalIndexAt(pos);
+            if (logical >= 0)
+            {
+                const int start = sectionViewportPosition(logical);
+                const int grip = style()->pixelMetric(QStyle::PM_HeaderGripMargin, nullptr, this);
+                const bool left = pos < start + grip;
+                const bool right = pos > start + sectionSize(logical) - grip;
+                int target = -1;
+                if (isRightToLeft() ? right : left)
+                {
+                    for (int visual = visualIndex(logical) - 1; visual >= 0; --visual)
+                        if (!isSectionHidden(logicalIndex(visual)))
+                        { target = logicalIndex(visual); break; }
+                }
+                else if (isRightToLeft() ? left : right)
+                    target = logical;
+                if (target >= 0 && sectionResizeMode(target) == QHeaderView::Interactive)
+                {
+                    m_section = target;
+                    m_anchorPos = m_lastPos = pos;
+                    m_anchorSize = sectionSize(target);
+                    m_anchorOffset = offset();
+                    setCursor(Qt::SplitHCursor);
+                    event->accept();
+                    return;
+                }
+            }
+        }
+        QHeaderView::mousePressEvent(event);
+    }
+
+    void mouseMoveEvent(QMouseEvent *event) override
+    {
+        if (m_section < 0) { QHeaderView::mouseMoveEvent(event); return; }
+        if (!(event->buttons() & Qt::LeftButton))
+        {
+            finishResize();
+            QHeaderView::mouseMoveEvent(event);
+            return;
+        }
+        m_lastPos = event->position().toPoint().x();
+        const int delta = (isRightToLeft() ? -1 : 1) * (m_lastPos - m_anchorPos)
+            + offset() - m_anchorOffset;
+        resizeSection(m_section, qBound(minimumSectionSize(), m_anchorSize + delta, maximumSectionSize()));
+        if (atTrailingEdge())
+        {
+            if (!m_edgeTimer.isActive()) m_edgeTimer.start();
+        }
+        else m_edgeTimer.stop();
+        event->accept();
+    }
+
+    void mouseReleaseEvent(QMouseEvent *event) override
+    {
+        if (m_section >= 0 && event->button() == Qt::LeftButton)
+        {
+            finishResize();
+            event->accept();
+            return;
+        }
+        QHeaderView::mouseReleaseEvent(event);
+    }
+
+    bool viewportEvent(QEvent *event) override
+    {
+        if (event->type() == QEvent::UngrabMouse || event->type() == QEvent::Hide)
+            finishResize();
+        return QHeaderView::viewportEvent(event);
+    }
+
+private:
+    bool atTrailingEdge() const
+    {
+        return isRightToLeft() ? m_lastPos <= 4 : m_lastPos >= viewport()->width() - 5;
+    }
+    void finishResize()
+    {
+        m_edgeTimer.stop();
+        m_section = -1;
+        unsetCursor();
+    }
+
+    QTableView *m_table;
+    QTimer m_edgeTimer;
+    int m_section = -1;
+    int m_anchorSize = 0;
+    int m_anchorPos = 0;
+    int m_anchorOffset = 0;
+    int m_lastPos = 0;
+};
 
 // The Name column must remain readable even when the other, numerous
 // qBittorrent transfer columns extend past the viewport. Users can scroll
@@ -206,6 +332,9 @@ ServerPane::ServerPane(QWidget *parent) : QWidget(parent)
 
     m_table = new QTableView(vertical);
     m_table->setObjectName(QStringLiteral("torrentList"));
+    m_table->setHorizontalHeader(new ScrollableTransferHeader(m_table));
+    m_table->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
+    m_table->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
 #ifdef Q_OS_LINUX
     m_table->setVerticalScrollBar(new TransferListScrollBar(m_table));
 #endif
@@ -225,6 +354,7 @@ ServerPane::ServerPane(QWidget *parent) : QWidget(parent)
     m_table->setSortingEnabled(true);
     m_table->horizontalHeader()->setStretchLastSection(false);
     m_table->horizontalHeader()->setSectionsMovable(true);
+    m_table->horizontalHeader()->setSectionsClickable(true);
     // Native Qt may still bold labels of selected header sections even when
     // highlighting is disabled. An explicitly resolved Normal weight prevents
     // QCommonStyle::CE_HeaderLabel from synthesizing bold, without styling
@@ -235,7 +365,7 @@ ServerPane::ServerPane(QWidget *parent) : QWidget(parent)
     m_table->horizontalHeader()->setFont(headerFont);
     // Stretch disables user resizing. On Windows it also squeezed Name to
     // nearly nothing because all other visible columns took the viewport.
-    m_table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Interactive);
+    m_table->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
     m_table->horizontalHeader()->resizeSection(0, sensibleNameColumnWidth(m_table));
     m_table->verticalHeader()->hide();
     m_table->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -609,6 +739,12 @@ void ServerPane::setContentPathMappings(const QList<Remote::PathMapping> &mappin
 void ServerPane::setContentDragEnabled(bool enabled)
 {
     m_details->setContentDragEnabled(enabled);
+}
+
+void ServerPane::setPresentation(bool fullTrackerUrl, const QString &dateFormat)
+{
+    m_model->setPresentation(fullTrackerUrl, dateFormat);
+    m_details->setDateFormat(dateFormat);
 }
 
 void ServerPane::setProgressFollowsStateColors(bool enabled)
@@ -1261,7 +1397,8 @@ void ServerPane::restoreLayout(QSettings &settings, const QString &profileId)
     // visual flag *after* restoring section geometry and sort state.
     header->setHighlightSections(false);
     header->setSectionsMovable(true); // Also correct headers saved by earlier builds.
-    header->setSectionResizeMode(0, QHeaderView::Interactive);
+    header->setStretchLastSection(false);
+    header->setSectionResizeMode(QHeaderView::Interactive);
     if (!settings.value(root + QStringLiteral("/nameColumnResizableV1"), false).toBool())
         header->resizeSection(0, qMax(header->sectionSize(0),
                                       sensibleNameColumnWidth(m_table)));

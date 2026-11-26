@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/TorrentModel.h"
+#include "gui/DatePresentation.h"
+#include <QUrl>
 #include "gui/ProgressDisplay.h"
 
 #include <QDateTime>
@@ -262,7 +264,19 @@ QVariant TorrentModel::data(const QModelIndex &index, int role) const
     if (value.isBool())
         return value.toBool() ? QStringLiteral("Yes") : QStringLiteral("No");
     if (value.isString())
+    {
+        if (col == 16)
+        {
+            const QString url = value.toString();
+            const QUrl parsed(url);
+            // Do not expose passkeys in hostname-mode tooltips. Keep the
+            // original URL in UserRole for existing sorting and operations.
+            if (!m_fullTrackerUrl)
+                return parsed.host().isEmpty() ? (url.isEmpty() ? QString() : QStringLiteral("—")) : parsed.host();
+            return url;
+        }
         return value.toString();
+    }
     if (!value.isDouble())
         return QStringLiteral("—");
 
@@ -281,9 +295,7 @@ QVariant TorrentModel::data(const QModelIndex &index, int role) const
     if (durationColumn(col))
         return durationText(static_cast<qint64>(number));
     if (timeColumn(col))
-        return number <= 0 ? QStringLiteral("—")
-            : QLocale().toString(QDateTime::fromSecsSinceEpoch(static_cast<qint64>(number)),
-                                 QLocale::ShortFormat);
+        return DatePresentation::format(static_cast<qint64>(number), m_dateFormat);
     if (col == 9 || col == 28)
         return number < 0 ? QStringLiteral("∞") : QLocale().toString(number, 'f', 2);
     return QLocale().toString(static_cast<qint64>(number));
@@ -377,6 +389,16 @@ void TorrentModel::setUseStateColors(bool enabled)
     if (!m_hashes.isEmpty())
         emit dataChanged(index(0, 0), index(m_hashes.size() - 1, columnCount() - 1),
                          {Qt::ForegroundRole});
+}
+
+void TorrentModel::setPresentation(bool fullTrackerUrl, const QString &dateFormat)
+{
+    if (m_fullTrackerUrl == fullTrackerUrl && m_dateFormat == dateFormat) return;
+    m_fullTrackerUrl = fullTrackerUrl;
+    m_dateFormat = dateFormat;
+    if (!m_hashes.isEmpty())
+        emit dataChanged(index(0, 0), index(m_hashes.size() - 1, columnCount() - 1),
+            {Qt::DisplayRole, Qt::ToolTipRole});
 }
 
 void TorrentModel::clear()

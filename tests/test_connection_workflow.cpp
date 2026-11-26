@@ -340,7 +340,7 @@ public:
                                 // Authenticated sync/maindata drives the actual
                                 // visible Qt torrent table; no local torrent data.
                                 if (rid == 0)
-                                    response = R"({"rid":1,"full_update":true,"torrents":{"0000000000000000000000000000000000000001":{"name":"Complete seed","size":2460000,"total_size":4194304,"progress":1.0,"state":"stalledUP","availability":-1,"num_seeds":0,"num_complete":3,"num_leechs":0,"num_incomplete":0},"0000000000000000000000000000000000000002":{"name":"Partial download","size":1024,"progress":0.5,"state":"downloading","availability":2.5,"num_seeds":2,"num_complete":5,"num_leechs":4,"num_incomplete":8}},"server_state":{"dl_info_speed":0,"up_info_speed":0}})";
+                                    response = R"({"rid":1,"full_update":true,"torrents":{"0000000000000000000000000000000000000001":{"name":"Complete seed","tracker":"https://tracker.example.test/announce/private-passkey","added_on":1700000000,"size":2460000,"total_size":4194304,"progress":1.0,"state":"stalledUP","availability":-1,"num_seeds":0,"num_complete":3,"num_leechs":0,"num_incomplete":0},"0000000000000000000000000000000000000002":{"name":"Partial download","size":1024,"progress":0.5,"state":"downloading","availability":2.5,"num_seeds":2,"num_complete":5,"num_leechs":4,"num_incomplete":8}},"server_state":{"dl_info_speed":0,"up_info_speed":0}})";
                                 else if (m_pendingSwarmCountsUpdate)
                                 {
                                     m_pendingSwarmCountsUpdate = false;
@@ -5384,6 +5384,7 @@ private slots:
             {"advanced_IGNORE_SSL_ERRORS", "ignore_ssl_errors", QJsonValue(false), QJsonValue(true), 1, false},
             {"advanced_BDECODE_DEPTH_LIMIT", "bdecode_depth_limit", QJsonValue(100), QJsonValue(110), 1, false},
             {"advanced_BDECODE_TOKEN_LIMIT", "bdecode_token_limit", QJsonValue(1000000), QJsonValue(1100000), 1, false},
+            {"advanced_LOAD_TORRENT_MAX_DIRECTORY_DEPTH", "load_torrent_max_directory_depth", QJsonValue(100), QJsonValue(120), 1, true},
             {"advanced_ASYNC_IO_THREADS", "async_io_threads", QJsonValue(4), QJsonValue(8), 1, false},
             {"advanced_FILE_POOL_SIZE", "file_pool_size", QJsonValue(40), QJsonValue(50), 1, false},
             {"advanced_DISK_QUEUE_SIZE", "disk_queue_size", QJsonValue(1048576), QJsonValue(2097152), 1024, false},
@@ -8160,6 +8161,69 @@ private slots:
         QCOMPARE(shown(partial, 4), QStringLiteral("2 (5)"));
         QCOMPARE(shown(partial, 5), QStringLiteral("4 (8)"));
 
+        // Apply the real local presentation preferences and verify that
+        // Cancel leaves both the live model and saved settings unchanged.
+        const QString fullUrl = QStringLiteral("https://tracker.example.test/announce/private-passkey");
+        QCOMPARE(shown(complete, 16), QStringLiteral("tracker.example.test"));
+        QCOMPARE(table->model()->index(rowFor(complete), 16).data(Qt::ToolTipRole).toString(),
+            QStringLiteral("tracker.example.test"));
+        const QString originalDate = shown(complete, 13);
+        auto *prefs = window.findChild<QAction *>("actionOptions");
+        QVERIFY(prefs);
+        const auto changePresentation = [&](bool applyChanges, bool full) {
+            bool completed = false;
+            QTimer::singleShot(0, &window, [&] {
+                auto *dialog = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget());
+                QVERIFY(dialog);
+                const auto cleanup = qScopeGuard([dialog] { if (dialog->isVisible()) dialog->reject(); });
+                auto *nav = dialog->findChild<QListWidget *>("preferencesSections");
+                auto *tracker = dialog->findChild<QCheckBox *>("checkBoxFullTrackerURL");
+                auto *format = dialog->findChild<QComboBox *>("comboDateFormat");
+                auto *scheme = dialog->findChild<QComboBox *>("comboColorScheme");
+                auto *apply = dialog->findChild<QPushButton *>("preferencesApply");
+                QVERIFY(nav && tracker && format && scheme && apply);
+                nav->setCurrentRow(1);
+                QVERIFY(tracker->isEnabled());
+                QCOMPARE(tracker->isChecked(), settings.value("Preferences/Behavior/FullTrackerURL", false).toBool());
+                QVERIFY(format->isEnabled());
+                tracker->setChecked(full);
+                const int iso = format->findData(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
+                QVERIFY(iso > 0);
+                format->setCurrentIndex(iso);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+                QVERIFY(scheme->isEnabled());
+                scheme->setCurrentIndex(scheme->findData(QStringLiteral("dark")));
+#endif
+                if (applyChanges)
+                {
+                    QVERIFY(apply->isEnabled());
+                    apply->click();
+                    QTRY_VERIFY(!apply->isEnabled());
+                }
+                completed = true;
+            });
+            prefs->trigger();
+            QVERIFY(completed);
+        };
+        changePresentation(false, true);
+        QCOMPARE(shown(complete, 16), QStringLiteral("tracker.example.test"));
+        QCOMPARE(shown(complete, 13), originalDate);
+        changePresentation(true, true);
+        QCOMPARE(shown(complete, 16), fullUrl);
+        QVERIFY(settings.value("Preferences/Behavior/FullTrackerURL").toBool());
+        changePresentation(true, false);
+        QCOMPARE(shown(complete, 16), QStringLiteral("tracker.example.test"));
+        QCOMPARE(shown(complete, 13), QLocale().toString(QDateTime::fromSecsSinceEpoch(1700000000),
+            QStringLiteral("yyyy-MM-dd HH:mm:ss")));
+        const auto trackerIndex = table->model()->index(rowFor(complete), 16);
+        QCOMPARE(trackerIndex.data(Qt::ToolTipRole).toString(), QStringLiteral("tracker.example.test"));
+        QCOMPARE(trackerIndex.data(Qt::UserRole).toString(), fullUrl);
+        QCOMPARE(table->model()->index(rowFor(complete), 13).data(Qt::UserRole).toLongLong(), qint64(1700000000));
+        QCOMPARE(server.commandsFor("/api/v2/app/setPreferences"), 0);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+        QCOMPARE(settings.value(QStringLiteral("Appearance/ColorScheme")).toString(), QStringLiteral("dark"));
+#endif
+
         // Change counts at the HTTP server, then observe the *live* Qt table
         // after a genuine incremental /sync/maindata response is processed.
         server.queueSwarmCountsUpdate();
@@ -8173,6 +8237,42 @@ private slots:
         QTRY_COMPARE(table->model()->index(0, 0).data().toString(), complete);
         QCOMPARE(table->model()->index(0, 4).data(Qt::UserRole).toInt(), 10);
         QCOMPARE(table->model()->index(1, 4).data(Qt::UserRole).toInt(), 2);
+
+        // Start with a narrow table configuration that fits completely,
+        // then hold the real native header grip against the trailing edge.
+        // A single column must be able to exceed the viewport width.
+        auto *header = table->horizontalHeader();
+        auto *scroll = table->horizontalScrollBar();
+        for (int col = 0; col < table->model()->columnCount(); ++col)
+            table->setColumnHidden(col, col != 0 && col != 1);
+        header->resizeSection(0, 180);
+        header->resizeSection(1, 80);
+        QTRY_COMPARE(scroll->maximum(), 0);
+        QVERIFY(header->sectionsClickable());
+        QCOMPARE(table->horizontalScrollMode(), QAbstractItemView::ScrollPerPixel);
+        QCOMPARE(header->sectionResizeMode(0), QHeaderView::Interactive);
+        auto *viewport = header->viewport();
+        const QPoint grip(header->sectionViewportPosition(0) + header->sectionSize(0) - 1,
+            viewport->height() / 2);
+        const QPoint edge(viewport->width() - 2, grip.y());
+        QTest::mousePress(viewport, Qt::LeftButton, Qt::NoModifier, grip);
+        QMouseEvent move(QEvent::MouseMove, QPointF(edge), Qt::NoButton,
+            Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(viewport, &move);
+        bool released = false;
+        const auto release = qScopeGuard([&] {
+            if (!released) QTest::mouseRelease(viewport, Qt::LeftButton, Qt::NoModifier, edge);
+        });
+        QTRY_VERIFY_WITH_TIMEOUT(header->sectionSize(0) > viewport->width() + 20, 2500);
+        QTRY_VERIFY(scroll->maximum() > 0 && scroll->isVisible());
+        QTRY_VERIFY(scroll->value() > 0);
+        QTest::mouseRelease(viewport, Qt::LeftButton, Qt::NoModifier, edge);
+        released = true;
+        const int width = header->sectionSize(0);
+        QTest::qWait(120);
+        QCOMPARE(header->sectionSize(0), width);
+        scroll->setValue(scroll->maximum());
+        QTRY_VERIFY(header->sectionViewportPosition(1) < viewport->width());
     }
 
     void nativeTransferPresentationShowsUpstreamProgressAndAvailability()
