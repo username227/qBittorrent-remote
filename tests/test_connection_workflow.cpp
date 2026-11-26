@@ -7799,6 +7799,57 @@ private slots:
         QVERIFY(roles.contains(TorrentModel::StateColorRole));
         QCOMPARE(model.index(7, 0).data(Qt::ForegroundRole).value<QColor>(),
                  QColor(dark ? QStringLiteral("#a371f7") : QStringLiteral("#8250df")));
+
+        // Both server-reported announce error classes override the normal
+        // palette, but warnings alone and absent flags do not. Exercise the
+        // actual painter, text preference, and incremental recovery.
+        const QColor normal(dark ? "#a371f7" : "#8250df");
+        const QColor red(dark ? "#f85149" : "#cf222e");
+        const auto patch = [&](const QJsonObject &flags) {
+            model.applySync(QJsonObject{{"rid", 3}, {"torrents", QJsonObject{{hash, flags}}}});
+        };
+        const auto progress = model.index(7, 2);
+        const auto name = model.index(7, 0);
+        TransferListDelegate delegate;
+        const auto paint = [&] {
+            QImage image(200, 24, QImage::Format_ARGB32_Premultiplied);
+            image.fill(Qt::transparent);
+            QStyleOptionViewItem option;
+            option.rect = QRect(0, 0, 200, 24);
+            option.palette = QApplication::palette();
+            option.state = QStyle::State_Enabled | QStyle::State_Active;
+            QPainter painter(&image);
+            delegate.paint(&painter, option, progress);
+            painter.end();
+            return image;
+        };
+        const auto nativeBar = paint();
+        delegate.setProgressFollowsStateColor(true);
+        const auto normalBar = paint();
+        QCOMPARE(progress.data(TorrentModel::StateColorRole).value<QColor>(), normal);
+        patch(QJsonObject{{"has_tracker_warning", true}});
+        QCOMPARE(name.data(Qt::ForegroundRole).value<QColor>(), normal);
+        QCOMPARE(paint(), normalBar);
+        patch(QJsonObject{{"has_tracker_error", true}});
+        QCOMPARE(name.data(Qt::ForegroundRole).value<QColor>(), red);
+        QCOMPARE(progress.data(TorrentModel::StateColorRole).value<QColor>(), red);
+        const auto errorBar = paint();
+        QVERIFY(errorBar != normalBar);
+        model.setUseStateColors(false);
+        QVERIFY(!name.data(Qt::ForegroundRole).isValid());
+        QCOMPARE(paint(), errorBar);
+        delegate.setProgressFollowsStateColor(false);
+        QCOMPARE(paint(), nativeBar);
+        model.setUseStateColors(true);
+        QCOMPARE(name.data(Qt::ForegroundRole).value<QColor>(), red);
+        delegate.setProgressFollowsStateColor(true);
+        patch(QJsonObject{{"has_tracker_error", false}, {"has_other_announce_error", true}});
+        QCOMPARE(name.data(Qt::ForegroundRole).value<QColor>(), red);
+        QCOMPARE(paint(), errorBar);
+        patch(QJsonObject{{"has_other_announce_error", false}});
+        QCOMPARE(name.data(Qt::ForegroundRole).value<QColor>(), normal);
+        QCOMPARE(paint(), normalBar);
+        QCOMPARE(name.siblingAtColumn(3).data(Qt::UserRole).toString(), QStringLiteral("stoppedUP"));
     }
 
     void userDropsTorrentFilesAndMagnetIntoNativeTransferView()
