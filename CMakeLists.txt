@@ -291,6 +291,7 @@ if(BUILD_TESTING)
         toolbarAndStatusbarRemainEnabledAfterHiddenWindowExit
         corruptedOldToolbarSettingsRecoverOnce
         statusBarFieldsStayFixedDuringAuthenticatedRateUpdates
+        nativeStatusBarShowsSelectedServerTotalsLimitsAndExternalAddresses
     )
 
     add_remote_workflow_group(remote_completion_notification_workflow 90

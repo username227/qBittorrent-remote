@@ -954,10 +954,15 @@ void RemoteSession::pumpOperations()
                     else if (operation.reportOperation)
                         emit preferencesFailed(reason);
                 }
-                else if (operation.onJsonObject)
-                    operation.onJsonObject(json.object());
-                else if (operation.reportOperation)
-                    emit preferencesReceived(json.object());
+                else
+                {
+                    if (operation.endpoint == QLatin1String("api/v2/app/preferences"))
+                        emit dhtPreferenceObserved(json.object().value(QStringLiteral("dht")));
+                    if (operation.onJsonObject)
+                        operation.onJsonObject(json.object());
+                    else if (operation.reportOperation)
+                        emit preferencesReceived(json.object());
+                }
             }
             else if (operation.detailsRequest)
             {

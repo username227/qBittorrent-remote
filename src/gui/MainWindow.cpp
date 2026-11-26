@@ -390,6 +390,8 @@ struct MainWindow::SessionContext
     bool connected = false;
     QString disconnectReason;
     bool altSpeedModeKnown = false;
+    QJsonValue dhtEnabled;
+    bool dhtPreferenceRequested = false;
     bool altSpeedMode = false;
     QPointer<RemoteStatisticsDialog> statistics;
     QList<PendingOriginalDeletion> pendingOriginalDeletions;
@@ -446,6 +448,8 @@ MainWindow::MainWindow(QWidget *parent, QSettings *settings,
         });
     });
     m_ui->statusBar->showMessage(tr("Not connected to a server"));
+    connect(m_ui->statusBar, &QStatusBar::messageChanged, m_ui->statusBar,
+        [this](const QString &message) { m_ui->statusBar->setToolTip(message.toHtmlEscaped()); });
     // Keep the two native status indicators together, before our remote
     // torrent count and the existing transfer rates.
     const auto separator = [this](const char *name) {
@@ -454,6 +458,25 @@ MainWindow::MainWindow(QWidget *parent, QSettings *settings,
         m_ui->statusBar->addPermanentWidget(label);
         return label;
     };
+    // Delimit the normal status message even when Qt clips it to make
+    // room for the permanent server fields.
+    separator("statusMessageSeparator");
+    m_externalIpLabel = new QLabel(tr("External IP: N/A"), m_ui->statusBar);
+    m_externalIpLabel->setObjectName(QStringLiteral("remoteExternalIP"));
+    m_externalIpLabel->setTextFormat(Qt::PlainText);
+    m_externalIpLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_externalIpLabel->setToolTip(tr("Last external addresses reported by the selected server, not this computer."));
+    m_ui->statusBar->addPermanentWidget(m_externalIpLabel);
+    m_externalIpSeparator = separator("externalIPSeparator");
+    m_dhtLabel = new QLabel(tr("DHT: —"), m_ui->statusBar);
+    m_dhtLabel->setObjectName(QStringLiteral("remoteDhtNodes"));
+    m_dhtLabel->setToolTip(tr("DHT nodes reported by the selected server."));
+    m_ui->statusBar->addPermanentWidget(m_dhtLabel);
+    m_dhtSeparator = separator("dhtSeparator");
+    m_dhtLabel->hide();
+    m_dhtSeparator->hide();
+    m_externalIpLabel->hide();
+    m_externalIpSeparator->hide();
     // The globe/flame reports the selected daemon's BitTorrent connectivity,
     // not whether the desktop can reach the authenticated Web API.
     m_connectionStatusLabel = new QLabel(m_ui->statusBar);
@@ -495,7 +518,7 @@ MainWindow::MainWindow(QWidget *parent, QSettings *settings,
     m_serverFreeSpaceLabel->setToolTip(tr(
         "Free space on the selected server's default save drive, not this computer."));
     m_ui->statusBar->addPermanentWidget(m_serverFreeSpaceLabel);
-    for (auto *label : {m_downloadRateLabel, m_uploadRateLabel, m_serverFreeSpaceLabel})
+    for (auto *label : {m_downloadRateLabel, m_uploadRateLabel, m_serverFreeSpaceLabel, m_dhtLabel})
         label->installEventFilter(this);
     updateStatusBarFieldWidths();
     updateTrayActionState();
@@ -1460,7 +1483,7 @@ void MainWindow::enableTorrentDrops(QWidget *widget)
 bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 {
     if ((watched == m_downloadRateLabel || watched == m_uploadRateLabel
-            || watched == m_serverFreeSpaceLabel)
+            || watched == m_serverFreeSpaceLabel || watched == m_dhtLabel)
         && (event->type() == QEvent::FontChange
             || event->type() == QEvent::StyleChange
             || event->type() == QEvent::LocaleChange))
@@ -2276,8 +2299,45 @@ void MainWindow::updateStatusBarFieldWidths()
     const QStringList speedUnits{QStringLiteral("B/s"), QStringLiteral("KiB/s"),
         QStringLiteral("MiB/s"), QStringLiteral("GiB/s"), QStringLiteral("TiB/s"),
         QStringLiteral("PiB/s"), QStringLiteral("EiB/s")};
-    reserve(m_downloadRateLabel, tr("D: %1"), speedUnits);
-    reserve(m_uploadRateLabel, tr("U: %1"), speedUnits);
+    // Reserve the complete native-style rate / limit / total format for
+    // each available field, not the current changing numeric values.
+    const auto reserveTransfer = [&](QLabel *label, const QString &prefix) {
+        const QFontMetrics metrics = label->fontMetrics();
+        int speedWidth = 0, bytesWidth = 0;
+        for (int digit = 1; digit <= 9; ++digit)
+        {
+            const QString number = locale.toString(digit * 111.1, 'f', 1);
+            for (const QString &unit : speedUnits)
+            {
+                speedWidth = qMax(speedWidth, metrics.horizontalAdvance(number + ' ' + unit));
+                bytesWidth = qMax(bytesWidth, metrics.horizontalAdvance(number + ' ' + unit.chopped(2)));
+            }
+        }
+        // Restore the original rate-only reservation exactly. Additional
+        // slots have independent maximum widths, never measured from a
+        // changing live value. A limit slot is only needed while a limit
+        // is active; changing the limit mode may legitimately reflow the bar.
+        int width = 0;
+        for (int digit = 1; digit <= 9; ++digit)
+            for (const QString &unit : speedUnits)
+                width = qMax(width, metrics.horizontalAdvance(prefix.arg(
+                    locale.toString(digit * 1111.1, 'f', 1) + ' ' + unit)));
+        width += 2 * label->margin() + 2 * label->frameWidth() + 2;
+        if (label->property("hasRateLimit").toBool())
+            width += speedWidth + metrics.horizontalAdvance(QStringLiteral(" []")) + 4;
+        if (label->property("hasTransferTotal").toBool())
+            width += bytesWidth + metrics.horizontalAdvance(QStringLiteral(" ()")) + 4;
+        label->setFixedWidth(width);
+        label->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    };
+    reserveTransfer(m_downloadRateLabel, tr("D: %1"));
+    reserveTransfer(m_uploadRateLabel, tr("U: %1"));
+    if (m_dhtLabel)
+    {
+        const QFontMetrics metrics = m_dhtLabel->fontMetrics();
+        m_dhtLabel->setFixedWidth(qMax(metrics.horizontalAdvance(tr("DHT: %1 nodes").arg(locale.toString(999999))),
+            metrics.horizontalAdvance(m_dhtLabel->text())) + 4);
+    }
     reserve(m_serverFreeSpaceLabel, tr("Free: %1"),
         {QStringLiteral("B"), QStringLiteral("KiB"), QStringLiteral("MiB"),
          QStringLiteral("GiB"), QStringLiteral("TiB"), QStringLiteral("PiB")});
@@ -2285,10 +2345,51 @@ void MainWindow::updateStatusBarFieldWidths()
 
 void MainWindow::updateTransferRates(const ServerPane *pane)
 {
-    m_downloadRateLabel->setText(tr("D: %1").arg(
-        pane ? pane->downloadRateText() : QStringLiteral("—")));
-    m_uploadRateLabel->setText(tr("U: %1").arg(
-        pane ? pane->uploadRateText() : QStringLiteral("—")));
+    const auto state = pane ? pane->serverState() : QJsonObject{};
+    const auto format = [](double value, bool rate) {
+        static const char *units[] = {"B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB"};
+        int unit = 0;
+        while (value >= 1024 && unit < 6) { value /= 1024; ++unit; }
+        return QLocale().toString(value, 'f', unit == 0 ? 0 : 1) + ' '
+            + QString::fromLatin1(units[unit]) + (rate ? QStringLiteral("/s") : QString());
+    };
+    bool resize = false;
+    const auto update = [&](QLabel *label, const QString &base, const char *limitKey, const char *totalKey) {
+        const auto limit = state.value(QLatin1String(limitKey));
+        const auto total = state.value(QLatin1String(totalKey));
+        const bool knownLimit = limit.isDouble() && limit.toDouble() >= 0;
+        const bool hasLimit = knownLimit && limit.toDouble() > 0;
+        const bool hasTotal = total.isDouble() && total.toDouble() >= 0;
+        QString text = base;
+        if (hasLimit) text += QStringLiteral(" [") + format(limit.toDouble(), true) + ']';
+        if (hasTotal) text += QStringLiteral(" (") + format(total.toDouble(), false) + ')';
+        resize |= label->property("hasRateLimit").toBool() != hasLimit
+            || label->property("hasTransferTotal").toBool() != hasTotal;
+        label->setProperty("hasRateLimit", hasLimit);
+        label->setProperty("hasTransferTotal", hasTotal);
+        label->setText(text);
+        label->setToolTip(tr("Current transfer speed: %1\nRate limit: %2\nSession transferred: %3")
+            .arg(base, hasLimit ? format(limit.toDouble(), true)
+                : limit.isDouble() && limit.toDouble() == 0 ? tr("Unlimited") : tr("Unavailable"),
+                hasTotal ? format(total.toDouble(), false) : tr("Unavailable")));
+    };
+    update(m_downloadRateLabel, tr("D: %1").arg(pane ? pane->downloadRateText() : QStringLiteral("—")),
+        "dl_rate_limit", "dl_info_data");
+    update(m_uploadRateLabel, tr("U: %1").arg(pane ? pane->uploadRateText() : QStringLiteral("—")),
+        "up_rate_limit", "up_info_data");
+    const auto nodes = state.value(QStringLiteral("dht_nodes"));
+    const bool knownNodes = nodes.isDouble() && nodes.toDouble() >= 0;
+    const auto connection = activeConnection();
+    const bool disabled = pane && connection && connection->pane == pane
+        && connection->dhtEnabled.isBool() && !connection->dhtEnabled.toBool();
+    const bool showDht = knownNodes && !disabled;
+    m_dhtLabel->setText(showDht ? tr("DHT: %1 nodes").arg(QLocale().toString(nodes.toInteger())) : tr("DHT: —"));
+    m_dhtLabel->setVisible(showDht);
+    m_dhtSeparator->setVisible(showDht);
+    // Only a change in visible fields warrants remeasurement; an ordinary
+    // speed sample must not resize any status-bar compartment.
+    if (resize)
+        updateStatusBarFieldWidths();
     refreshWindowTitle();
 }
 
@@ -2321,12 +2422,20 @@ void MainWindow::updateServerFreeSpace()
         QStringLiteral("Preferences/Behavior/ShowServerFreeSpace"), false).toBool();
     m_serverFreeSpaceLabel->setVisible(show);
     m_freeSpaceSeparator->setVisible(show);
-    if (show)
-    {
-        const auto connection = activeConnection();
-        m_serverFreeSpaceLabel->setText(connection && connection->connected
-            ? connection->pane->freeSpaceText() : tr("Free: —"));
-    }
+    const auto connection = activeConnection();
+    const bool connected = connection && connection->connected;
+    m_serverFreeSpaceLabel->setText(connected ? connection->pane->freeSpaceText() : tr("Free: —"));
+    if (!m_externalIpLabel) return;
+    const auto state = connected ? connection->pane->serverState() : QJsonObject{};
+    const QString ipv4 = state.value(QStringLiteral("last_external_address_v4")).toString();
+    const QString ipv6 = state.value(QStringLiteral("last_external_address_v6")).toString();
+    const QString text = !ipv4.isEmpty() && !ipv6.isEmpty() ? tr("External IPs: %1, %2").arg(ipv4, ipv6)
+        : !ipv4.isEmpty() || !ipv6.isEmpty() ? tr("External IP: %1").arg(ipv4 + ipv6)
+        : tr("External IP: N/A");
+    m_externalIpLabel->setText(text);
+    const bool showIp = m_settings->value(QStringLiteral("Preferences/Behavior/ShowExternalIP"), false).toBool();
+    m_externalIpLabel->setVisible(showIp);
+    m_externalIpSeparator->setVisible(showIp);
 }
 
 void MainWindow::updateActiveUi()
@@ -2463,6 +2572,8 @@ void MainWindow::disconnectConnection(const std::shared_ptr<SessionContext> &con
     connection->pane->setLogAvailable(nullptr, false, 15);
     if (connection->statistics) connection->statistics->close();
     connection->altSpeedModeKnown = false;
+    connection->dhtEnabled = QJsonValue();
+    connection->dhtPreferenceRequested = false;
     connection->pendingOriginalDeletions.clear();
     connection->incompleteCompletionTimes.clear();
     connection->pane->clearQueueCapability();
@@ -3465,6 +3576,14 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
                 });
             }
         });
+    connect(session, &Remote::RemoteSession::dhtPreferenceObserved, this,
+        [this, connection, session](const QJsonValue &enabled) {
+            if (!containsConnection(connection) || connection->session != session || !connection->connected)
+                return;
+            connection->dhtEnabled = enabled;
+            if (activeConnection() == connection)
+                updateTransferRates(connection->pane);
+        });
     connect(session, &Remote::RemoteSession::mainDataUpdated, this,
         [this, connection](const QJsonObject &payload) {
             if (!containsConnection(connection))
@@ -3484,7 +3603,20 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
                         added.append(name.isEmpty() ? it.key() : name);
                     }
             }
+            const auto previousNodes = connection->pane->serverState().value(QStringLiteral("dht_nodes"));
             connection->pane->applySync(payload);
+            const auto nodes = connection->pane->serverState().value(QStringLiteral("dht_nodes"));
+            // One authenticated read when DHT telemetry first appears, and
+            // another if a zero/nonzero transition suggests an external
+            // setting change. Ordinary sync polls do not read preferences.
+            if (connection->session && nodes.isDouble()
+                && (!connection->dhtPreferenceRequested
+                    || (previousNodes.isDouble()
+                        && ((previousNodes.toDouble() == 0) != (nodes.toDouble() == 0)))))
+            {
+                connection->dhtPreferenceRequested = true;
+                connection->session->requestPreferences([](const QJsonObject &) {}, [](const QString &) {});
+            }
             if (connection->statistics)
                 connection->statistics->updateStatistics(connection->pane->serverState());
             if (!added.isEmpty()) m_completionNotifier->deliverAdded(connection->profile.name, added);

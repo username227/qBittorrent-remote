@@ -106,6 +106,10 @@ private:
     QLabel *m_uploadRateLabel = nullptr;
     QLabel *m_freeSpaceSeparator = nullptr;
     QLabel *m_serverFreeSpaceLabel = nullptr;
+    QLabel *m_dhtLabel = nullptr;
+    QLabel *m_dhtSeparator = nullptr;
+    QLabel *m_externalIpLabel = nullptr;
+    QLabel *m_externalIpSeparator = nullptr;
     QSystemTrayIcon *m_trayIcon = nullptr;
     CompletionNotifier *m_completionNotifier = nullptr;
     QMenu *m_trayMenu = nullptr;

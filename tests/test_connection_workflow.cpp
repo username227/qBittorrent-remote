@@ -7982,6 +7982,144 @@ private slots:
         }
     }
 
+    void nativeStatusBarShowsSelectedServerTotalsLimitsAndExternalAddresses()
+    {
+        DemoQbittorrentServer first(true), second(true);
+        first.setStatusRates({{"dl_info_speed", 2048}, {"up_info_speed", 1024},
+            {"dl_rate_limit", 4096}, {"up_rate_limit", 0},
+            {"dl_info_data", 1048576}, {"up_info_data", 2097152},
+            {"dht_nodes", 42}, {"last_external_address_v4", "192.0.2.10"},
+            {"last_external_address_v6", "2001:db8::10"}});
+        first.setServerPreferences({{"dht", true}});
+        second.setServerPreferences({{"dht", false}});
+        second.setStatusRates({{"dl_info_speed", 0}, {"up_info_speed", 0}, {"dht_nodes", 0}});
+        QVERIFY(first.start() && second.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath("native-status.ini"), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.resize(1600, 850);
+        window.show();
+        auto *bar = window.statusBar();
+        auto *down = bar->findChild<QLabel *>("remoteDownloadRate");
+        auto *up = bar->findChild<QLabel *>("remoteUploadRate");
+        auto *dht = bar->findChild<QLabel *>("remoteDhtNodes");
+        auto *ip = bar->findChild<QLabel *>("remoteExternalIP");
+        auto *options = window.findChild<QAction *>("actionOptions");
+        QVERIFY(down && up && dht && ip && options);
+        QVERIFY(ip->isHidden() && dht->isHidden());
+        openConnectDialog(window, first.url());
+        QTRY_VERIFY_WITH_TIMEOUT(down->text().contains("MiB"), 6000);
+        const QLocale locale;
+        QCOMPARE(down->text(), QStringLiteral("D: %1 KiB/s [%2 KiB/s] (%3 MiB)")
+            .arg(locale.toString(2.0, 'f', 1), locale.toString(4.0, 'f', 1), locale.toString(1.0, 'f', 1)));
+        QCOMPARE(up->text(), QStringLiteral("U: %1 KiB/s (%2 MiB)")
+            .arg(locale.toString(1.0, 'f', 1), locale.toString(2.0, 'f', 1)));
+        QVERIFY(up->toolTip().contains("Unlimited"));
+        QCOMPARE(dht->text(), QStringLiteral("DHT: 42 nodes"));
+        QVERIFY(dht->isVisible() && ip->isHidden());
+        const auto configureIp = [&](bool checked, bool apply) {
+            bool exercised = false;
+            QTimer::singleShot(0, &window, [&] {
+                auto *dialog = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget());
+                if (!dialog) return;
+                const auto cleanup = qScopeGuard([dialog] { if (dialog->isVisible()) dialog->reject(); });
+                auto *field = dialog->findChild<QCheckBox *>("checkBoxExternalIPStatusBar");
+                auto *nav = dialog->findChild<QListWidget *>("preferencesSections");
+                auto *buttons = dialog->findChild<QDialogButtonBox *>("buttonBox");
+                QVERIFY(field && nav && buttons);
+                nav->setCurrentRow(1);
+                QVERIFY(field->isEnabled());
+                field->setChecked(checked);
+                if (apply)
+                {
+                    QVERIFY(buttons->button(QDialogButtonBox::Apply)->isEnabled());
+                    buttons->button(QDialogButtonBox::Apply)->click();
+                    QVERIFY(!buttons->button(QDialogButtonBox::Apply)->isEnabled());
+                }
+                exercised = true;
+                dialog->reject();
+            });
+            options->trigger();
+            QVERIFY(exercised);
+        };
+        configureIp(true, false);
+        QVERIFY(ip->isHidden());
+        configureIp(true, true);
+        QVERIFY(ip->isVisible());
+        QCOMPARE(ip->text(), QStringLiteral("External IPs: 192.0.2.10, 2001:db8::10"));
+        QVERIFY(settings.value("Preferences/Behavior/ShowExternalIP").toBool());
+        QCoreApplication::processEvents();
+        const int width = down->width();
+        first.setStatusRates({{"dl_info_speed", 4096}, {"dl_info_data", 3145728}});
+        QTRY_VERIFY_WITH_TIMEOUT(down->text().endsWith(locale.toString(3.0, 'f', 1) + " MiB)"), 6000);
+        QCOMPARE(down->width(), width);
+        // Do not reserve an entire invisible limit slot for unlimited
+        // rates. Explicit limit-mode changes may reflow the layout once;
+        // subsequent speed changes must leave the new layout stationary.
+        const int upWidth = up->width();
+        first.setStatusRates({{"dl_rate_limit", 0}, {"up_rate_limit", 8192}});
+        QTRY_VERIFY_WITH_TIMEOUT(up->text().contains("["), 6000);
+        QVERIFY(!down->text().contains("["));
+        QVERIFY(down->width() < width);
+        QVERIFY(up->width() > upWidth);
+        QVERIFY(down->toolTip().contains("Unlimited"));
+        QCoreApplication::processEvents();
+        const int compactDownWidth = down->width(), limitedUpWidth = up->width();
+        const int downX = down->x(), upX = up->x();
+        first.setStatusRates({{"dl_info_speed", 8192}, {"up_info_speed", 4096}});
+        QTRY_VERIFY_WITH_TIMEOUT(down->text().startsWith(QStringLiteral("D: %1 KiB/s").arg(locale.toString(8.0, 'f', 1))), 6000);
+        QCoreApplication::processEvents();
+        QCOMPARE(down->width(), compactDownWidth);
+        QCOMPARE(up->width(), limitedUpWidth);
+        QCOMPARE(down->x(), downX);
+        QCOMPARE(up->x(), upX);
+        QCOMPARE(dht->text(), QStringLiteral("DHT: 42 nodes"));
+        QCOMPARE(ip->text(), QStringLiteral("External IPs: 192.0.2.10, 2001:db8::10"));
+        openConnectDialog(window, second.url(), false, true, true, "Other status server");
+        QTRY_COMPARE_WITH_TIMEOUT(down->text(), QStringLiteral("D: 0 B/s"), 6000);
+        QCOMPARE(up->text(), QStringLiteral("U: 0 B/s"));
+        QCOMPARE(ip->text(), QStringLiteral("External IP: N/A"));
+        QTRY_VERIFY_WITH_TIMEOUT(dht->isHidden(), 6000);
+        auto *tabs = window.findChild<QTabWidget *>("serverTabs");
+        QVERIFY(tabs && tabs->count() == 2);
+        tabs->setCurrentIndex(0);
+        QTRY_COMPARE(ip->text(), QStringLiteral("External IPs: 192.0.2.10, 2001:db8::10"));
+        QVERIFY(dht->isVisible());
+        configureIp(false, true);
+        QVERIFY(ip->isHidden());
+        first.setStatusRates({{"dht_nodes", 0}});
+        QTRY_COMPARE_WITH_TIMEOUT(dht->text(), QStringLiteral("DHT: 0 nodes"), 6000);
+        QVERIFY(dht->isVisible());
+        // An enabled session with no nodes remains visible. Disabling DHT
+        // through the real Preferences workflow hides the field and separator
+        // only after the server confirms the setting.
+        bool changed = false;
+        QTimer::singleShot(0, &window, [&] {
+            auto *dialog = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget());
+            QVERIFY(dialog);
+            const auto cleanup = qScopeGuard([dialog] { if (dialog->isVisible()) dialog->reject(); });
+            auto *nav = dialog->findChild<QListWidget *>("preferencesSections");
+            auto *field = dialog->findChild<QCheckBox *>("checkDHT");
+            auto *buttons = dialog->findChild<QDialogButtonBox *>("buttonBox");
+            QVERIFY(nav && field && buttons);
+            nav->setCurrentRow(5);
+            QTRY_VERIFY_WITH_TIMEOUT(field->isEnabled(), 6000);
+            QVERIFY(field->isChecked());
+            field->setChecked(false);
+            QVERIFY(dht->isVisible());
+            buttons->button(QDialogButtonBox::Apply)->click();
+            QTRY_VERIFY_WITH_TIMEOUT(dht->isHidden(), 6000);
+            QVERIFY(bar->findChild<QLabel *>("dhtSeparator")->isHidden());
+            QTRY_VERIFY_WITH_TIMEOUT(buttons->isEnabled(), 6000);
+            changed = true;
+        });
+        options->trigger();
+        QVERIFY(changed);
+        QCOMPARE(first.serverPreferences().value("dht").toBool(), false);
+    }
+
     void liveTorrentSwarmCountsHonorHideZeroAndIncrementalSync()
     {
         DemoQbittorrentServer server(true);
