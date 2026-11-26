@@ -63,6 +63,9 @@ private:
     void bindIPFilterControls();
     void bindSpeedControls();
     void bindRSSControls();
+    void bindWebUIControls();
+    void refreshWebUIControls();
+    bool validateWebUIChanges(const QJsonObject &changes);
     bool validateRSSChanges(const QJsonObject &changes);
     void bindBitTorrentPrivacyControls();
     void bindBitTorrentQueueingControls();
@@ -157,6 +160,7 @@ private:
     QSet<QString> m_changedProfiles;
     bool m_behaviorDirty = false;
     bool m_rssImageBaseline = false;
+    QString m_webUISubnets;
     bool m_additionDirty = false;
     QStandardItemModel *m_watchedFoldersModel = nullptr;
     QJsonObject m_watchedFolders;

@@ -4718,6 +4718,150 @@ private slots:
         QCOMPARE(legacy.commandsFor("/api/v2/rss/addFeed"), 1);
     }
 
+    void webUIPreferencesFollowSelectedServer()
+    {
+        DemoQbittorrentServer legacy(true), modern(true);
+        modern.enableModernResponses();
+        const QJsonObject initial{
+            {"web_ui_address", "*"}, {"web_ui_port", 8080}, {"use_https", false},
+            {"web_ui_https_cert_path", ""}, {"web_ui_https_key_path", ""},
+            {"web_ui_username", "legacy-user"}, {"web_ui_upnp", false},
+            {"bypass_local_auth", false}, {"bypass_auth_subnet_whitelist_enabled", true},
+            {"bypass_auth_subnet_whitelist", "192.0.2.0/24"},
+            {"web_ui_max_auth_fail_count", 5}, {"web_ui_ban_duration", 3600},
+            {"web_ui_session_timeout", 1800}, {"alternative_webui_enabled", false},
+            {"alternative_webui_path", "/share/web"}, {"web_ui_clickjacking_protection_enabled", true},
+            {"web_ui_csrf_protection_enabled", true}, {"web_ui_secure_cookie_enabled", true},
+            {"web_ui_host_header_validation_enabled", true}, {"web_ui_domain_list", "example.test"},
+            {"web_ui_use_custom_http_headers_enabled", false}, {"web_ui_custom_http_headers", ""},
+            {"web_ui_reverse_proxy_enabled", false}, {"web_ui_reverse_proxies_list", ""},
+            {"dyndns_enabled", false}, {"dyndns_service", 0}, {"dyndns_domain", "example.test"},
+            {"dyndns_username", "dns-user"}, {"dyndns_password", "dns-secret"}
+        };
+        QJsonObject other = initial;
+        other.insert("web_ui_port", 9000);
+        other.insert("web_ui_username", "modern-user");
+        other.insert("web_ui_sessions_count_limit", 10);
+        other.insert("web_ui_api_key", "secret-test-key");
+        legacy.setServerPreferences(initial);
+        modern.setServerPreferences(other);
+        QVERIFY(legacy.start() && modern.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath("prefs.ini"), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, legacy.url());
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains("v5.1.4"), 6000);
+        openConnectDialog(window, modern.url(), false, true, true, "Modern seedbox");
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains("v5.3.0"), 6000);
+        auto *tabs = window.findChild<QTabWidget *>("serverTabs");
+        auto *prefs = window.findChild<QAction *>("actionOptions");
+        QVERIFY(tabs && prefs);
+        const auto exercise = [&](bool modernServer, bool save) {
+            bool finished = false;
+            QTimer::singleShot(0, &window, [&] {
+                auto *dlg = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget());
+                QVERIFY(dlg);
+                const auto cleanup = qScopeGuard([dlg] { if (dlg->isVisible()) dlg->reject(); });
+                auto *nav = dlg->findChild<QListWidget *>("preferencesSections");
+                QVERIFY(nav);
+                nav->setCurrentRow(8);
+                auto *group = dlg->findChild<QGroupBox *>("checkWebUI");
+                auto *port = dlg->findChild<QSpinBox *>("spinWebUIPort");
+                auto *user = dlg->findChild<QLineEdit *>("textWebUIUsername");
+                auto *password = dlg->findChild<QLineEdit *>("textWebUIPassword");
+                auto *key = dlg->findChild<QLineEdit *>("textWebUIAPIKey");
+                auto *upnp = dlg->findChild<QCheckBox *>("checkWebUIUPnP");
+                auto *counter = dlg->findChild<QSpinBox *>("spinBanCounter");
+                auto *duration = dlg->findChild<QSpinBox *>("spinBanDuration");
+                auto *sessions = dlg->findChild<QSpinBox *>("spinBoxWebUISessionsCountLimit");
+                auto *apply = dlg->findChild<QPushButton *>("preferencesApply");
+                QVERIFY(group && port && user && password && key && upnp && counter && duration && sessions && apply);
+                QTRY_VERIFY_WITH_TIMEOUT(upnp->isEnabled(), 6000);
+                QVERIFY(!group->isCheckable());
+                QVERIFY(group->isEnabled());
+                QCOMPARE(port->value(), modernServer ? 9000 : 8080);
+                QCOMPARE(user->text(), modernServer ? QStringLiteral("modern-user") : QStringLiteral("legacy-user"));
+                QVERIFY(!port->isEnabled() && !user->isEnabled() && !password->isEnabled());
+                QVERIFY(password->text().isEmpty());
+                QCOMPARE(sessions->isVisible(), modernServer);
+                QCOMPARE(key->isVisible(), modernServer);
+                if (modernServer)
+                {
+                    QCOMPARE(sessions->value(), 10);
+                    QVERIFY(sessions->isEnabled());
+                    QCOMPARE(key->echoMode(), QLineEdit::Password);
+                    QCOMPARE(key->text(), QStringLiteral("secret-test-key"));
+                }
+                QVERIFY(!apply->isEnabled());
+                counter->setValue(0);
+                QVERIFY(!duration->isEnabled());
+                counter->setValue(5);
+                QVERIFY(duration->isEnabled());
+                QVERIFY(!apply->isEnabled());
+                upnp->setChecked(true);
+                QVERIFY(apply->isEnabled());
+                if (save)
+                {
+                    bool confirmed = false;
+                    QString unexpectedDialog;
+                    QTimer modalDriver;
+                    modalDriver.setInterval(20);
+                    connect(&modalDriver, &QTimer::timeout, dlg, [&] {
+                        auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+                        if (!box) return;
+                        if (box->windowTitle() == QStringLiteral("Change server WebUI settings")
+                            && box->button(QMessageBox::Yes))
+                        {
+                            confirmed = true;
+                            box->button(QMessageBox::Yes)->click();
+                        }
+                        else
+                        {
+                            unexpectedDialog = box->windowTitle() + QStringLiteral(": ") + box->text();
+                            box->reject();
+                        }
+                    });
+                    modalDriver.start();
+                    apply->click();
+                    // Apply is disabled as soon as the asynchronous write starts.
+                    // Wait for the page to be unlocked after readback, otherwise
+                    // the scope guard's reject() is ignored while remoteBusy.
+                    QTRY_VERIFY_WITH_TIMEOUT(nav->isEnabled(), 6000);
+                    modalDriver.stop();
+                    QVERIFY2(unexpectedDialog.isEmpty(), qPrintable(unexpectedDialog));
+                    QVERIFY(confirmed);
+                    QVERIFY(!apply->isEnabled());
+                    QCOMPARE(modern.commandsFor("/api/v2/app/setPreferences"), 1);
+                }
+                finished = true;
+            });
+            prefs->trigger();
+            QVERIFY(finished);
+        };
+        tabs->setCurrentIndex(0);
+        exercise(false, false);
+        QCOMPARE(legacy.serverPreferences(), initial);
+        QCOMPARE(legacy.commandsFor("/api/v2/app/setPreferences"), 0);
+        tabs->setCurrentIndex(1);
+        exercise(true, true);
+        auto expected = other;
+        expected.insert("web_ui_upnp", true);
+        QCOMPARE(modern.serverPreferences(), expected);
+        QCOMPARE(legacy.serverPreferences(), initial);
+        QCOMPARE(modern.commandsFor("/api/v2/app/setPreferences"), 1);
+        const QUrlQuery form(QString::fromUtf8(modern.lastCommandBody("/api/v2/app/setPreferences")));
+        const QJsonObject delta = QJsonDocument::fromJson(form.queryItemValue("json", QUrl::FullyDecoded).toUtf8()).object();
+        QCOMPARE(delta, (QJsonObject{{"web_ui_upnp", true}}));
+        settings.sync();
+        QFile file(settings.fileName());
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const auto bytes = file.readAll();
+        QVERIFY(!bytes.contains("dns-secret") && !bytes.contains("secret-test-key"));
+    }
+
     void rssPreferencesFollowSelectedServer()
     {
         DemoQbittorrentServer legacy(true), modern(true);

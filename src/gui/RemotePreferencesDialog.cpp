@@ -57,6 +57,8 @@
 #include <QVBoxLayout>
 #include <QVersionNumber>
 #include <QHBoxLayout>
+#include <QHostAddress>
+#include <QClipboard>
 
 namespace
 {
@@ -234,6 +236,7 @@ RemotePreferencesDialog::RemotePreferencesDialog(QSettings &settings,
         && version >= QVersionNumber(5, 3, 0);
     bindIPFilterControls();
     bindRSSControls();
+    bindWebUIControls();
     bindSpeedControls();
     bindBitTorrentPrivacyControls();
     bindBitTorrentQueueingControls();
@@ -686,6 +689,157 @@ bool RemotePreferencesDialog::validateRSSChanges(const QJsonObject &changes)
            "and add matching torrents. This can continue when qBittorrent Remote is closed. "
            "Apply these settings?"), QMessageBox::Yes | QMessageBox::No, QMessageBox::No)
         == QMessageBox::Yes;
+}
+
+void RemotePreferencesDialog::bindWebUIControls()
+{
+    // A remote client must never offer to disable the server's Web API.
+    m_ui->checkWebUI->setCheckable(false);
+    m_ui->checkWebUI->setEnabled(true);
+    m_ui->labelWebUIError->setWordWrap(true);
+    m_ui->labelWebUIError->setText(tr("Connection settings are shown for reference. Changing the address, port, HTTPS or login requires a separate connection-safe workflow."));
+    const auto locked = [] { return false; };
+    const auto connectionTip = tr("Current server value. Editing requires the connection transition workflow.");
+    bindRemoteControl("web_ui_address", m_ui->textWebUIAddress, locked, connectionTip);
+    bindRemoteControl("web_ui_port", m_ui->spinWebUIPort, locked, connectionTip);
+    bindRemoteControl("use_https", m_ui->checkWebUIHttps, locked, connectionTip);
+    bindRemoteControl("web_ui_https_cert_path", m_ui->textWebUIHttpsCert, locked, connectionTip);
+    bindRemoteControl("web_ui_https_key_path", m_ui->textWebUIHttpsKey, locked, connectionTip);
+    bindRemoteControl("web_ui_username", m_ui->textWebUIUsername, locked, connectionTip);
+    m_ui->textWebUIPassword->setToolTip(tr("The server does not return its current password. Password changes require a connection-safe workflow."));
+    m_ui->textWebUIPassword->clear();
+    // The API key is a secret and its rotation/deletion uses separate actions.
+    // Show only a masked existing key, never store it in QSettings.
+    m_ui->textWebUIAPIKey->setEchoMode(QLineEdit::Password);
+    bindRemoteControl("web_ui_api_key", m_ui->textWebUIAPIKey, locked,
+        tr("Existing server API key (masked). Key management is not yet enabled."));
+
+    bindRemoteControl("web_ui_upnp", m_ui->checkWebUIUPnP, {},
+        tr("Forward the WebUI port on the server's router. This may expose the WebUI beyond the local network."));
+    bindRemoteControl("bypass_local_auth", m_ui->checkBypassLocalAuth, {},
+        tr("Allow unauthenticated requests from the server's loopback interface."));
+    bindRemoteControl("bypass_auth_subnet_whitelist_enabled", m_ui->checkBypassAuthSubnetWhitelist, {},
+        tr("Allow unauthenticated requests from the configured server-side IP subnets."));
+    bindRemoteField(RemoteField{
+        QStringLiteral("bypass_auth_subnet_whitelist"), m_ui->IPSubnetWhitelistButton,
+        [this] { return QJsonValue(m_webUISubnets); },
+        [this](const QJsonValue &v) { m_webUISubnets = v.toString(); },
+        [](const QJsonValue &v) { return v.isString(); },
+        [this] { return remoteFieldAvailable("bypass_auth_subnet_whitelist_enabled")
+            && m_ui->checkBypassAuthSubnetWhitelist->isChecked(); },
+        tr("Edit the server's authentication bypass list. One IP address or CIDR subnet per line.")
+    });
+    connect(m_ui->IPSubnetWhitelistButton, &QPushButton::clicked, this, [this] {
+        if (!m_ui->IPSubnetWhitelistButton->isEnabled() || m_remoteBusy) return;
+        QDialog dialog(this);
+        dialog.setWindowTitle(tr("IP subnet whitelist"));
+        auto *layout = new QVBoxLayout(&dialog);
+        auto *note = new QLabel(tr("Clients from these IP addresses or subnets may access the WebUI without authentication. Enter one per line."), &dialog);
+        note->setWordWrap(true);
+        layout->addWidget(note);
+        auto *editor = new QPlainTextEdit(m_webUISubnets, &dialog);
+        editor->setObjectName(QStringLiteral("webUISubnetWhitelist"));
+        layout->addWidget(editor);
+        auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+        layout->addWidget(buttons);
+        connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+        connect(buttons, &QDialogButtonBox::accepted, &dialog, [&] {
+            QStringList subnets;
+            for (const QString &line : editor->toPlainText().split(QLatin1Char('\n')))
+            {
+                const QString input = line.trimmed();
+                if (input.isEmpty()) continue;
+                const auto subnet = QHostAddress::parseSubnet(input);
+                if (subnet.first.isNull() || subnet.second < 0)
+                {
+                    QMessageBox::warning(&dialog, tr("Invalid subnet"), tr("Enter a valid IPv4 or IPv6 address or CIDR subnet on each line."));
+                    return;
+                }
+                const QString value = subnet.first.toString() + QLatin1Char('/') + QString::number(subnet.second);
+                if (!subnets.contains(value)) subnets.append(value);
+            }
+            m_webUISubnets = subnets.join(QLatin1Char('\n'));
+            dialog.accept();
+            remoteFieldChanged();
+        });
+        dialog.exec();
+    });
+
+    const auto bindSpin = [this](const char *key, QSpinBox *spin, std::function<bool()> dependency = {}) {
+        if (auto *editor = spin->findChild<QLineEdit *>()) editor->setEnabled(true);
+        bindRemoteControl(key, spin, std::move(dependency));
+    };
+    bindSpin("web_ui_max_auth_fail_count", m_ui->spinBanCounter);
+    bindSpin("web_ui_ban_duration", m_ui->spinBanDuration, [this] {
+        return remoteFieldAvailable("web_ui_max_auth_fail_count") && m_ui->spinBanCounter->value() > 0;
+    });
+    bindSpin("web_ui_session_timeout", m_ui->spinSessionTimeout);
+    bindSpin("web_ui_sessions_count_limit", m_ui->spinBoxWebUISessionsCountLimit);
+
+    bindRemoteControl("alternative_webui_enabled", m_ui->groupAltWebUI);
+    bindRemoteControl("alternative_webui_path", m_ui->textWebUIRootFolder, [this] {
+        return remoteFieldAvailable("alternative_webui_enabled") && m_ui->groupAltWebUI->isChecked();
+    }, tr("Directory on the connected server, not the desktop."));
+    bindRemoteControl("web_ui_clickjacking_protection_enabled", m_ui->checkClickjacking);
+    bindRemoteControl("web_ui_csrf_protection_enabled", m_ui->checkCSRFProtection);
+    // These settings can reject the currently used HTTP connection or change
+    // reverse-proxy authentication. Read live values now; edit in the next
+    // checkpoint together with the endpoint/credential recovery workflow.
+    bindRemoteControl("web_ui_secure_cookie_enabled", m_ui->checkSecureCookie, locked, connectionTip);
+    bindRemoteControl("web_ui_host_header_validation_enabled", m_ui->groupHostHeaderValidation, locked, connectionTip);
+    bindRemoteControl("web_ui_domain_list", m_ui->textServerDomains, locked, connectionTip);
+    bindRemoteControl("web_ui_use_custom_http_headers_enabled", m_ui->groupWebUIAddCustomHTTPHeaders, locked, connectionTip);
+    bindRemoteControl("web_ui_custom_http_headers", m_ui->textWebUICustomHTTPHeaders, locked, connectionTip);
+    bindRemoteControl("web_ui_reverse_proxy_enabled", m_ui->groupEnableReverseProxySupport, locked, connectionTip);
+    bindRemoteControl("web_ui_reverse_proxies_list", m_ui->textTrustedReverseProxiesList, locked, connectionTip);
+
+    // Dynamic DNS can change the hostname through which the client connects.
+    // Expose its current server configuration, but defer writes for now.
+    bindRemoteControl("dyndns_enabled", m_ui->checkDynDNS, locked, connectionTip);
+    bindRemoteControl("dyndns_service", m_ui->comboDNSService, locked, connectionTip);
+    bindRemoteControl("dyndns_domain", m_ui->domainNameTxt, locked, connectionTip);
+    bindRemoteControl("dyndns_username", m_ui->DNSUsernameTxt, locked, connectionTip);
+    m_ui->DNSPasswordTxt->setEchoMode(QLineEdit::Password);
+    bindRemoteControl("dyndns_password", m_ui->DNSPasswordTxt, locked, connectionTip);
+}
+
+void RemotePreferencesDialog::refreshWebUIControls()
+{
+    // A missing 5.3-only key is not an empty key on an older daemon.
+    m_ui->groupWebUIAPIKey->setVisible(remoteFieldAvailable("web_ui_api_key"));
+    m_ui->labelWebUISessionsCountLimit->setVisible(remoteFieldAvailable("web_ui_sessions_count_limit"));
+    m_ui->spinBoxWebUISessionsCountLimit->setVisible(remoteFieldAvailable("web_ui_sessions_count_limit"));
+    m_ui->lblBanDuration->setEnabled(m_ui->spinBanDuration->isEnabled());
+}
+
+bool RemotePreferencesDialog::validateWebUIChanges(const QJsonObject &changes)
+{
+    const auto enabled = [&changes](const char *key) { return changes.value(QLatin1String(key)).toBool(); };
+    if ((enabled("alternative_webui_enabled") || changes.contains("alternative_webui_path"))
+        && m_ui->groupAltWebUI->isChecked()
+        && (!remoteFieldAvailable("alternative_webui_path") || m_ui->textWebUIRootFolder->text().trimmed().isEmpty()))
+    {
+        QMessageBox::warning(this, tr("Alternative WebUI"), tr("Enter the server directory containing the alternative WebUI."));
+        return false;
+    }
+    // Authentication, router exposure and session policy deserve explicit
+    // confirmation. Do not conflate a successful readback with proof of reachability.
+    const bool securityChange = changes.contains("web_ui_upnp")
+        || changes.contains("bypass_local_auth")
+        || changes.contains("bypass_auth_subnet_whitelist_enabled")
+        || changes.contains("bypass_auth_subnet_whitelist")
+        || changes.contains("web_ui_max_auth_fail_count")
+        || changes.contains("web_ui_ban_duration")
+        || changes.contains("web_ui_session_timeout")
+        || changes.contains("web_ui_sessions_count_limit")
+        || changes.contains("web_ui_clickjacking_protection_enabled")
+        || changes.contains("web_ui_csrf_protection_enabled")
+        || changes.contains("alternative_webui_enabled")
+        || changes.contains("alternative_webui_path");
+    if (!securityChange) return true;
+    return QMessageBox::question(this, tr("Change server WebUI settings"),
+        tr("These settings affect access to the selected server. Authentication bypass and router forwarding may expose the WebUI; changes to session and security policy may interrupt existing clients. Ensure you have independent access to the server before applying. Continue?"),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes;
 }
 
 void RemotePreferencesDialog::bindSpeedControls()
@@ -2033,6 +2187,7 @@ void RemotePreferencesDialog::refreshRemoteControls()
     refreshAutomaticTrackerControls();
     refreshI2PControls();
     refreshProxyControls();
+    refreshWebUIControls();
     const bool portAvailable = remoteFieldAvailable("listen_port");
     m_ui->randomButton->setEnabled(portAvailable);
     m_ui->randomButton->setToolTip(portAvailable
@@ -2111,6 +2266,15 @@ QJsonObject RemotePreferencesDialog::remoteChanges() const
     {
         if (field.baseline.isUndefined())
             continue;
+        static const QSet<QString> webUIReadOnly{
+            "web_ui_address", "web_ui_port", "use_https", "web_ui_https_cert_path",
+            "web_ui_https_key_path", "web_ui_username", "web_ui_api_key",
+            "web_ui_secure_cookie_enabled", "web_ui_host_header_validation_enabled",
+            "web_ui_domain_list", "web_ui_use_custom_http_headers_enabled", "web_ui_custom_http_headers",
+            "web_ui_reverse_proxy_enabled", "web_ui_reverse_proxies_list",
+            "dyndns_enabled", "dyndns_service", "dyndns_domain", "dyndns_username", "dyndns_password"
+        };
+        if (webUIReadOnly.contains(field.key)) continue;
         const auto value = field.read();
         if (value == field.baseline)
             continue;
@@ -2670,7 +2834,8 @@ void RemotePreferencesDialog::applyChanges(bool closeAfter)
     }
     if (!validateDownloadChanges(changes) || !validateIPFilterChanges(changes)
         || !validateSpeedChanges(changes) || !validateSeedingLimitChanges(changes)
-        || !validateAutomaticTrackerChanges(changes) || !validateRSSChanges(changes))
+        || !validateAutomaticTrackerChanges(changes) || !validateRSSChanges(changes)
+        || !validateWebUIChanges(changes))
     {
         m_closeAfterApply = false;
         return;
@@ -2687,7 +2852,8 @@ void RemotePreferencesDialog::applyChanges(bool closeAfter)
     // on the server. The API has no atomic compare-and-set.
     QJsonObject replacementBaselines;
     for (const auto &field : m_remoteFields)
-        if ((field.key == QLatin1String("scan_dirs") || field.key == QLatin1String("banned_IPs"))
+        if ((field.key == QLatin1String("scan_dirs") || field.key == QLatin1String("banned_IPs")
+                || field.key == QLatin1String("bypass_auth_subnet_whitelist"))
             && changes.contains(field.key))
             replacementBaselines.insert(field.key, field.baseline);
     if (!replacementBaselines.isEmpty())
@@ -2700,7 +2866,9 @@ void RemotePreferencesDialog::applyChanges(bool closeAfter)
                 {
                     dialog->remoteSaveFailed(it.key() == QLatin1String("scan_dirs")
                         ? dialog->tr("Watched folders changed on the server. Reopen Preferences to review the new list before editing.")
-                        : dialog->tr("Banned IP addresses changed on the server. Reopen Preferences to review the new list before editing."));
+                        : it.key() == QLatin1String("banned_IPs")
+                            ? dialog->tr("Banned IP addresses changed on the server. Reopen Preferences to review the new list before editing.")
+                            : dialog->tr("The authentication bypass whitelist changed on the server. Reopen Preferences before editing it."));
                     return;
                 }
             }

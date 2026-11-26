@@ -3745,12 +3745,6 @@ Disable encryption: Only connect to peers without protocol encryption</string>
               <property name="title">
                <string>Web User Interface (Remote control)</string>
               </property>
-              <property name="checkable">
-               <bool>true</bool>
-              </property>
-              <property name="checked">
-               <bool>false</bool>
-              </property>
               <layout class="QVBoxLayout" name="verticalLayout_2">
                <item>
                 <widget class="QLabel" name="labelWebUIError">
