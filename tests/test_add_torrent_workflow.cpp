@@ -229,6 +229,10 @@ private slots:
         QVERIFY(reopenedSave);
         QCOMPARE(reopenedSave->currentText(),
                  QStringLiteral("/share/CACHEDEV1_DATA/Downloads/Music"));
+        QVERIFY(reopenedSave->findText(QStringLiteral("/share/CACHEDEV1_DATA/Downloads/Music")) >= 0);
+        auto *reopenedIncomplete = reopened.findChild<QComboBox *>("remoteIncompletePath");
+        QVERIFY(reopenedIncomplete && reopenedIncomplete->findText(
+            QStringLiteral("/share/CACHEDEV1_DATA/Downloads/Incomplete")) >= 0);
         reopened.show();
         QTRY_VERIFY(reopened.isVisible());
         auto *reopenedRemember = reopened.findChild<QCheckBox *>(
