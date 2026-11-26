@@ -4,6 +4,7 @@
 #include "api/RemoteSession.h"
 #include "ui_remotestatisticsdialog.h"
 
+#include <QDateTime>
 #include <QDialogButtonBox>
 #include <QLabel>
 #include <QLocale>
@@ -47,12 +48,18 @@ QString ratioText(const QJsonValue &value, bool percent)
 }
 
 RemoteStatisticsDialog::RemoteStatisticsDialog(const QString &serverName,
-    Remote::RemoteSession *session, const QJsonObject &state, QWidget *parent)
+    Remote::RemoteSession *session, const QJsonObject &state, const QString &version,
+    const QString &apiVersion, QWidget *parent)
     : QDialog(parent), m_ui(std::make_unique<Ui::RemoteStatisticsDialog>())
 {
     m_ui->setupUi(this);
     setObjectName(QStringLiteral("remoteStatisticsDialog"));
     setServerName(serverName);
+    const auto setVersion = [](QLabel *label, const QString &value) {
+        label->setText(value.trimmed().isEmpty() ? QStringLiteral("—") : value);
+    };
+    setVersion(m_ui->labelServerVersion, version);
+    setVersion(m_ui->labelApiVersion, apiVersion);
     connect(m_ui->buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
     // libtorrent 2 does not expose meaningful read-cache hits even though
     // the Web API retains the legacy key. Follow the native dialog.
@@ -64,12 +71,28 @@ RemoteStatisticsDialog::RemoteStatisticsDialog(const QString &serverName,
         const QPointer<RemoteStatisticsDialog> self(this);
         session->requestBuildInfo([self](const QJsonObject &info) {
             if (!self) return;
-            const auto version = QVersionNumber::fromString(info.value("libtorrent").toString());
+            const auto libtorrent = info.value("libtorrent").toString().trimmed();
+            const auto qt = info.value("qt").toString().trimmed();
+            self->m_ui->labelLibtorrentVersion->setText(libtorrent.isEmpty() ? QStringLiteral("—") : libtorrent);
+            self->m_ui->labelQtVersion->setText(qt.isEmpty() ? QStringLiteral("—") : qt);
+            const auto version = QVersionNumber::fromString(libtorrent);
             if (version.majorVersion() == 1 && version.segmentCount() >= 2)
             {
                 self->m_ui->labelCacheHitsText->show();
                 self->m_ui->labelCacheHits->show();
             }
+        }, [](const QString &) {});
+        // Probe this optional read once per dialog. Older servers may return 404.
+        // The launch timestamp is server-provided; the duration is a local estimate.
+        session->requestProcessInfo([self](const QJsonObject &info) {
+            if (!self) return;
+            const auto launch = info.value("launch_time").toInteger(-1);
+            if (launch <= 0 || launch > QDateTime::currentSecsSinceEpoch()) return;
+            const auto time = QDateTime::fromSecsSinceEpoch(launch);
+            if (!time.isValid()) return;
+            self->m_launchTime = launch;
+            self->m_ui->labelLaunchTime->setText(QLocale().toString(time, QLocale::ShortFormat));
+            self->updateUptime();
         }, [](const QString &) {});
     }
 }
@@ -81,8 +104,25 @@ void RemoteStatisticsDialog::setServerName(const QString &name)
     setWindowTitle(tr("Statistics — %1").arg(name));
 }
 
+void RemoteStatisticsDialog::updateUptime()
+{
+    const qint64 seconds = QDateTime::currentSecsSinceEpoch() - m_launchTime;
+    if (m_launchTime <= 0 || seconds < 0)
+    {
+        m_ui->labelUptime->setText(QStringLiteral("—"));
+        return;
+    }
+    const qint64 days = seconds / 86400;
+    const auto clock = QStringLiteral("%1:%2:%3")
+        .arg((seconds / 3600) % 24, 2, 10, QLatin1Char('0'))
+        .arg((seconds / 60) % 60, 2, 10, QLatin1Char('0'))
+        .arg(seconds % 60, 2, 10, QLatin1Char('0'));
+    m_ui->labelUptime->setText(days > 0 ? tr("%1 d %2").arg(days).arg(clock) : clock);
+}
+
 void RemoteStatisticsDialog::updateStatistics(const QJsonObject &state)
 {
+    updateUptime();
     const auto bytes = [&](const char *key) { return bytesText(state.value(QLatin1String(key))); };
     const auto count = [&](const char *key) { return countText(state.value(QLatin1String(key))); };
     const auto percent = [&](const char *key) { return ratioText(state.value(QLatin1String(key)), true); };

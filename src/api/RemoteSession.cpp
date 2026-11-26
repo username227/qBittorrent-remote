@@ -596,6 +596,25 @@ void RemoteSession::requestBuildInfo(PreferencesResult received, PreferencesErro
     pumpOperations();
 }
 
+void RemoteSession::requestProcessInfo(PreferencesResult received, PreferencesError rejected)
+{
+    if (!m_connected || !m_address)
+    {
+        if (rejected)
+            rejected(tr("The selected server is not connected."));
+        return;
+    }
+    QueuedOperation request;
+    request.endpoint = QStringLiteral("api/v2/app/processInfo");
+    request.description = tr("Read server process information");
+    request.jsonObjectRequest = true;
+    request.reportOperation = false;
+    request.onJsonObject = std::move(received);
+    request.onRejected = std::move(rejected);
+    m_operations.enqueue(std::move(request));
+    pumpOperations();
+}
+
 void RemoteSession::requestLog(bool peers, int lastKnownId, ArrayResult received, PreferencesError rejected)
 {
     if (!m_connected || !m_address)
@@ -942,6 +961,8 @@ void RemoteSession::pumpOperations()
                 {
                     const QString reason = operation.endpoint == QLatin1String("api/v2/app/buildInfo")
                         ? tr("Invalid build information returned by the server.")
+                        : operation.endpoint == QLatin1String("api/v2/app/processInfo")
+                            ? tr("Invalid process information returned by the server.")
                         : operation.endpoint.startsWith(QLatin1String("api/v2/rss/"))
                             ? tr("Invalid RSS data returned by the server.")
                             : operation.endpoint.startsWith(QLatin1String("api/v2/torrentcreator/"))

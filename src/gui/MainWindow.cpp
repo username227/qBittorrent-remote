@@ -936,7 +936,7 @@ void MainWindow::setupActions()
             return;
         }
         auto *dialog = new RemoteStatisticsDialog(server->profile.name, server->session,
-            server->pane->serverState(), this);
+            server->pane->serverState(), server->version, server->apiVersion, this);
         server->statistics = dialog;
         dialog->setAttribute(Qt::WA_DeleteOnClose);
         trackDialogGeometry(*dialog, QStringLiteral("Statistics"));

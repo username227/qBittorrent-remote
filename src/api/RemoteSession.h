@@ -116,6 +116,7 @@ public:
     void rotateWebUIAPIKey(PreferencesResult received, PreferencesError failed);
     void deleteWebUIAPIKey(std::function<void()> accepted, PreferencesError failed);
     void requestBuildInfo(PreferencesResult received, PreferencesError failed);
+    void requestProcessInfo(PreferencesResult received, PreferencesError failed);
     using ArrayResult = std::function<void(const QJsonArray &)>;
     void requestLog(bool peers, int lastKnownId, ArrayResult received, PreferencesError failed);
     void requestDirectoryContent(const QString &path, bool directories, ArrayResult received, PreferencesError failed);
