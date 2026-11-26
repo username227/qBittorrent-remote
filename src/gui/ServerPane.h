@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include "api/WebSeedUrl.h"
+#include "api/TrackerDetailAction.h"
 
 #include "api/PathMappingStore.h"
 #include <QJsonObject>
@@ -69,6 +70,7 @@ public:
     QString connectionStatus() const { return m_serverState.value(QStringLiteral("connection_status")).toString(); }
     void setProgressFollowsStateColors(bool enabled);
     void setPresentation(bool fullTrackerUrl, const QString &dateFormat);
+    void refreshBytePresentation();
     void setContentPathMappings(const QList<Remote::PathMapping> &mappings);
     void setContentDragEnabled(bool enabled);
     void setSeparateTrackerStatusFilter(bool enabled);
@@ -80,6 +82,7 @@ public:
     void displayTorrentDetailsError(const QString &hash, int tab, const QString &reason);
     void refreshSelectedDetails();
     void setTrackerTierEditingSupported(bool supported);
+    void setSelectedTrackerReannounceSupported(bool supported);
     void finishTrackerTierEdit(const QString &hash);
     void setCommentEditingSupported(bool supported);
     void finishCommentEdit(const QString &hash);
@@ -108,6 +111,8 @@ signals:
     void torrentDetailsRequested(const QString &hash, int tab, bool availability);
     void filePriorityRequested(const QString &hash, const QList<int> &ids, int priority);
     void trackerTiersRequested(const QString &hash, const QJsonObject &tiers);
+    void trackerDetailActionRequested(const QString &hash, Remote::TrackerDetailAction action,
+                                      const QStringList &urls, const QString &replacement);
     void commentEditRequested(const QString &hash, const QString &comment);
     void addPeersRequested(const QString &hash, const QStringList &peers);
     void banPeersRequested(const QString &hash, const QStringList &peers);

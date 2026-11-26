@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/TorrentDetailsWidget.h"
+#include "gui/BytePresentation.h"
 #include "gui/DatePresentation.h"
 #include "gui/MappedContentTreeWidget.h"
 #include "gui/NaturalNameSort.h"
@@ -60,18 +61,7 @@ namespace
 {
 QString bytesText(double amount, bool perSecond = false)
 {
-    if (amount < 0)
-        return QStringLiteral("—");
-    static const char *units[] = {"B", "KiB", "MiB", "GiB", "TiB", "PiB"};
-    int unit = 0;
-    while (amount >= 1024 && unit < 5)
-    {
-        amount /= 1024;
-        ++unit;
-    }
-    return QLocale().toString(amount, 'f', unit ? 1 : 0)
-        + QLatin1Char(' ') + QString::fromLatin1(units[unit])
-        + (perSecond ? QStringLiteral("/s") : QString());
+    return BytePresentation::format(amount, 1, perSecond, 5);
 }
 
 QString numberText(const QJsonValue &value)
@@ -570,6 +560,7 @@ public:
         layout->addWidget(m_graph);
     }
     void append(double down, double up) { m_graph->append(down, up); }
+    void refreshBytePresentation() { m_graph->update(); }
 private:
     NativeSpeedGraph *m_graph = nullptr;
 };
@@ -623,6 +614,73 @@ TorrentDetailsWidget::TorrentDetailsWidget(QWidget *parent)
     m_trackers->setColumnWidth(8, 195);
     m_trackers->setColumnWidth(9, 115);
     m_trackers->setColumnWidth(10, 105);
+    m_trackers->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_trackers, &QWidget::customContextMenuRequested, this, [this](const QPoint &pos) {
+        QMenu menu(this);
+        menu.setToolTipsVisible(true);
+        const auto selected = trackerUrls(true);
+        const auto action = [&](const QString &name, const QString &label, const QString &icon,
+                                bool enabled, auto handler) {
+            auto *item = menu.addAction(QIcon(QStringLiteral(":/icons/") + icon + QStringLiteral(".svg")), label);
+            item->setObjectName(name);
+            item->setEnabled(enabled);
+            connect(item, &QAction::triggered, this, handler);
+            return item;
+        };
+        auto *add = action("addDetailTrackers", tr("Add trackers..."), "list-add", canAddTrackers(),
+            [this]() { addTrackers(); });
+        if (!canAddTrackers()) add->setToolTip(tr("Additional trackers are blocked on private or unknown torrents."));
+        action("editDetailTracker", tr("Edit tracker URL..."), "edit-rename",
+            canChangeTrackers() && selected.size() == 1, [this]() { editTracker(); });
+        action("removeDetailTrackers", tr("Remove tracker"), "list-remove",
+            canChangeTrackers() && !selected.isEmpty(), [this]() { removeTrackers(); });
+        action("copyDetailTrackers", tr("Copy tracker URL"), "edit-copy",
+            !selected.isEmpty(), [this]() { copyTrackers(); });
+        auto *announce = action("reannounceSelectedTrackers", tr("Force reannounce to selected trackers"), "reannounce",
+            canReannounceTrackers() && m_selectedTrackerReannounceSupported && !selected.isEmpty(),
+            [this]() { reannounceTrackers(true); });
+        if (!m_selectedTrackerReannounceSupported)
+            announce->setToolTip(tr("Requires qBittorrent 5.2 or newer."));
+        menu.addSeparator();
+        action("reannounceAllTrackers", tr("Force reannounce to all trackers"), "reannounce",
+            canReannounceTrackers(), [this]() { reannounceTrackers(false); });
+        menu.exec(m_trackers->viewport()->mapToGlobal(pos));
+    });
+    const auto trackerShortcut = [this](const QKeySequence &key, auto slot) {
+        auto *shortcut = new QShortcut(key, m_trackers);
+        shortcut->setContext(Qt::WidgetShortcut);
+        connect(shortcut, &QShortcut::activated, this, slot);
+    };
+    trackerShortcut(QKeySequence(Qt::Key_F2), &TorrentDetailsWidget::editTracker);
+    trackerShortcut(QKeySequence::Delete, &TorrentDetailsWidget::removeTrackers);
+    trackerShortcut(QKeySequence::Copy, &TorrentDetailsWidget::copyTrackers);
+    connect(m_trackers, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem *item, int) {
+        if (item && !item->parent() && !isPseudoTracker(item->text(0))) editTracker();
+    });
+    auto *trackerHeader = m_trackers->header();
+    trackerHeader->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(trackerHeader, &QWidget::customContextMenuRequested, this, [this, trackerHeader](const QPoint &pos) {
+        QMenu menu(this);
+        for (int col = 0; col < m_trackers->columnCount(); ++col)
+        {
+            auto *item = menu.addAction(m_trackers->headerItem()->text(col));
+            item->setCheckable(true);
+            item->setChecked(!m_trackers->isColumnHidden(col));
+            if (item->isChecked() && trackerHeader->count() - trackerHeader->hiddenSectionCount() <= 1)
+                item->setEnabled(false);
+            connect(item, &QAction::triggered, this, [this, col](bool checked) {
+                m_trackers->setColumnHidden(col, !checked);
+                if (checked && m_trackers->columnWidth(col) <= 5) m_trackers->resizeColumnToContents(col);
+            });
+        }
+        menu.addSeparator();
+        auto *resize = menu.addAction(tr("Resize columns"));
+        connect(resize, &QAction::triggered, this, [this]() {
+            for (int col = 0; col < m_trackers->columnCount(); ++col)
+                if (!m_trackers->isColumnHidden(col)) m_trackers->resizeColumnToContents(col);
+        });
+        menu.exec(trackerHeader->mapToGlobal(pos));
+    });
     m_ui->hBoxLayoutTrackers->insertWidget(0, m_trackers, 1);
     m_ui->trackerUpButton->setIcon(style()->standardIcon(QStyle::SP_ArrowUp));
     m_ui->trackerDownButton->setIcon(style()->standardIcon(QStyle::SP_ArrowDown));
@@ -1014,6 +1072,34 @@ bool TorrentDetailsWidget::wantsPieceAvailability() const
             || state == QLatin1String("forcedDL"));
 }
 
+void TorrentDetailsWidget::refreshBytePresentation()
+{
+    if (!m_lastGeneral.isEmpty()) displayGeneral(m_lastGeneral);
+    const bool peerSorting = m_peers->isSortingEnabled();
+    m_peers->setSortingEnabled(false);
+    for (int row = 0; row < m_peers->rowCount(); ++row)
+        for (int col : {4, 5, 9, 10})
+            if (auto *item = m_peers->item(row, col))
+            {
+                const auto raw = item->data(Qt::UserRole);
+                item->setText(raw.isValid() ? bytesText(raw.toDouble(), col == 4 || col == 5)
+                    : QStringLiteral("—"));
+            }
+    m_peers->setSortingEnabled(peerSorting);
+    auto *tree = m_ui->filesList;
+    QSignalBlocker blocker(tree);
+    const bool contentSorting = tree->isSortingEnabled();
+    tree->setSortingEnabled(false);
+    for (QTreeWidgetItemIterator it(tree); *it; ++it)
+        for (int col : {1, 4})
+        {
+            const auto raw = (*it)->data(col, Qt::UserRole);
+            if (raw.isValid()) (*it)->setText(col, bytesText(raw.toDouble()));
+        }
+    tree->setSortingEnabled(contentSorting);
+    m_speedGraph->refreshBytePresentation();
+}
+
 void TorrentDetailsWidget::setDateFormat(const QString &pattern)
 {
     if (m_dateFormat == pattern) return;
@@ -1194,6 +1280,111 @@ void TorrentDetailsWidget::finishTrackerTierEdit(const QString &hash)
     m_pendingTrackerTierHash.clear();
     m_trackerTiersKnown = false; // Re-enable only on authoritative readback.
     updateTrackerTierButtons();
+}
+
+void TorrentDetailsWidget::setSelectedTrackerReannounceSupported(bool supported)
+{
+    m_selectedTrackerReannounceSupported = supported;
+}
+
+QStringList TorrentDetailsWidget::trackerUrls(bool selectedOnly) const
+{
+    QStringList urls;
+    for (int row = 0; row < m_trackers->topLevelItemCount(); ++row)
+    {
+        const auto *item = m_trackers->topLevelItem(row);
+        if (isPseudoTracker(item->text(0)) || (selectedOnly && !item->isSelected())) continue;
+        if (!urls.contains(item->text(0))) urls.append(item->text(0));
+    }
+    return urls;
+}
+
+bool TorrentDetailsWidget::canChangeTrackers() const
+{
+    return m_currentTab == 1 && !m_hash.isEmpty() && m_trackerTiersKnown
+        && m_pendingTrackerTierHash.isEmpty();
+}
+
+bool TorrentDetailsWidget::canAddTrackers() const
+{
+    return canChangeTrackers() && ((m_peerPrivacy.isBool() && !m_peerPrivacy.toBool())
+        || trackerUrls(false).isEmpty());
+}
+
+bool TorrentDetailsWidget::canReannounceTrackers() const
+{
+    const auto state = m_summary.value(QStringLiteral("state")).toString();
+    return canChangeTrackers() && !state.isEmpty() && !state.startsWith(QLatin1String("stopped"))
+        && !state.startsWith(QLatin1String("paused"));
+}
+
+void TorrentDetailsWidget::addTrackers()
+{
+    if (!canAddTrackers()) return;
+    const QString hash = m_hash;
+    bool ok = false;
+    const auto text = QInputDialog::getMultiLineText(this, tr("Add trackers"),
+        tr("Tracker URLs (one per line):"), {}, &ok);
+    if (!ok || hash != m_hash || !canAddTrackers()) return;
+    QStringList urls;
+    const auto existing = trackerUrls(false);
+    for (const auto &line : text.split(QLatin1Char('\n')))
+    {
+        const auto url = line.trimmed();
+        if (url.isEmpty() || existing.contains(url) || urls.contains(url)) continue;
+        urls.append(url);
+    }
+    if (urls.isEmpty()) return;
+    if ((!m_peerPrivacy.isBool() || m_peerPrivacy.toBool()) && urls.size() != 1)
+    {
+        QMessageBox::warning(this, tr("Additional trackers blocked"),
+            tr("Only one tracker may be restored to a private or unknown trackerless torrent."));
+        return;
+    }
+    m_pendingTrackerTierHash = hash;
+    updateTrackerTierButtons();
+    emit trackerDetailActionRequested(hash, Remote::TrackerDetailAction::Add, urls, {});
+}
+
+void TorrentDetailsWidget::editTracker()
+{
+    const auto selected = trackerUrls(true);
+    if (!canChangeTrackers() || selected.size() != 1) return;
+    const QString hash = m_hash, original = selected.first();
+    bool ok = false;
+    const auto replacement = QInputDialog::getText(this, tr("Tracker editing"), tr("Tracker URL:"),
+        QLineEdit::Normal, original, &ok).trimmed();
+    if (!ok || hash != m_hash || !canChangeTrackers() || replacement == original
+        || !trackerUrls(false).contains(original)) return;
+    m_pendingTrackerTierHash = hash;
+    updateTrackerTierButtons();
+    emit trackerDetailActionRequested(hash, Remote::TrackerDetailAction::Edit, {original}, replacement);
+}
+
+void TorrentDetailsWidget::removeTrackers()
+{
+    const auto urls = trackerUrls(true);
+    if (!canChangeTrackers() || urls.isEmpty()) return;
+    m_pendingTrackerTierHash = m_hash;
+    updateTrackerTierButtons();
+    emit trackerDetailActionRequested(m_hash, Remote::TrackerDetailAction::Remove, urls, {});
+}
+
+void TorrentDetailsWidget::copyTrackers()
+{
+    const auto urls = trackerUrls(true);
+    if (!urls.isEmpty()) QApplication::clipboard()->setText(urls.join(QLatin1Char('\n')));
+}
+
+void TorrentDetailsWidget::reannounceTrackers(bool selected)
+{
+    const auto urls = selected ? trackerUrls(true) : QStringList();
+    if (!canReannounceTrackers()
+        || (selected && (!m_selectedTrackerReannounceSupported || urls.isEmpty()))) return;
+    m_pendingTrackerTierHash = m_hash;
+    updateTrackerTierButtons();
+    emit trackerDetailActionRequested(m_hash, selected ? Remote::TrackerDetailAction::ReannounceSelected
+        : Remote::TrackerDetailAction::ReannounceAll, urls, {});
 }
 
 void TorrentDetailsWidget::displayTrackers(const QJsonArray &trackers)
@@ -1905,7 +2096,7 @@ void TorrentDetailsWidget::displayDetails(const QString &hash, int tab,
     if (hash != m_hash) return;
     if (tab == 8)
     {
-        if (m_currentTab == 2) m_peerPrivacy = data.toObject().value(QStringLiteral("private"));
+        if (m_currentTab == 1 || m_currentTab == 2) m_peerPrivacy = data.toObject().value(QStringLiteral("private"));
         return;
     }
     if (tab == 6 || tab == 7)

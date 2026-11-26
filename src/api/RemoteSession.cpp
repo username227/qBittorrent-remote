@@ -23,6 +23,18 @@
 
 namespace
 {
+// qBittorrent 5.2 changed editTracker's original URL parameter from
+// origUrl to url. Use the same request for every URL edit, including
+// private tracker replacement and rollback, and encode form values once.
+QByteArray trackerUrlEditBody(bool modern, const QString &hash,
+                              const QString &original, const QString &replacement)
+{
+    return QByteArrayLiteral("hash=") + QUrl::toPercentEncoding(hash)
+        + (modern ? QByteArrayLiteral("&url=") : QByteArrayLiteral("&origUrl="))
+        + QUrl::toPercentEncoding(original)
+        + QByteArrayLiteral("&newUrl=") + QUrl::toPercentEncoding(replacement);
+}
+
 // Only issuer trust and endpoint-name errors are eligible for explicit
 // endpoint-scoped certificate pinning. Expiry, revocation, invalid
 // signatures, weak keys and all other reported errors remain fatal.
@@ -292,6 +304,8 @@ void RemoteSession::connectToServer(const ServerProfile &profile,
     ++m_detailGeneration;
     m_detailHash.clear();
     m_detailPage = -1;
+    m_detailTrackersKnown = false;
+    m_detailTrackerUrls.clear();
     m_detailAvailability = false;
     m_peerRid = 0;
     m_peerPrivacyKnown = false;
@@ -442,6 +456,7 @@ void RemoteSession::requestApiVersion(const QString &version)
                 && qbtVersion >= QVersionNumber(5, 2, 0);
             m_commentEditing = qbtVersion.segmentCount() >= 3
                 && qbtVersion >= QVersionNumber(5, 2, 0);
+            m_selectedTrackerReannounce = m_commentEditing;
             m_connected = true;
             emit connected(version, apiVersion);
             // The first request uses rid=0 for the full server snapshot.
@@ -1016,9 +1031,21 @@ void RemoteSession::pumpOperations()
                 {
                     if (operation.detailTab == 2) m_peerRid = 0;
                     if (operation.detailTab == 8) m_peerPrivacyKnown = false;
+                    if (operation.detailTab == 1) m_detailTrackersKnown = false;
                     emit torrentDetailsFailed(operation.detailHash, operation.detailTab,
                                               tr("Unexpected torrent-details response."));
                     return;
+                }
+                if (operation.detailTab == 1)
+                {
+                    m_detailTrackerUrls.clear();
+                    for (const auto &record : json.array())
+                    {
+                        const auto url = record.toObject().value(QStringLiteral("url")).toString();
+                        if (!url.isEmpty() && !url.startsWith(QLatin1String("** ["))
+                            && !m_detailTrackerUrls.contains(url)) m_detailTrackerUrls.append(url);
+                    }
+                    m_detailTrackersKnown = true;
                 }
                 if (operation.detailTab == 8)
                 {
@@ -1076,6 +1103,7 @@ void RemoteSession::pumpOperations()
                 {
                     if (operation.detailTab == 2) m_peerRid = 0;
                     if (operation.detailTab == 8) m_peerPrivacyKnown = false;
+                    if (operation.detailTab == 1) m_detailTrackersKnown = false;
                     emit torrentDetailsFailed(operation.detailHash, operation.detailTab, reason);
                 }
             }
@@ -1123,6 +1151,8 @@ void RemoteSession::requestTorrentDetails(const QString &hash, int tab, bool ava
         m_peerRid = 0;
         m_peerPrivacyKnown = false;
         m_peerPrivate = true;
+        m_detailTrackersKnown = false;
+        m_detailTrackerUrls.clear();
         m_detailHash = selected;
         m_detailPage = page;
         m_detailAvailability = availability;
@@ -1148,7 +1178,7 @@ void RemoteSession::requestTorrentDetails(const QString &hash, int tab, bool ava
         request.detailGeneration = m_detailGeneration;
         m_operations.enqueue(std::move(request));
     };
-    if (tab == 2 && !m_peerPrivacyKnown)
+    if ((tab == 1 || tab == 2) && !m_peerPrivacyKnown)
         enqueue(QStringLiteral("torrents/properties"), 8);
     enqueue(endpoints.at(tab), tab);
     if (tab == 0)
@@ -1938,12 +1968,8 @@ void RemoteSession::editTorrentTracker(const QString &hash, const QString &oldUr
         emit operationFailed(tr("Edit torrent tracker"), tr("Invalid hash or tracker URL."));
         return;
     }
-    QUrlQuery form;
-    form.addQueryItem(QStringLiteral("hash"), hash);
-    form.addQueryItem(QStringLiteral("url"), oldUrl);
-    form.addQueryItem(QStringLiteral("newUrl"), newUrl);
     queueOperation(QStringLiteral("api/v2/torrents/editTracker"),
-                   form.toString(QUrl::FullyEncoded).toUtf8(),
+                   trackerUrlEditBody(m_selectedTrackerReannounce, hash, oldUrl, newUrl),
                    QByteArrayLiteral("application/x-www-form-urlencoded"),
                    tr("Edit torrent tracker"), true,
                    [this, hash, oldUrl]() {
@@ -1953,6 +1979,93 @@ void RemoteSession::editTorrentTracker(const QString &hash, const QString &oldUr
                    [this, hash, oldUrl](const QString &reason) {
                        emit torrentTrackerEditFinished(hash, oldUrl, false, reason);
                    });
+}
+
+void RemoteSession::changeDetailTrackers(const QString &hash, TrackerDetailAction action,
+                                         const QStringList &urls, const QString &replacement)
+{
+    const auto reject = [this, hash](const QString &reason) {
+        emit trackerTierEditFinished(hash);
+        emit operationFailed(tr("Change trackers"), reason);
+    };
+    const bool all = action == TrackerDetailAction::ReannounceAll;
+    if (!m_connected || hash.isEmpty() || hash != m_detailHash || m_detailPage != 1
+        || !m_detailTrackersKnown || (!all && urls.isEmpty()) || urls.size() > 128
+        || !std::all_of(urls.cbegin(), urls.cend(), validEditableTrackerUrl))
+    {
+        reject(tr("Invalid torrent selection or tracker list."));
+        return;
+    }
+    QStringList unique = urls;
+    unique.removeDuplicates();
+    if (action == TrackerDetailAction::Add)
+    {
+        if ((!m_peerPrivacyKnown || m_peerPrivate)
+            && (!m_detailTrackerUrls.isEmpty() || unique.size() != 1))
+        {
+            reject(tr("Adding additional trackers to private or unknown torrents is blocked."));
+            return;
+        }
+        for (const auto &url : unique)
+            if (m_detailTrackerUrls.contains(url))
+            {
+                reject(tr("This tracker is already in the list."));
+                return;
+            }
+    }
+    else if (!all)
+    {
+        for (const auto &url : unique)
+            if (!m_detailTrackerUrls.contains(url))
+            {
+                reject(tr("The tracker selection changed."));
+                return;
+            }
+    }
+    if (action == TrackerDetailAction::Edit
+        && (unique.size() != 1 || !validEditableTrackerUrl(replacement)
+            || m_detailTrackerUrls.contains(replacement)))
+    {
+        reject(tr("Invalid or duplicate replacement tracker."));
+        return;
+    }
+    if (action == TrackerDetailAction::ReannounceSelected && !supportsSelectedTrackerReannounce())
+    {
+        reject(tr("Selected-tracker reannounce requires qBittorrent 5.2 or newer."));
+        return;
+    }
+    QString endpoint;
+    QByteArray body;
+    if (action == TrackerDetailAction::Add || action == TrackerDetailAction::Edit
+        || action == TrackerDetailAction::Remove)
+        body = QByteArrayLiteral("hash=") + QUrl::toPercentEncoding(hash);
+    else body = QByteArrayLiteral("hashes=") + QUrl::toPercentEncoding(hash);
+    switch (action)
+    {
+    case TrackerDetailAction::Add:
+        endpoint = QStringLiteral("addTrackers");
+        body += QByteArrayLiteral("&urls=") + QUrl::toPercentEncoding(unique.join(QLatin1Char('\n')));
+        break;
+    case TrackerDetailAction::Edit:
+        endpoint = QStringLiteral("editTracker");
+        body = trackerUrlEditBody(m_selectedTrackerReannounce, hash, unique.first(), replacement);
+        break;
+    case TrackerDetailAction::Remove:
+    case TrackerDetailAction::ReannounceSelected:
+        endpoint = action == TrackerDetailAction::Remove ? QStringLiteral("removeTrackers") : QStringLiteral("reannounce");
+        // These endpoints split on '|' then percent-decode each URL.
+        body += QByteArrayLiteral("&urls=") + encodeWebSeedUrls(unique);
+        break;
+    case TrackerDetailAction::ReannounceAll:
+        endpoint = QStringLiteral("reannounce");
+        break;
+    default: reject(tr("Invalid tracker action.")); return;
+    }
+    m_detailTrackersKnown = false;
+    queueOperation(QStringLiteral("api/v2/torrents/") + endpoint, body,
+        QByteArrayLiteral("application/x-www-form-urlencoded"), tr("Change trackers"), true,
+        [this, hash]() { emit torrentTrackersChanged(hash); emit trackerTierEditFinished(hash); },
+        [this, hash](const QString &) { emit trackerTierEditFinished(hash); });
 }
 
 void RemoteSession::setTrackerTiers(const QString &hash, const QJsonObject &tiers)
@@ -2189,24 +2302,16 @@ void RemoteSession::replaceTorrentTrackers(const QString &hash,
             }
         if (!removed.isEmpty() && !added.isEmpty())
         {
-            QUrlQuery edit;
-            edit.addQueryItem(QStringLiteral("hash"), hash);
-            edit.addQueryItem(QStringLiteral("url"), removed);
-            edit.addQueryItem(QStringLiteral("newUrl"), added);
             queueOperation(QStringLiteral("api/v2/torrents/editTracker"),
-                edit.toString(QUrl::FullyEncoded).toUtf8(),
+                trackerUrlEditBody(m_selectedTrackerReannounce, hash, removed, added),
                 QByteArrayLiteral("application/x-www-form-urlencoded"),
                 tr("Replace private torrent tracker"), true,
                 [this, hash, existing, removed, added, removeThenAdd]() {
                     QStringList currentlyOnServer = existing;
                     currentlyOnServer.replace(currentlyOnServer.indexOf(removed), added);
                     const auto undoEdit = [this, hash, removed, added]() {
-                        QUrlQuery undo;
-                        undo.addQueryItem(QStringLiteral("hash"), hash);
-                        undo.addQueryItem(QStringLiteral("url"), added);
-                        undo.addQueryItem(QStringLiteral("newUrl"), removed);
                         queueOperation(QStringLiteral("api/v2/torrents/editTracker"),
-                            undo.toString(QUrl::FullyEncoded).toUtf8(),
+                            trackerUrlEditBody(m_selectedTrackerReannounce, hash, added, removed),
                             QByteArrayLiteral("application/x-www-form-urlencoded"),
                             tr("Restore original private tracker"), true);
                     };

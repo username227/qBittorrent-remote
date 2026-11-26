@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/RemoteFileDialog.h"
+#include "gui/BytePresentation.h"
 
 #include <QCompleter>
 #include <QCryptographicHash>
@@ -266,7 +267,7 @@ void RemoteFileDialog::addEntries(const QJsonArray &entries, const QString &path
         item->setData(0, Qt::UserRole+1, directories);
         item->setIcon(0, style()->standardIcon(directories ? QStyle::SP_DirIcon : QStyle::SP_FileIcon));
         if (!directories && metadata.value("size").isDouble())
-            item->setText(1, QLocale().formattedDataSize(metadata.value("size").toInteger()));
+            item->setText(1, BytePresentation::dataSize(metadata.value("size").toInteger()));
         if (metadata.value("last_modification_date").isDouble())
         {
             const auto seconds = metadata.value("last_modification_date").toInteger();
@@ -289,7 +290,7 @@ void RemoteFileDialog::finishListing()
     const QPointer<RemoteFileDialog> self(this);
     m_session->requestPathFreeSpace(m_directory, [self, generation](qint64 bytes) {
         if (self && generation == self->m_generation && bytes >= 0)
-            self->m_space->setText(self->tr("Free space: %1").arg(QLocale().formattedDataSize(bytes)));
+            self->m_space->setText(self->tr("Free space: %1").arg(BytePresentation::dataSize(bytes)));
     }, {});
 }
 

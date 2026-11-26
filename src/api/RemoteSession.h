@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include "api/WebSeedUrl.h"
+#include "api/TrackerDetailAction.h"
 
 #include "api/ServerAddress.h"
 #include "api/ServerProfile.h"
@@ -90,6 +91,7 @@ public:
     bool isConnected() const noexcept;
     bool supportsTrackerTierEditing() const noexcept { return m_connected && m_trackerTierEditing; }
     bool supportsCommentEditing() const noexcept { return m_connected && m_commentEditing; }
+    bool supportsSelectedTrackerReannounce() const noexcept { return m_connected && m_selectedTrackerReannounce; }
 
     void commandTorrents(TorrentCommand command, const QStringList &hashes,
                          bool deleteFiles = false);
@@ -166,6 +168,7 @@ public:
                             const QString &newUrl);
     void removeTorrentTrackers(const QString &hash, const QStringList &urls);
     void setTrackerTiers(const QString &hash, const QJsonObject &tiers);
+    void changeDetailTrackers(const QString &hash, TrackerDetailAction action, const QStringList &urls, const QString &replacement);
     // Native Edit trackers: replace the complete list, preserving blank-line tiers.
     // The Web API implements this as a checked remove followed by add.
     void replaceTorrentTrackers(const QString &hash, const QString &previousEntries,
@@ -262,6 +265,9 @@ private:
     bool m_pathFreeSpace = false;
     bool m_pieceAvailability = false;
     bool m_commentEditing = false;
+    bool m_selectedTrackerReannounce = false;
+    bool m_detailTrackersKnown = false;
+    QStringList m_detailTrackerUrls;
     QString m_detailHash;
     int m_detailPage = -1;
     bool m_detailAvailability = false;

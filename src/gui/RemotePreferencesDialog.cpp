@@ -571,6 +571,9 @@ void RemotePreferencesDialog::loadLocalBehaviorControls()
     unlock(m_ui->checkBoxFullTrackerURL, tr("Show the complete tracker URL in the transfer list. URLs may contain private tracker passkeys."));
     m_ui->checkBoxFullTrackerURL->setChecked(m_settings.value(
         QStringLiteral("Preferences/Behavior/FullTrackerURL"), false).toBool());
+    unlock(m_ui->checkDecimalUnits, tr("Display sizes and transfer rates using powers of 1000 instead of 1024. Server settings and actual byte values are unchanged."));
+    m_ui->checkDecimalUnits->setChecked(m_settings.value(
+        QStringLiteral("Preferences/Behavior/DecimalUnits"), false).toBool());
     unlock(m_ui->comboDateFormat);
     m_ui->comboDateFormat->addItem(tr("System default"), QString());
     const auto example = QDateTime::currentSecsSinceEpoch();
@@ -735,6 +738,7 @@ void RemotePreferencesDialog::loadLocalBehaviorControls()
     });
     connect(m_ui->checkDefaultDeleteTorrentContent, &QCheckBox::toggled, this, dirty);
     connect(m_ui->checkBoxFullTrackerURL, &QCheckBox::toggled, this, dirty);
+    connect(m_ui->checkDecimalUnits, &QCheckBox::toggled, this, dirty);
     connect(m_ui->comboDateFormat, QOverload<int>::of(&QComboBox::currentIndexChanged),
         this, [dirty](int) { dirty(); });
 #if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
@@ -4186,6 +4190,8 @@ bool RemotePreferencesDialog::applyLocalChanges()
             m_ui->checkDefaultDeleteTorrentContent->isChecked());
         m_settings.setValue(QStringLiteral("Preferences/Behavior/FullTrackerURL"),
             m_ui->checkBoxFullTrackerURL->isChecked());
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/DecimalUnits"),
+            m_ui->checkDecimalUnits->isChecked());
         m_settings.setValue(QStringLiteral("Preferences/Behavior/DateFormat"),
             m_ui->comboDateFormat->currentData().toString());
 #if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)

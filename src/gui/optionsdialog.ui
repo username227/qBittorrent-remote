@@ -467,6 +467,13 @@
                 </widget>
                </item>
                <item>
+                <widget class="QCheckBox" name="checkDecimalUnits">
+                 <property name="text">
+                  <string>Use decimal units (KB, MB, GB, TB)</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
                 <layout class="QHBoxLayout" name="layoutDateFormat">
                  <item>
                   <widget class="QLabel" name="labelDateFormat">

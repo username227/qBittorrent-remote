@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/RemoteTorrentContentWidget.h"
+#include "gui/BytePresentation.h"
 
 #include <QFileIconProvider>
 #include <QHeaderView>
@@ -94,7 +95,7 @@ void RemoteTorrentContentWidget::setTorrentFiles(
                 name->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled);
                 name->setToolTip(toolTip());
                 auto *size = new QStandardItem(
-                    QLocale().formattedDataSize(file.size));
+                    BytePresentation::dataSize(file.size));
                 size->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
                 auto *priority = new QStandardItem(tr("Normal"));
                 if (folder)
@@ -111,7 +112,7 @@ void RemoteTorrentContentWidget::setTorrentFiles(
             m_model->indexFromItem(it.value()).siblingAtColumn(1));
         if (size)
         {
-            size->setText(QLocale().formattedDataSize(folderTotals.value(it.key())));
+            size->setText(BytePresentation::dataSize(folderTotals.value(it.key())));
             size->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
         }
     }

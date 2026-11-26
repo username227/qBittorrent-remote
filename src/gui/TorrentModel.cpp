@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/TorrentModel.h"
+#include "gui/BytePresentation.h"
 #include "gui/DatePresentation.h"
 #include <QUrl>
 #include "gui/ProgressDisplay.h"
@@ -63,17 +64,7 @@ const QStringList &fieldKeys()
 
 QString bytesText(double bytes, int precision = 1)
 {
-    if (bytes < 0)
-        return QStringLiteral("—");
-    static const char *units[] = {"B", "KiB", "MiB", "GiB", "TiB", "PiB"};
-    int index = 0;
-    while (bytes >= 1024 && index < 5)
-    {
-        bytes /= 1024;
-        ++index;
-    }
-    return QLocale().toString(bytes, 'f', index == 0 ? 0 : precision)
-        + QLatin1Char(' ') + QString::fromLatin1(units[index]);
+    return BytePresentation::format(bytes, precision, false, 5);
 }
 
 QString durationText(qint64 seconds)
@@ -396,6 +387,13 @@ void TorrentModel::setPresentation(bool fullTrackerUrl, const QString &dateForma
     if (m_fullTrackerUrl == fullTrackerUrl && m_dateFormat == dateFormat) return;
     m_fullTrackerUrl = fullTrackerUrl;
     m_dateFormat = dateFormat;
+    if (!m_hashes.isEmpty())
+        emit dataChanged(index(0, 0), index(m_hashes.size() - 1, columnCount() - 1),
+            {Qt::DisplayRole, Qt::ToolTipRole});
+}
+
+void TorrentModel::refreshBytePresentation()
+{
     if (!m_hashes.isEmpty())
         emit dataChanged(index(0, 0), index(m_hashes.size() - 1, columnCount() - 1),
             {Qt::DisplayRole, Qt::ToolTipRole});

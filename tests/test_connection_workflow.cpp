@@ -992,7 +992,8 @@ public:
                                 if (path == "/api/v2/torrents/editTracker")
                                 {
                                     const QString before = form.queryItemValue(
-                                        QStringLiteral("url"), QUrl::FullyDecoded);
+                                        m_reportedQbtVersion == "v5.1.4" ? QStringLiteral("origUrl") : QStringLiteral("url"),
+                                        QUrl::FullyDecoded);
                                     const QString after = form.queryItemValue(
                                         QStringLiteral("newUrl"), QUrl::FullyDecoded);
                                     QJsonArray edited;
@@ -8296,15 +8297,19 @@ private slots:
                 const auto cleanup = qScopeGuard([dialog] { if (dialog->isVisible()) dialog->reject(); });
                 auto *nav = dialog->findChild<QListWidget *>("preferencesSections");
                 auto *tracker = dialog->findChild<QCheckBox *>("checkBoxFullTrackerURL");
+                auto *decimal = dialog->findChild<QCheckBox *>("checkDecimalUnits");
                 auto *format = dialog->findChild<QComboBox *>("comboDateFormat");
                 auto *scheme = dialog->findChild<QComboBox *>("comboColorScheme");
                 auto *apply = dialog->findChild<QPushButton *>("preferencesApply");
-                QVERIFY(nav && tracker && format && scheme && apply);
+                QVERIFY(nav && tracker && decimal && format && scheme && apply);
                 nav->setCurrentRow(1);
                 QVERIFY(tracker->isEnabled());
                 QCOMPARE(tracker->isChecked(), settings.value("Preferences/Behavior/FullTrackerURL", false).toBool());
                 QVERIFY(format->isEnabled());
                 tracker->setChecked(full);
+                QVERIFY(decimal->isEnabled());
+                QCOMPARE(decimal->isChecked(), settings.value("Preferences/Behavior/DecimalUnits", false).toBool());
+                decimal->setChecked(full);
                 const int iso = format->findData(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
                 QVERIFY(iso > 0);
                 format->setCurrentIndex(iso);
@@ -8323,13 +8328,24 @@ private slots:
             prefs->trigger();
             QVERIFY(completed);
         };
+        const QString binarySize = QLocale().toString(2460000.0 / (1024.0 * 1024.0), 'f', 2)
+            + QStringLiteral(" MiB");
+        const QString decimalSize = QLocale().toString(2.46, 'f', 2) + QStringLiteral(" MB");
+        QCOMPARE(shown(complete, 1), binarySize);
         changePresentation(false, true);
         QCOMPARE(shown(complete, 16), QStringLiteral("tracker.example.test"));
         QCOMPARE(shown(complete, 13), originalDate);
+        QCOMPARE(shown(complete, 1), binarySize);
+        QVERIFY(!settings.value("Preferences/Behavior/DecimalUnits", false).toBool());
         changePresentation(true, true);
         QCOMPARE(shown(complete, 16), fullUrl);
         QVERIFY(settings.value("Preferences/Behavior/FullTrackerURL").toBool());
+        QVERIFY(settings.value("Preferences/Behavior/DecimalUnits").toBool());
+        QCOMPARE(shown(complete, 1), decimalSize);
+        QCOMPARE(table->model()->index(rowFor(complete), 1).data(Qt::UserRole).toLongLong(), qint64(2460000));
         changePresentation(true, false);
+        QCOMPARE(shown(complete, 1), binarySize);
+        QVERIFY(!settings.value("Preferences/Behavior/DecimalUnits").toBool());
         QCOMPARE(shown(complete, 16), QStringLiteral("tracker.example.test"));
         QCOMPARE(shown(complete, 13), QLocale().toString(QDateTime::fromSecsSinceEpoch(1700000000),
             QStringLiteral("yyyy-MM-dd HH:mm:ss")));
@@ -8866,6 +8882,142 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(label->text().isEmpty(), 6000);
         QVERIFY(modern.lastCommandBody(endpoint).endsWith("&comment="));
         QCOMPARE(legacy.commandsFor(endpoint), 0);
+    }
+
+    void trackerTabActionsRespectServerVersionAndPrivateMetadata()
+    {
+        for (const bool modern : {false, true})
+        {
+            DemoQbittorrentServer server(true);
+            if (modern) server.enableModernResponses();
+            server.enableNativePresentationDemo();
+            server.enableDetailsDemo();
+            server.enableStatefulTrackerEditingDemo();
+            const QString publicHash = QStringLiteral("0000000000000000000000000000000000000001");
+            const QString privateHash = QStringLiteral("0000000000000000000000000000000000000002");
+            const QString original = QStringLiteral("https://tracker.example/announce?token=a%2Bb");
+            const QString added = QStringLiteral("https://backup.example/announce");
+            const QString replacement = QStringLiteral("https://replacement.example/announce?x=+");
+            const QJsonArray initial{QJsonObject{{"url", original}, {"tier", 1}}};
+            server.setTrackerEntries(publicHash, initial);
+            server.setTrackerEntries(privateHash, initial);
+            QVERIFY(server.start());
+            QTemporaryDir temp;
+            QVERIFY(temp.isValid());
+            QSettings settings(temp.filePath(QStringLiteral("profiles.ini")), QSettings::IniFormat);
+            DemoCredentialVault vault;
+            MainWindow window(nullptr, &settings, &vault);
+            window.show();
+            openConnectDialog(window, server.url());
+            auto *table = window.findChild<QTableView *>("torrentList");
+            auto *tabs = window.findChild<PropTabBar *>();
+            auto *trackers = window.findChild<QTreeWidget *>("torrentTrackers");
+            QVERIFY(table && tabs && trackers);
+            QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 2, 6000);
+            int publicRow = -1, privateRow = -1;
+            for (int i = 0; i < table->model()->rowCount(); ++i)
+            {
+                const auto name = table->model()->index(i, 0).data().toString();
+                if (name == QLatin1String("Complete seed")) publicRow = i;
+                if (name == QLatin1String("Partial download")) privateRow = i;
+            }
+            QVERIFY(publicRow >= 0 && privateRow >= 0);
+            table->selectRow(publicRow);
+            tabs->setCurrentIndex(1);
+            QTRY_COMPARE_WITH_TIMEOUT(trackers->topLevelItemCount(), 1, 6000);
+
+            const auto menuAction = [&](const QString &name, bool expectedEnabled,
+                                        const QString &value = {}, bool input = false, bool inspect = false) {
+                bool found = false, enabled = false, opened = false, timedOut = false;
+                QTimer watchdog;
+                watchdog.setSingleShot(true);
+                connect(&watchdog, &QTimer::timeout, &window, [&]() {
+                    timedOut = true;
+                    if (auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget())) dialog->reject();
+                    if (auto *popup = QApplication::activePopupWidget()) popup->close();
+                });
+                watchdog.start(6000);
+                QTimer::singleShot(0, &window, [&]() {
+                    auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+                    if (!menu) return;
+                    for (auto *action : menu->actions())
+                    {
+                        if (action->objectName() != name) continue;
+                        found = true;
+                        enabled = action->isEnabled();
+                        if (enabled && !inspect)
+                        {
+                            if (input)
+                                QTimer::singleShot(0, &window, [&]() {
+                                    auto *dialog = qobject_cast<QInputDialog *>(QApplication::activeModalWidget());
+                                    if (!dialog) return;
+                                    opened = true;
+                                    dialog->setTextValue(value);
+                                    dialog->accept();
+                                });
+                            action->trigger();
+                        }
+                        break;
+                    }
+                    menu->close();
+                });
+                QVERIFY(QMetaObject::invokeMethod(trackers, "customContextMenuRequested", Qt::DirectConnection,
+                    Q_ARG(QPoint, QPoint(10, 10))));
+                QVERIFY(found && !timedOut);
+                QCOMPARE(enabled, expectedEnabled);
+                QVERIFY(!input || opened);
+            };
+            trackers->topLevelItem(0)->setSelected(true);
+            menuAction(QStringLiteral("copyDetailTrackers"), true);
+            QCOMPARE(QApplication::clipboard()->text(), original);
+            menuAction(QStringLiteral("addDetailTrackers"), true, added, true);
+            QTRY_COMPARE_WITH_TIMEOUT(trackers->topLevelItemCount(), 2, 6000);
+            QCOMPARE(server.commandsFor("/api/v2/torrents/addTrackers"), 1);
+            trackers->clearSelection();
+            auto rows = trackers->findItems(original, Qt::MatchExactly, 0);
+            QCOMPARE(rows.size(), 1);
+            rows.first()->setSelected(true);
+            menuAction(QStringLiteral("editDetailTracker"), true, replacement, true);
+            QTRY_COMPARE_WITH_TIMEOUT(trackers->findItems(replacement, Qt::MatchExactly, 0).size(), 1, 6000);
+            const auto form = QUrlQuery(QString::fromUtf8(server.lastCommandBody("/api/v2/torrents/editTracker")));
+            QCOMPARE(form.queryItemValue(modern ? "url" : "origUrl", QUrl::FullyDecoded), original);
+            QCOMPARE(form.queryItemValue("newUrl", QUrl::FullyDecoded), replacement);
+            trackers->clearSelection();
+            trackers->findItems(replacement, Qt::MatchExactly, 0).first()->setSelected(true);
+            menuAction(QStringLiteral("reannounceSelectedTrackers"), modern, {}, false, !modern);
+            if (modern)
+            {
+                QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor("/api/v2/torrents/reannounce"), 1, 6000);
+                const auto announce = QUrlQuery(QString::fromUtf8(server.lastCommandBody("/api/v2/torrents/reannounce")));
+                QCOMPARE(QUrl::fromPercentEncoding(announce.queryItemValue("urls", QUrl::FullyDecoded).toLatin1()), replacement);
+                QCOMPARE(announce.queryItemValue("hashes"), publicHash);
+                // Wait for authoritative readback after this action.
+                auto *pane = window.findChild<ServerPane *>();
+                QVERIFY(pane);
+                const int reads = server.detailsFor("/api/v2/torrents/trackers?");
+                pane->refreshSelectedDetails();
+                QTRY_VERIFY_WITH_TIMEOUT(server.detailsFor("/api/v2/torrents/trackers?") > reads, 6000);
+                QTest::qWait(100);
+            }
+            else QCOMPARE(server.commandsFor("/api/v2/torrents/reannounce"), 0);
+            menuAction(QStringLiteral("reannounceAllTrackers"), true);
+            QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor("/api/v2/torrents/reannounce"), modern ? 2 : 1, 6000);
+            QVERIFY(!QUrlQuery(QString::fromUtf8(server.lastCommandBody("/api/v2/torrents/reannounce"))).hasQueryItem("urls"));
+            // Switch torrent: the same tracker URL must never be enough to
+            // permit an addition to a private torrent.
+            table->selectRow(privateRow);
+            QTRY_COMPARE_WITH_TIMEOUT(trackers->topLevelItemCount(), 1, 6000);
+            menuAction(QStringLiteral("addDetailTrackers"), false, {}, false, true);
+            trackers->topLevelItem(0)->setSelected(true);
+            menuAction(QStringLiteral("removeDetailTrackers"), true);
+            QTRY_COMPARE_WITH_TIMEOUT(trackers->topLevelItemCount(), 0, 6000);
+            QCOMPARE(server.commandsFor("/api/v2/torrents/removeTrackers"), 1);
+            // Recovery with exactly one tracker is allowed.
+            menuAction(QStringLiteral("addDetailTrackers"), true, original, true);
+            QTRY_COMPARE_WITH_TIMEOUT(trackers->topLevelItemCount(), 1, 6000);
+            QCOMPARE(server.commandsFor("/api/v2/torrents/addTrackers"), 2);
+            QCOMPARE(server.trackerEntries(privateHash).first().toObject().value("url").toString(), original);
+        }
     }
 
     void webSeedsUseNativeActionsAndServerReadback()
