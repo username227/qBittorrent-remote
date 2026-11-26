@@ -3019,7 +3019,7 @@ void RemotePreferencesDialog::applyWebUITransition(const QJsonObject &changes)
         }
         dialog->m_webUITransitionInProgress = true;
         const auto attempt = [dialog] {
-            if (dialog) QTimer::singleShot(1200, dialog, &RemotePreferencesDialog::probeWebUITransition);
+            if (dialog) QTimer::singleShot(1200, dialog.data(), &RemotePreferencesDialog::probeWebUITransition);
         };
         // A listener restart may drop the HTTP response after the server has
         // applied the settings. Never blindly retry; probe exactly once.
@@ -3071,8 +3071,8 @@ void RemotePreferencesDialog::probeWebUITransition()
                 dialog->m_webUICandidate.username, dialog->m_webUIPassword, dialog->m_webUIFingerprint);
             dialog->m_webUIPassword.clear();
             // Logout the temporary session before the main window reconnects.
-            QObject::disconnect(probe, nullptr, dialog, nullptr);
-            QObject::connect(probe, &QObject::destroyed, dialog, [dialog] {
+            QObject::disconnect(probe, nullptr, dialog.data(), nullptr);
+            QObject::connect(probe, &QObject::destroyed, dialog.data(), [dialog] {
                 if (!dialog) return;
                 dialog->m_webUITransitionInProgress = false;
                 dialog->setRemoteBusy(false);
@@ -3095,7 +3095,7 @@ void RemotePreferencesDialog::webUITransitionFailed(const QString &reason)
     m_ui->textWebUIPassword->clear();
     if (m_webUIProbe)
     {
-        QObject::disconnect(m_webUIProbe, nullptr, this, nullptr);
+        QObject::disconnect(m_webUIProbe.data(), nullptr, this, nullptr);
         m_webUIProbe->disconnectFromServer();
         m_webUIProbe.clear();
     }

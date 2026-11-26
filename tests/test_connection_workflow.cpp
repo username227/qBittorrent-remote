@@ -4758,6 +4758,8 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains("v5.3.0"), 6000);
         const auto original = Remote::ProfileStore(settings).profiles().first();
         const QString originalId = original.id;
+        const QList<Remote::PathMapping> mappings{{temp.path(), QStringLiteral("/share/downloads")}};
+        QVERIFY(Remote::PathMappingStore(settings).replace(originalId, mappings));
         QTcpServer reserve;
         QVERIFY(reserve.listen(QHostAddress::LocalHost, 0));
         const int newPort = reserve.serverPort();
@@ -4766,6 +4768,7 @@ private slots:
         QVERIFY(prefs);
         const QString newPassword = QStringLiteral("changed+&%password");
         bool confirmed = false, passwordEntered = false, edited = false;
+        bool expectFailure = false, failureReported = false;
         QString unexpected;
         QTimer modalDriver;
         modalDriver.setInterval(20);
@@ -4776,6 +4779,11 @@ private slots:
                 {
                     confirmed = true;
                     box->button(QMessageBox::Yes)->click();
+                }
+                else if (expectFailure && box->windowTitle() == QStringLiteral("Cannot verify connection change"))
+                {
+                    failureReported = true;
+                    box->accept();
                 }
                 else
                 {
@@ -4835,7 +4843,9 @@ private slots:
         QCOMPARE(saved.first().id, originalId);
         QCOMPARE(QUrl(saved.first().url).port(), newPort);
         QCOMPARE(saved.first().username, QStringLiteral("new-user"));
-        QCOMPARE(vault.data.value(vault.keyFor(saved.first())), newPassword);
+        QTRY_COMPARE_WITH_TIMEOUT(vault.data.value(vault.keyFor(saved.first())), newPassword, 6000);
+        QVERIFY(!vault.data.contains(vault.keyFor(original)));
+        QCOMPARE(Remote::PathMappingStore(settings).mappings(originalId), mappings);
         QCOMPARE(server.commandsFor("/api/v2/app/setPreferences"), 1);
         QCOMPARE(server.serverPreferences().value("web_ui_port").toInt(), newPort);
         QCOMPARE(server.serverPreferences().value("web_ui_username").toString(), QStringLiteral("new-user"));
@@ -4844,6 +4854,37 @@ private slots:
         QFile file(settings.fileName());
         QVERIFY(file.open(QIODevice::ReadOnly));
         QVERIFY(!file.readAll().contains(newPassword.toUtf8()));
+        file.close();
+
+        // A write can return success even if the listener remains unchanged.
+        // The proposed endpoint must not replace the verified saved profile.
+        QVERIFY(reserve.listen(QHostAddress::LocalHost, 0));
+        const int unavailablePort = reserve.serverPort();
+        reserve.close();
+        server.ignorePreferenceWrites(true);
+        expectFailure = true;
+        modalDriver.start();
+        watchdog.start(35000);
+        QTimer::singleShot(0, &window, [&] {
+            auto *dlg = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget());
+            QVERIFY(dlg);
+            auto *port = dlg->findChild<QSpinBox *>("spinWebUIPort");
+            auto *apply = dlg->findChild<QPushButton *>("preferencesApply");
+            QVERIFY(port && apply);
+            QTRY_VERIFY_WITH_TIMEOUT(port->isEnabled(), 6000);
+            port->setValue(unavailablePort);
+            apply->click();
+        });
+        prefs->trigger();
+        watchdog.stop();
+        modalDriver.stop();
+        QVERIFY2(unexpected.isEmpty(), qPrintable(unexpected));
+        QVERIFY(failureReported);
+        const auto retained = Remote::ProfileStore(settings).profiles().first();
+        QCOMPARE(retained.url, saved.first().url);
+        QCOMPARE(retained.username, saved.first().username);
+        QCOMPARE(server.commandsFor("/api/v2/app/setPreferences"), 2);
+        QCOMPARE(Remote::PathMappingStore(settings).mappings(originalId), mappings);
     }
 
     void webUIPreferencesFollowSelectedServer()
