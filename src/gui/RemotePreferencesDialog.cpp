@@ -27,6 +27,8 @@
 #include <QJsonValue>
 #include <QIcon>
 #include <QHeaderView>
+#include <QEvent>
+#include <QResizeEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -67,6 +69,104 @@
 
 namespace
 {
+// All ordinary rows use the same QLabel font and margins, regardless of
+// whether a documentation link is present. An unavailable editor greys its
+// label text, but its documentation link stays independently accessible.
+class AdvancedSettingLabel final : public QLabel
+{
+public:
+    AdvancedSettingLabel(const QString &name, const QString &url, QWidget *editor, QWidget *parent)
+        : QLabel(parent), m_name(name), m_url(url), m_editor(editor)
+    {
+        QFont normal = parent->font();
+        normal.setBold(false);
+        setFont(normal);
+        setWordWrap(true);
+        setMargin(4);
+        setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+        setTextFormat(Qt::RichText);
+        setOpenExternalLinks(true);
+        setTextInteractionFlags(Qt::LinksAccessibleByMouse | Qt::LinksAccessibleByKeyboard);
+        editor->installEventFilter(this);
+        updateLabel();
+    }
+
+protected:
+    bool eventFilter(QObject *object, QEvent *event) override
+    {
+        if (object == m_editor && event->type() == QEvent::EnabledChange)
+            updateLabel();
+        return QLabel::eventFilter(object, event);
+    }
+
+    void changeEvent(QEvent *event) override
+    {
+        QLabel::changeEvent(event);
+        if (event->type() == QEvent::PaletteChange)
+            updateLabel();
+    }
+
+private:
+    void updateLabel()
+    {
+        if (!m_editor) return;
+        const QColor color = palette().color(m_editor->isEnabled() ? QPalette::Active : QPalette::Disabled,
+                                               QPalette::Text);
+        QString content = QStringLiteral("<span style=\"color:%1\">%2</span>")
+            .arg(color.name(), m_name.toHtmlEscaped());
+        if (!m_url.isEmpty())
+            content += QStringLiteral(" <a href=\"%1\" style=\"color:%2\">(?)</a>")
+                .arg(m_url.toHtmlEscaped(), palette().color(QPalette::Active, QPalette::Link).name());
+        setText(content);
+        setToolTip(m_name + QLatin1Char('\n') + m_editor->toolTip());
+    }
+
+    const QString m_name;
+    const QString m_url;
+    QPointer<QWidget> m_editor;
+};
+
+class AdvancedSettingsTable final : public QTableWidget
+{
+public:
+    explicit AdvancedSettingsTable(QWidget *parent) : QTableWidget(parent)
+    {
+        connect(horizontalHeader(), &QHeaderView::sectionResized, this, [this] { scheduleRowHeights(); });
+    }
+
+    void scheduleRowHeights()
+    {
+        if (m_updatePending) return;
+        m_updatePending = true;
+        QTimer::singleShot(0, this, [this] {
+            m_updatePending = false;
+            for (int row = 0; row < rowCount(); ++row)
+            {
+                int height = fontMetrics().height() + 10;
+                for (int col = 0; col < columnCount(); ++col)
+                    if (auto *widget = cellWidget(row, col))
+                    {
+                        const int width = qMax(1, columnWidth(col) - 2);
+                        const int hint = widget->hasHeightForWidth()
+                            ? widget->heightForWidth(width) : widget->sizeHint().height();
+                        height = qMax(height, hint + 4);
+                    }
+                if (rowHeight(row) != height) setRowHeight(row, height);
+            }
+        });
+    }
+
+protected:
+    void resizeEvent(QResizeEvent *event) override
+    {
+        QTableWidget::resizeEvent(event);
+        scheduleRowHeights();
+    }
+
+private:
+    bool m_updatePending = false;
+};
+
 const QSet<QString> webUISecurityKeys{
     "web_ui_secure_cookie_enabled", "web_ui_host_header_validation_enabled",
     "web_ui_domain_list", "web_ui_use_custom_http_headers_enabled",
@@ -2616,7 +2716,7 @@ void RemotePreferencesDialog::buildAdvancedPage()
     // Keep the upstream section order and the union of its conditional rows.
     // The stable row IDs and factories let subsequent API bindings reuse this
     // layout without rebuilding it or guessing the remote daemon's platform.
-    auto *table = new QTableWidget(m_ui->tabAdvancedPage);
+    auto *table = new AdvancedSettingsTable(m_ui->tabAdvancedPage);
     table->setObjectName(QStringLiteral("advancedSettingsTable"));
     table->setColumnCount(2);
     table->setHorizontalHeaderLabels({tr("Setting"), tr("Value")});
@@ -2631,10 +2731,14 @@ void RemotePreferencesDialog::buildAdvancedPage()
     table->setSizeAdjustPolicy(QAbstractScrollArea::AdjustIgnored);
     table->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
     table->horizontalHeader()->setHighlightSections(false);
-    table->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
     table->horizontalHeader()->setMinimumSectionSize(120);
-    table->horizontalHeader()->setStretchLastSection(true);
-    table->verticalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    table->horizontalHeader()->setStretchLastSection(false);
+    // Reserve a usable editor column; the setting column wraps instead of
+    // forcing the whole value column out of the viewport.
+    table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
+    table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Interactive);
+    table->horizontalHeader()->resizeSection(1, qMax(180, table->fontMetrics().horizontalAdvance(tr("Open documentation")) + 22));
+    table->verticalHeader()->setSectionResizeMode(QHeaderView::Fixed);
     const auto unavailable = tr("Not yet available from the selected server. This is not a live value.");
     const auto section = [this, table](const QString &name, const char *url) {
         const int index = table->rowCount();
@@ -2662,15 +2766,6 @@ void RemotePreferencesDialog::buildAdvancedPage()
         item->setFlags(Qt::ItemIsEnabled);
         item->setToolTip(label);
         table->setItem(index, 0, item);
-        if (url)
-        {
-            auto *help = new QLabel(label.toHtmlEscaped() + QStringLiteral(" <a href=\"%1\">(?)</a>")
-                .arg(QString::fromLatin1(url)), table);
-            help->setOpenExternalLinks(true);
-            help->setTextInteractionFlags(Qt::LinksAccessibleByMouse | Qt::LinksAccessibleByKeyboard);
-            help->setMargin(4);
-            table->setCellWidget(index, 0, help);
-        }
         editor->setObjectName(QStringLiteral("advanced_") + QString::fromLatin1(id));
         const bool local = editor->property("advancedLocal").toBool();
         editor->setEnabled(local);
@@ -2686,6 +2781,9 @@ void RemotePreferencesDialog::buildAdvancedPage()
             item->setToolTip(editor->toolTip());
         }
         table->setCellWidget(index, 1, editor);
+        auto *name = new AdvancedSettingLabel(label, url ? QString::fromLatin1(url) : QString(), editor, table);
+        name->setObjectName(QStringLiteral("advancedLabel_") + QString::fromLatin1(id));
+        table->setCellWidget(index, 0, name);
     };
     const auto check = [table] {
         auto *editor = new QCheckBox(table);
@@ -2705,6 +2803,8 @@ void RemotePreferencesDialog::buildAdvancedPage()
     const auto combo = [table](const QStringList &options) {
         auto *editor = new QComboBox(table);
         editor->addItems(options);
+        editor->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+        editor->setMinimumContentsLength(10);
         editor->setPlaceholderText(QObject::tr("Unavailable"));
         editor->setCurrentIndex(-1);
         return editor;
@@ -2819,12 +2919,8 @@ void RemotePreferencesDialog::buildAdvancedPage()
     row("I2P_INBOUND_LENGTH_VARIANCE", tr("I2P inbound length variance"), spin(-7, 7, tr(""), tr("")), "https://www.libtorrent.org/reference-Settings.html#i2p_inbound_length_variance");
     row("I2P_OUTBOUND_LENGTH_VARIANCE", tr("I2P outbound length variance"), spin(-7, 7, tr(""), tr("")), "https://www.libtorrent.org/reference-Settings.html#i2p_outbound_length_variance");
 
-    table->resizeColumnToContents(0);
-    table->horizontalHeader()->resizeSection(0, table->columnWidth(0) + 12);
-    table->resizeColumnToContents(1);
-    table->horizontalHeader()->resizeSection(1, qMax(250, table->columnWidth(1) + 8));
-    table->resizeRowsToContents();
     m_ui->advPageLayout->addWidget(table, 1);
+    table->scheduleRowHeights();
 }
 
 bool RemotePreferencesDialog::hasAdvancedLocalChanges() const

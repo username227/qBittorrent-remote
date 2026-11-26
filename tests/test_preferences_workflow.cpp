@@ -309,11 +309,36 @@ private slots:
         QCOMPARE(advanced->textElideMode(), Qt::ElideNone);
         QVERIFY(recheck->isEnabled() && tags->isEnabled() && tracker->isEnabled());
         QVERIFY(!recheck->isChecked() && tags->isChecked() && tracker->isChecked());
-        const int originalWidth = dialog.width();
-        QTRY_VERIFY(advanced->horizontalScrollBar()->maximum() > 0);
-        advanced->horizontalScrollBar()->setValue(advanced->horizontalScrollBar()->maximum());
-        QCOMPARE(dialog.width(), originalWidth);
-        QCOMPARE(advanced->horizontalScrollBar()->value(), advanced->horizontalScrollBar()->maximum());
+        // Both columns must remain visible without horizontal scrolling at
+        // ordinary dialog widths, even with long linked setting names.
+        for (int width : {650, 820, 1000})
+        {
+            dialog.resize(width, dialog.height());
+            QTRY_VERIFY(advanced->columnViewportPosition(1) >= 120);
+            QTRY_VERIFY(advanced->columnViewportPosition(1) + advanced->columnWidth(1)
+                        <= advanced->viewport()->width() + 1);
+            QCOMPARE(advanced->horizontalScrollBar()->maximum(), 0);
+            auto *longLabel = advanced->findChild<QLabel *>("advancedLabel_PEER_DSCP");
+            QVERIFY(longLabel && longLabel->wordWrap());
+            // Use the stable cell widget rather than relying on the current
+            // vertical scroll position for a row that may be offscreen.
+            int labelRow = -1;
+            for (int r = 0; r < advanced->rowCount(); ++r)
+                if (advanced->cellWidget(r, 0) == longLabel) labelRow = r;
+            QVERIFY(labelRow >= 0);
+            QTRY_VERIFY(advanced->rowHeight(labelRow) >= longLabel->heightForWidth(advanced->columnWidth(0) - 2));
+        }
+        auto *linked = advanced->findChild<QLabel *>("advancedLabel_ASYNC_IO_THREADS");
+        auto *plain = advanced->findChild<QLabel *>("advancedLabel_SAVE_RESUME_DATA_INTERVAL");
+        auto *localLabel = advanced->findChild<QLabel *>("advancedLabel_CONFIRM_RECHECK_TORRENT");
+        QVERIFY(linked && plain && localLabel);
+        QCOMPARE(linked->font(), plain->font());
+        QCOMPARE(linked->font(), localLabel->font());
+        QVERIFY(linked->text().contains(linked->palette().color(QPalette::Disabled, QPalette::Text).name()));
+        QVERIFY(plain->text().contains(plain->palette().color(QPalette::Disabled, QPalette::Text).name()));
+        QVERIFY(localLabel->text().contains(localLabel->palette().color(QPalette::Active, QPalette::Text).name()));
+        QVERIFY(linked->openExternalLinks() && linked->text().contains("href="));
+        dialog.resize(820, dialog.height());
         auto *applyAdvanced = dialog.findChild<QPushButton *>("preferencesApply");
         QVERIFY(applyAdvanced);
         recheck->setChecked(true);
