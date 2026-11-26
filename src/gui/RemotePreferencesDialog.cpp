@@ -27,6 +27,8 @@
 #include <QJsonValue>
 #include <QIcon>
 #include <QHeaderView>
+#include <QEvent>
+#include <QResizeEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -67,6 +69,104 @@
 
 namespace
 {
+// All ordinary rows use the same QLabel font and margins, regardless of
+// whether a documentation link is present. An unavailable editor greys its
+// label text, but its documentation link stays independently accessible.
+class AdvancedSettingLabel final : public QLabel
+{
+public:
+    AdvancedSettingLabel(const QString &name, const QString &url, QWidget *editor, QWidget *parent)
+        : QLabel(parent), m_name(name), m_url(url), m_editor(editor)
+    {
+        QFont normal = parent->font();
+        normal.setWeight(QFont::Normal);
+        setFont(normal);
+        setWordWrap(true);
+        setMargin(1);
+        setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+        setTextFormat(Qt::RichText);
+        setOpenExternalLinks(true);
+        setTextInteractionFlags(Qt::LinksAccessibleByMouse | Qt::LinksAccessibleByKeyboard);
+        editor->installEventFilter(this);
+        updateLabel();
+    }
+
+protected:
+    bool eventFilter(QObject *object, QEvent *event) override
+    {
+        if (object == m_editor && event->type() == QEvent::EnabledChange)
+            updateLabel();
+        return QLabel::eventFilter(object, event);
+    }
+
+    void changeEvent(QEvent *event) override
+    {
+        QLabel::changeEvent(event);
+        if (event->type() == QEvent::PaletteChange)
+            updateLabel();
+    }
+
+private:
+    void updateLabel()
+    {
+        if (!m_editor) return;
+        const QColor color = palette().color(m_editor->isEnabled() ? QPalette::Active : QPalette::Disabled,
+                                               QPalette::Text);
+        QString content = QStringLiteral("<span style=\"color:%1\">%2</span>")
+            .arg(color.name(), m_name.toHtmlEscaped());
+        if (!m_url.isEmpty())
+            content += QStringLiteral(" <a href=\"%1\" style=\"color:%2\">(?)</a>")
+                .arg(m_url.toHtmlEscaped(), palette().color(QPalette::Active, QPalette::Link).name());
+        setText(content);
+        setToolTip(m_name + QLatin1Char('\n') + m_editor->toolTip());
+    }
+
+    const QString m_name;
+    const QString m_url;
+    QPointer<QWidget> m_editor;
+};
+
+class AdvancedSettingsTable final : public QTableWidget
+{
+public:
+    explicit AdvancedSettingsTable(QWidget *parent) : QTableWidget(parent)
+    {
+        connect(horizontalHeader(), &QHeaderView::sectionResized, this, [this] { scheduleRowHeights(); });
+    }
+
+    void scheduleRowHeights()
+    {
+        if (m_updatePending) return;
+        m_updatePending = true;
+        QTimer::singleShot(0, this, [this] {
+            m_updatePending = false;
+            for (int row = 0; row < rowCount(); ++row)
+            {
+                int height = fontMetrics().height() + 5;
+                for (int col = 0; col < columnCount(); ++col)
+                    if (auto *widget = cellWidget(row, col))
+                    {
+                        const int width = qMax(1, columnWidth(col) - 2);
+                        const int hint = widget->hasHeightForWidth()
+                            ? widget->heightForWidth(width) : widget->sizeHint().height();
+                        height = qMax(height, hint + 1);
+                    }
+                if (rowHeight(row) != height) setRowHeight(row, height);
+            }
+        });
+    }
+
+protected:
+    void resizeEvent(QResizeEvent *event) override
+    {
+        QTableWidget::resizeEvent(event);
+        scheduleRowHeights();
+    }
+
+private:
+    bool m_updatePending = false;
+};
+
 const QSet<QString> webUISecurityKeys{
     "web_ui_secure_cookie_enabled", "web_ui_host_header_validation_enabled",
     "web_ui_domain_list", "web_ui_use_custom_http_headers_enabled",
@@ -255,7 +355,7 @@ RemotePreferencesDialog::RemotePreferencesDialog(QSettings &settings,
     bindBitTorrentQueueingControls();
     bindBitTorrentSeedingLimits();
     bindBitTorrentAutomaticTrackers();
-    populateAdvancedPlaceholders();
+    buildAdvancedPage();
     buildRemotePathsPage(preferredProfileId);
 
     const char *icons[] = {
@@ -2610,147 +2710,229 @@ void RemotePreferencesDialog::verifyRemoteChanges(const QJsonObject &changes)
         });
 }
 
-void RemotePreferencesDialog::populateAdvancedPlaceholders()
+void RemotePreferencesDialog::buildAdvancedPage()
 {
-    // Upstream qBittorrent's Designer leaves Advanced empty and populates
-    // this table in advancedsettings.cpp. Retain every named setting from
-    // that original list, with non-editable grey values until supported by
-    // the authenticated remote Web API.
-    auto *notice = new QLabel(tr(
-        "Advanced server settings are not yet connected to the Web API. "
-        "These labels are shown for functional parity tracking, not as "
-        "current server values."), m_ui->tabAdvancedPage);
-    notice->setWordWrap(true);
-    m_ui->advPageLayout->addWidget(notice);
-
-    auto *table = new QTreeWidget(m_ui->tabAdvancedPage);
-    table->setObjectName(QStringLiteral("advancedSettingsPreview"));
+    // Native qBittorrent uses two columns and an editor widget in each row.
+    // Keep the upstream section order and the union of its conditional rows.
+    // The stable row IDs and factories let subsequent API bindings reuse this
+    // layout without rebuilding it or guessing the remote daemon's platform.
+    auto *table = new AdvancedSettingsTable(m_ui->tabAdvancedPage);
+    table->setObjectName(QStringLiteral("advancedSettingsTable"));
     table->setColumnCount(2);
-    table->setHeaderLabels({tr("Setting"), tr("Value")});
-    table->setRootIsDecorated(false);
+    table->setHorizontalHeaderLabels({tr("Setting"), tr("Value")});
+    table->verticalHeader()->hide();
     table->setAlternatingRowColors(true);
-    table->setUniformRowHeights(true);
-    table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     table->setSelectionMode(QAbstractItemView::NoSelection);
-    table->header()->setStretchLastSection(true);
-    table->header()->setHighlightSections(false);
-    table->header()->resizeSection(0, 415);
-    const QStringList upstreamSettings {
-        tr("qBittorrent Section"),
-        tr("libtorrent Section"),
-        tr("Resume data storage type (requires restart)"),
-        tr("Torrent content removing mode"),
-        tr("Physical memory (RAM) usage limit"),
-        tr("Process memory priority"),
-        tr("Bdecode depth limit"),
-        tr("Bdecode token limit"),
-        tr("Maximum directory depth when loading torrents"),
-        tr("Asynchronous I/O threads"),
-        tr("Hashing threads"),
-        tr("File pool size"),
-        tr("Outstanding memory when checking torrents"),
-        tr("Disk cache"),
-        tr("Disk cache expiry interval"),
-        tr("Disk queue size"),
-        tr("Disk IO type (requires restart)"),
-        tr("Disk IO read mode"),
-        tr("Disk IO write mode"),
-        tr("Coalesce reads & writes"),
-        tr("Use piece extent affinity"),
-        tr("Send upload piece suggestions"),
-        tr("Send buffer watermark"),
-        tr("Send buffer low watermark"),
-        tr("Send buffer watermark factor"),
-        tr("Outgoing connections per second"),
-        tr("Allow outgoing connections when seeding"),
-        tr("Socket send buffer size [0: system default]"),
-        tr("Socket receive buffer size [0: system default]"),
-        tr("Socket backlog size"),
-        tr("Save resume data interval [0: disabled]"),
-        tr("Save statistics interval [0: disabled]"),
-        tr(".torrent file size limit"),
-        tr("Outgoing ports (Min) [0: disabled]"),
-        tr("Outgoing ports (Max) [0: disabled]"),
-        tr("UPnP lease duration [0: permanent lease]"),
-        tr("Differentiated Services Code Point (DSCP) for connections to peers"),
-        tr("uTP-TCP mixed mode algorithm"),
-        tr("Internal hostname resolver cache expiry interval"),
-        tr("Support internationalized domain name (IDN)"),
-        tr("Allow multiple connections from the same IP address"),
-        tr("Allow multiple connections from the same Peer ID"),
-        tr("Validate HTTPS tracker certificates"),
-        tr("Server-side request forgery (SSRF) mitigation"),
-        tr("Disallow connection to peers on privileged ports"),
-        tr("Recheck torrents on completion"),
-        tr("Customize application instance name"),
-        tr("Refresh interval"),
-        tr("Resolve peer countries"),
-        tr("Resolve peer host names"),
-        tr("Network interface"),
-        tr("Optional IP address to bind to"),
-        tr("IP address reported to trackers (requires restart)"),
-        tr("Port reported to trackers (requires restart) [0: listening port]"),
-        tr("Max concurrent HTTP announces"),
-        tr("Stop tracker timeout [0: disabled]"),
-        tr("Display notifications"),
-        tr("Display notifications for added torrents"),
-        tr("Notification timeout [0: infinite, -1: system default]"),
-        tr("Reannounce to all trackers when IP or port changed"),
-        tr("Download tracker's favicon"),
-        tr("Save path history length"),
-        tr("Enable speed graphs"),
-        tr("Enable icons in menus"),
-        tr("Attach \"Add new torrent\" dialog to main window"),
-        tr("Enable embedded tracker"),
-        tr("Embedded tracker port"),
-        tr("Enable port forwarding for embedded tracker"),
-        tr("Ignore SSL errors"),
-        tr("Python executable path (may require restart)"),
-        tr("Start BitTorrent session in paused state"),
-        tr("BitTorrent session shutdown timeout [-1: unlimited]"),
-        tr("Upload slots behavior"),
-        tr("Upload choking algorithm"),
-        tr("Confirm torrent recheck"),
-        tr("Confirm removal of all tags"),
-        tr("Confirm removal of tracker from all torrents"),
-        tr("Always announce to all trackers in a tier"),
-        tr("Always announce to all tiers"),
-        tr("Peer turnover disconnect percentage"),
-        tr("Peer turnover threshold percentage"),
-        tr("Peer turnover disconnect interval"),
-        tr("Maximum outstanding requests to a single peer"),
-        tr("Maximum outstanding block requests from a peer"),
-        tr("DHT bootstrap nodes"),
-        tr("STUN server for WebTorrent NAT traversal"),
-        tr("I2P inbound quantity"),
-        tr("I2P outbound quantity"),
-        tr("I2P inbound length"),
-        tr("I2P outbound length"),
-        tr("I2P inbound length variance"),
-        tr("I2P outbound length variance")
+    table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    table->setWordWrap(false);
+    table->setTextElideMode(Qt::ElideNone);
+    table->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
+    table->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    table->setSizeAdjustPolicy(QAbstractScrollArea::AdjustIgnored);
+    table->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
+    table->horizontalHeader()->setHighlightSections(false);
+    table->horizontalHeader()->setMinimumSectionSize(120);
+    table->horizontalHeader()->setStretchLastSection(false);
+    // Reserve a usable editor column; the setting column wraps instead of
+    // forcing the whole value column out of the viewport.
+    table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
+    table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Interactive);
+    table->horizontalHeader()->resizeSection(1, qMax(180, table->fontMetrics().horizontalAdvance(tr("Open documentation")) + 22));
+    table->verticalHeader()->setSectionResizeMode(QHeaderView::Fixed);
+    const auto unavailable = tr("Not yet available from the selected server. This is not a live value.");
+    const auto section = [this, table](const QString &name, const char *url) {
+        const int index = table->rowCount();
+        table->insertRow(index);
+        auto *title = new QTableWidgetItem(name);
+        QFont bold = title->font();
+        bold.setBold(true);
+        title->setFont(bold);
+        title->setTextAlignment(Qt::AlignCenter);
+        title->setFlags(Qt::ItemIsEnabled);
+        title->setBackground(palette().brush(QPalette::AlternateBase));
+        table->setItem(index, 0, title);
+        auto *link = new QLabel(QStringLiteral("<a href=\"%1\">%2</a>")
+            .arg(QString::fromLatin1(url), tr("Open documentation")), table);
+        link->setOpenExternalLinks(true);
+        link->setTextInteractionFlags(Qt::LinksAccessibleByMouse | Qt::LinksAccessibleByKeyboard);
+        link->setMargin(1);
+        table->setCellWidget(index, 1, link);
     };
-    const QColor disabledText = palette().color(QPalette::Disabled, QPalette::Text);
-    for (int i = 0; i < upstreamSettings.size(); ++i)
-    {
-        const bool sectionHeader = i < 2;
-        auto *item = new QTreeWidgetItem(table, {
-            upstreamSettings.at(i),
-            sectionHeader ? QString() : tr("Not implemented")
-        });
+    const auto row = [this, table, unavailable](const char *id, const QString &label,
+                                                QWidget *editor, const char *url = nullptr) {
+        const int index = table->rowCount();
+        table->insertRow(index);
+        // A transparent cell widget does not suppress the delegate's text.
+        // Store metadata outside DisplayRole so the QLabel is the sole
+        // renderer of the setting name (including wrapped lines).
+        auto *item = new QTableWidgetItem;
+        item->setData(Qt::UserRole, label);
         item->setFlags(Qt::ItemIsEnabled);
-        if (sectionHeader)
+        item->setToolTip(label);
+        table->setItem(index, 0, item);
+        editor->setObjectName(QStringLiteral("advanced_") + QString::fromLatin1(id));
+        const bool local = editor->property("advancedLocal").toBool();
+        editor->setEnabled(local);
+        if (!local)
         {
-            QFont bold = font();
-            bold.setBold(true);
-            item->setFont(0, bold);
+            editor->setToolTip(unavailable);
+            item->setToolTip(label + QLatin1Char('\n') + unavailable);
+            item->setForeground(palette().brush(QPalette::Disabled, QPalette::Text));
         }
         else
         {
-            item->setForeground(0, disabledText);
-            item->setForeground(1, disabledText);
+            editor->setToolTip(tr("Local desktop preference. Does not change any server settings."));
+            item->setToolTip(editor->toolTip());
         }
-    }
+        table->setCellWidget(index, 1, editor);
+        auto *name = new AdvancedSettingLabel(label, url ? QString::fromLatin1(url) : QString(), editor, table);
+        name->setObjectName(QStringLiteral("advancedLabel_") + QString::fromLatin1(id));
+        table->setCellWidget(index, 0, name);
+    };
+    const auto check = [table] {
+        auto *editor = new QCheckBox(table);
+        editor->setTristate(true);
+        editor->setCheckState(Qt::PartiallyChecked);
+        return editor;
+    };
+    const auto spin = [table](int min, int max, const QString &suffix, const QString &special) {
+        auto *editor = new QSpinBox(table);
+        editor->setRange(min, max);
+        editor->setSuffix(suffix);
+        editor->setProperty("advancedNativeSpecialValueText", special);
+        editor->setSpecialValueText(QObject::tr("Unavailable"));
+        editor->setValue(min);
+        return editor;
+    };
+    const auto combo = [table](const QStringList &options) {
+        auto *editor = new QComboBox(table);
+        editor->addItems(options);
+        editor->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+        editor->setMinimumContentsLength(10);
+        editor->setPlaceholderText(QObject::tr("Unavailable"));
+        editor->setCurrentIndex(-1);
+        return editor;
+    };
+    const auto line = [table] {
+        auto *editor = new QLineEdit(table);
+        editor->setPlaceholderText(QObject::tr("Unavailable"));
+        return editor;
+    };
+    const auto localCheck = [this, table](const char *name, bool fallback) {
+        auto *editor = new QCheckBox(table);
+        const QString key = QStringLiteral("Preferences/Advanced/") + QString::fromLatin1(name);
+        const bool value = m_settings.value(key, fallback).toBool();
+        editor->setChecked(value);
+        editor->setProperty("advancedLocal", true);
+        m_advancedLocalChecks.insert(key, editor);
+        m_advancedLocalBaseline.insert(key, value);
+        connect(editor, &QCheckBox::toggled, this, [this] { updateButtons(); });
+        return editor;
+    };
+
+    section(tr("qBittorrent Section"), "https://github.com/qbittorrent/qBittorrent/wiki/Explanation-of-Options-in-qBittorrent#Advanced");
+    row("RESUME_DATA_STORAGE", tr("Resume data storage type (requires restart)"), combo({tr("Fastresume files"), tr("SQLite database (experimental)")}));
+    row("TORRENT_CONTENT_REMOVE_OPTION", tr("Torrent content removing mode"), combo({tr("Delete files permanently"), tr("Move files to trash (if possible)")}));
+    row("MEMORY_WORKING_SET_LIMIT", tr("Physical memory (RAM) usage limit"), spin(1, std::numeric_limits<int>::max(), tr(" MiB"), tr("")), "https://wikipedia.org/wiki/Working_set");
+    row("OS_MEMORY_PRIORITY", tr("Process memory priority"), combo({tr("Normal"), tr("Below normal"), tr("Medium"), tr("Low"), tr("Very low")}), "https://docs.microsoft.com/en-us/windows/win32/api/processthreadsapi/ns-processthreadsapi-memory_priority_information");
+    row("NETWORK_IFACE", tr("Network interface"), combo({tr("Any interface")}));
+    row("NETWORK_IFACE_ADDRESS", tr("Optional IP address to bind to"), combo({tr("All addresses"), tr("All IPv4 addresses"), tr("All IPv6 addresses")}));
+    row("SAVE_RESUME_DATA_INTERVAL", tr("Save resume data interval [0: disabled]"), spin(0, std::numeric_limits<int>::max(), tr(" min"), tr("0 (disabled)")));
+    row("SAVE_STATISTICS_INTERVAL", tr("Save statistics interval [0: disabled]"), spin(0, std::numeric_limits<int>::max(), tr(" min"), tr("0 (disabled)")));
+    row("TORRENT_FILE_SIZE_LIMIT", tr(".torrent file size limit"), spin(1, std::numeric_limits<int>::max() / 1024 / 1024, tr(" MiB"), tr("")));
+    row("CONFIRM_RECHECK_TORRENT", tr("Confirm torrent recheck"), localCheck("ConfirmTorrentRecheck", false));
+    row("RECHECK_COMPLETED", tr("Recheck torrents on completion"), check());
+    row("APP_INSTANCE_NAME", tr("Customize application instance name"), line());
+    row("LIST_REFRESH", tr("Refresh interval"), spin(30, 99999, tr(" ms"), tr("")));
+    row("RESOLVE_HOSTS", tr("Resolve peer host names"), check());
+    row("RESOLVE_COUNTRIES", tr("Resolve peer countries"), check());
+    row("PROGRAM_NOTIFICATIONS", tr("Display notifications"), check());
+    row("TORRENT_ADDED_NOTIFICATIONS", tr("Display notifications for added torrents"), check());
+    row("NOTIFICATION_TIMEOUT", tr("Notification timeout [0: infinite, -1: system default]"), spin(-1, std::numeric_limits<int>::max(), tr(" ms"), tr("")));
+    row("CONFIRM_REMOVE_ALL_TAGS", tr("Confirm removal of all tags"), localCheck("ConfirmRemoveAllTags", true));
+    row("CONFIRM_REMOVE_TRACKER_FROM_ALL_TORRENTS", tr("Confirm removal of tracker from all torrents"), localCheck("ConfirmRemoveTrackerFromAllTorrents", true));
+    row("REANNOUNCE_WHEN_ADDRESS_CHANGED", tr("Reannounce to all trackers when IP or port changed"), check());
+    row("DOWNLOAD_TRACKER_FAVICON", tr("Download tracker's favicon"), check());
+    row("SAVE_PATH_HISTORY_LENGTH", tr("Save path history length"), spin(0, 99, tr(""), tr("")));
+    row("ENABLE_SPEED_WIDGET", tr("Enable speed graphs"), check());
+    row("ENABLE_ICONS_IN_MENUS", tr("Enable icons in menus"), check());
+    row("USE_ATTACHED_ADD_NEW_TORRENT_DIALOG", tr("Attach \"Add new torrent\" dialog to main window"), check());
+    row("TRACKER_STATUS", tr("Enable embedded tracker"), check());
+    row("TRACKER_PORT", tr("Embedded tracker port"), spin(1, 65535, tr(""), tr("")));
+    row("TRACKER_PORT_FORWARDING", tr("Enable port forwarding for embedded tracker"), check());
+    row("ENABLE_MARK_OF_THE_WEB", tr("Enable Mark-of-the-Web (MOTW) for downloaded files"), check());
+    row("IGNORE_SSL_ERRORS", tr("Ignore SSL errors"), check());
+    row("PYTHON_EXECUTABLE_PATH", tr("Python executable path (may require restart)"), line());
+    row("START_SESSION_PAUSED", tr("Start BitTorrent session in paused state"), check());
+    row("SESSION_SHUTDOWN_TIMEOUT", tr("BitTorrent session shutdown timeout [-1: unlimited]"), spin(-1, std::numeric_limits<int>::max(), tr(" sec"), tr("-1 (unlimited)")));
+    section(tr("libtorrent Section"), "https://www.libtorrent.org/reference-Settings.html");
+    row("BDECODE_DEPTH_LIMIT", tr("Bdecode depth limit"), spin(0, std::numeric_limits<int>::max(), tr(""), tr("")), "https://www.libtorrent.org/reference-Bdecoding.html#bdecode()");
+    row("BDECODE_TOKEN_LIMIT", tr("Bdecode token limit"), spin(0, std::numeric_limits<int>::max(), tr(""), tr("")), "https://www.libtorrent.org/reference-Bdecoding.html#bdecode()");
+    row("ASYNC_IO_THREADS", tr("Asynchronous I/O threads"), spin(1, 1024, tr(""), tr("")), "https://www.libtorrent.org/reference-Settings.html#aio_threads");
+    row("HASHING_THREADS", tr("Hashing threads"), spin(1, 1024, tr(""), tr("")), "https://www.libtorrent.org/reference-Settings.html#hashing_threads");
+    row("FILE_POOL_SIZE", tr("File pool size"), spin(1, std::numeric_limits<int>::max(), tr(""), tr("")), "https://www.libtorrent.org/reference-Settings.html#file_pool_size");
+    row("CHECKING_MEM_USAGE", tr("Outstanding memory when checking torrents"), spin(1, 1024, tr(" MiB"), tr("")), "https://www.libtorrent.org/reference-Settings.html#checking_mem_usage");
+    row("DISK_CACHE", tr("Disk cache"), spin(-1, 33554431, tr(" MiB"), tr("")), "https://www.libtorrent.org/reference-Settings.html#cache_size");
+    row("DISK_CACHE_TTL", tr("Disk cache expiry interval"), spin(1, std::numeric_limits<int>::max(), tr(" s"), tr("")), "https://www.libtorrent.org/reference-Settings.html#cache_expiry");
+    row("DISK_QUEUE_SIZE", tr("Disk queue size"), spin(1, std::numeric_limits<int>::max() / 1024, tr(" KiB"), tr("")), "https://www.libtorrent.org/reference-Settings.html#max_queued_disk_bytes");
+    row("DISK_IO_TYPE", tr("Disk IO type (requires restart)"), combo({tr("Default"), tr("Memory mapped files"), tr("POSIX-compliant"), tr("Simple pread/pwrite"), tr("Pread/pwrite")}), "https://www.libtorrent.org/single-page-ref.html#default-disk-io-constructor");
+    row("DISK_IO_READ_MODE", tr("Disk IO read mode"), combo({tr("Disable OS cache"), tr("Enable OS cache")}), "https://www.libtorrent.org/reference-Settings.html#disk_io_read_mode");
+    row("DISK_IO_WRITE_MODE", tr("Disk IO write mode"), combo({tr("Disable OS cache"), tr("Enable OS cache"), tr("Write-through")}), "https://www.libtorrent.org/reference-Settings.html#disk_io_write_mode");
+    row("COALESCE_RW", tr("Coalesce reads & writes"), check(), "https://www.libtorrent.org/reference-Settings.html#coalesce_reads");
+    row("PIECE_EXTENT_AFFINITY", tr("Use piece extent affinity"), check(), "https://libtorrent.org/single-page-ref.html#piece_extent_affinity");
+    row("SUGGEST_MODE", tr("Send upload piece suggestions"), check(), "https://www.libtorrent.org/reference-Settings.html#suggest_mode");
+    row("SEND_BUF_WATERMARK", tr("Send buffer watermark"), spin(1, std::numeric_limits<int>::max(), tr(" KiB"), tr("")), "https://www.libtorrent.org/reference-Settings.html#send_buffer_watermark");
+    row("SEND_BUF_LOW_WATERMARK", tr("Send buffer low watermark"), spin(1, std::numeric_limits<int>::max(), tr(" KiB"), tr("")), "https://www.libtorrent.org/reference-Settings.html#send_buffer_low_watermark");
+    row("SEND_BUF_WATERMARK_FACTOR", tr("Send buffer watermark factor"), spin(1, std::numeric_limits<int>::max(), tr(" %"), tr("")), "https://www.libtorrent.org/reference-Settings.html#send_buffer_watermark_factor");
+    row("CONNECTION_SPEED", tr("Outgoing connections per second"), spin(0, std::numeric_limits<int>::max(), tr(""), tr("")), "https://www.libtorrent.org/reference-Settings.html#connection_speed");
+    row("SEEDING_OUTGOING_CONNECTIONS", tr("Allow outgoing connections when seeding"), check(), "https://www.libtorrent.org/reference-Settings.html#seeding_outgoing_connections");
+    row("SOCKET_SEND_BUFFER_SIZE", tr("Socket send buffer size [0: system default]"), spin(0, std::numeric_limits<int>::max() / 1024, tr(" KiB"), tr("0 (system default)")), "https://www.libtorrent.org/reference-Settings.html#send_socket_buffer_size");
+    row("SOCKET_RECEIVE_BUFFER_SIZE", tr("Socket receive buffer size [0: system default]"), spin(0, std::numeric_limits<int>::max() / 1024, tr(" KiB"), tr("0 (system default)")), "https://www.libtorrent.org/reference-Settings.html#recv_socket_buffer_size");
+    row("SOCKET_BACKLOG_SIZE", tr("Socket backlog size"), spin(1, std::numeric_limits<int>::max(), tr(""), tr("")), "https://www.libtorrent.org/reference-Settings.html#listen_queue_size");
+    row("OUTGOING_PORT_MIN", tr("Outgoing ports (Min) [0: disabled]"), spin(0, 65535, tr(""), tr("0 (disabled)")), "https://www.libtorrent.org/reference-Settings.html#outgoing_port");
+    row("OUTGOING_PORT_MAX", tr("Outgoing ports (Max) [0: disabled]"), spin(0, 65535, tr(""), tr("0 (disabled)")), "https://www.libtorrent.org/reference-Settings.html#outgoing_port");
+    row("UPNP_LEASE_DURATION", tr("UPnP lease duration [0: permanent lease]"), spin(0, std::numeric_limits<int>::max(), tr(" s"), tr("0 (permanent lease)")), "https://www.libtorrent.org/reference-Settings.html#upnp_lease_duration");
+    row("PEER_DSCP", tr("Differentiated Services Code Point (DSCP) for connections to peers"), spin(0, 255, tr(""), tr("")), "https://www.libtorrent.org/reference-Settings.html#peer_dscp");
+    row("UTP_MIX_MODE", tr("uTP-TCP mixed mode algorithm"), combo({tr("Prefer TCP"), tr("Peer proportional (throttles TCP)")}), "https://www.libtorrent.org/reference-Settings.html#mixed_mode_algorithm");
+    row("HOSTNAME_CACHE_TTL", tr("Internal hostname resolver cache expiry interval"), spin(0, std::numeric_limits<int>::max(), tr(" s"), tr("")), "https://www.libtorrent.org/reference-Settings.html#resolver_cache_timeout");
+    row("IDN_SUPPORT", tr("Support internationalized domain name (IDN)"), check(), "https://www.libtorrent.org/reference-Settings.html#allow_idna");
+    row("MULTI_CONNECTIONS_PER_IP", tr("Allow multiple connections from the same IP address"), check(), "https://www.libtorrent.org/reference-Settings.html#allow_multiple_connections_per_ip");
+    row("MULTI_CONNECTIONS_PER_PEER_ID", tr("Allow multiple connections from the same Peer ID"), check(), "https://www.libtorrent.org/reference-Settings.html#allow_multiple_connections_per_pid");
+    row("VALIDATE_HTTPS_TRACKER_CERTIFICATE", tr("Validate HTTPS tracker certificates"), check(), "https://www.libtorrent.org/reference-Settings.html#validate_https_trackers");
+    row("SSRF_MITIGATION", tr("Server-side request forgery (SSRF) mitigation"), check(), "https://www.libtorrent.org/reference-Settings.html#ssrf_mitigation");
+    row("BLOCK_PEERS_ON_PRIVILEGED_PORTS", tr("Disallow connection to peers on privileged ports"), check(), "https://libtorrent.org/single-page-ref.html#no_connect_privileged_ports");
+    row("CHOKING_ALGORITHM", tr("Upload slots behavior"), combo({tr("Fixed slots"), tr("Upload rate based")}), "https://www.libtorrent.org/reference-Settings.html#choking_algorithm");
+    row("SEED_CHOKING_ALGORITHM", tr("Upload choking algorithm"), combo({tr("Round-robin"), tr("Fastest upload"), tr("Anti-leech")}), "https://www.libtorrent.org/reference-Settings.html#seed_choking_algorithm");
+    row("ANNOUNCE_ALL_TRACKERS", tr("Always announce to all trackers in a tier"), check(), "https://www.libtorrent.org/reference-Settings.html#announce_to_all_trackers");
+    row("ANNOUNCE_ALL_TIERS", tr("Always announce to all tiers"), check(), "https://www.libtorrent.org/reference-Settings.html#announce_to_all_tiers");
+    row("ANNOUNCE_IP", tr("IP address reported to trackers (requires restart)"), line(), "https://www.libtorrent.org/reference-Settings.html#announce_ip");
+    row("ANNOUNCE_PORT", tr("Port reported to trackers (requires restart) [0: listening port]"), spin(0, 65535, tr(""), tr("")), "https://www.libtorrent.org/reference-Settings.html#announce_port");
+    row("MAX_CONCURRENT_HTTP_ANNOUNCES", tr("Max concurrent HTTP announces"), spin(0, std::numeric_limits<int>::max(), tr(""), tr("")), "https://www.libtorrent.org/reference-Settings.html#max_concurrent_http_announces");
+    row("STOP_TRACKER_TIMEOUT", tr("Stop tracker timeout [0: disabled]"), spin(0, std::numeric_limits<int>::max(), tr(" s"), tr("0 (disabled)")), "https://www.libtorrent.org/reference-Settings.html#stop_tracker_timeout");
+    row("PEER_TURNOVER", tr("Peer turnover disconnect percentage"), spin(0, 100, tr(" %"), tr("")), "https://www.libtorrent.org/reference-Settings.html#peer_turnover");
+    row("PEER_TURNOVER_CUTOFF", tr("Peer turnover threshold percentage"), spin(0, 100, tr(" %"), tr("")), "https://www.libtorrent.org/reference-Settings.html#peer_turnover");
+    row("PEER_TURNOVER_INTERVAL", tr("Peer turnover disconnect interval"), spin(30, 3600, tr(" s"), tr("")), "https://www.libtorrent.org/reference-Settings.html#peer_turnover");
+    row("REQUEST_QUEUE_SIZE", tr("Maximum outstanding requests to a single peer"), spin(1, std::numeric_limits<int>::max(), tr(""), tr("")), "https://www.libtorrent.org/reference-Settings.html#max_out_request_queue");
+    row("MAX_OUTSTANDING_BLOCK_REQUESTS", tr("Maximum outstanding block requests from a peer"), spin(1, std::numeric_limits<int>::max(), tr(""), tr("")), "https://www.libtorrent.org/reference-Settings.html#max_allowed_in_request_queue");
+    row("DHT_BOOTSTRAP_NODES", tr("DHT bootstrap nodes"), line(), "https://www.libtorrent.org/reference-Settings.html#dht_bootstrap_nodes");
+    row("WEBTORRENT_STUN_SERVER", tr("STUN server for WebTorrent NAT traversal"), line(), "https://www.libtorrent.org/reference-Settings.html#webtorrent_stun_server");
+    row("I2P_INBOUND_QUANTITY", tr("I2P inbound quantity"), spin(1, 16, tr(""), tr("")), "https://www.libtorrent.org/reference-Settings.html#i2p_inbound_quantity");
+    row("I2P_OUTBOUND_QUANTITY", tr("I2P outbound quantity"), spin(1, 16, tr(""), tr("")), "https://www.libtorrent.org/reference-Settings.html#i2p_outbound_quantity");
+    row("I2P_INBOUND_LENGTH", tr("I2P inbound length"), spin(0, 7, tr(""), tr("")), "https://www.libtorrent.org/reference-Settings.html#i2p_inbound_length");
+    row("I2P_OUTBOUND_LENGTH", tr("I2P outbound length"), spin(0, 7, tr(""), tr("")), "https://www.libtorrent.org/reference-Settings.html#i2p_outbound_length");
+    row("I2P_INBOUND_LENGTH_VARIANCE", tr("I2P inbound length variance"), spin(-7, 7, tr(""), tr("")), "https://www.libtorrent.org/reference-Settings.html#i2p_inbound_length_variance");
+    row("I2P_OUTBOUND_LENGTH_VARIANCE", tr("I2P outbound length variance"), spin(-7, 7, tr(""), tr("")), "https://www.libtorrent.org/reference-Settings.html#i2p_outbound_length_variance");
+
     m_ui->advPageLayout->addWidget(table, 1);
+    table->scheduleRowHeights();
+}
+
+bool RemotePreferencesDialog::hasAdvancedLocalChanges() const
+{
+    for (auto it = m_advancedLocalChecks.constBegin(); it != m_advancedLocalChecks.constEnd(); ++it)
+        if (it.value()->isChecked() != m_advancedLocalBaseline.value(it.key()))
+            return true;
+    return false;
 }
 
 void RemotePreferencesDialog::buildRemotePathsPage(const QString &preferredProfileId)
@@ -3000,7 +3182,7 @@ void RemotePreferencesDialog::updateButtons()
     m_checkMount->setEnabled(selected);
     if (m_applyButton)
         m_applyButton->setEnabled(!m_remoteBusy && (!m_changedProfiles.isEmpty()
-                                  || m_behaviorDirty || m_additionDirty
+                                  || m_behaviorDirty || m_additionDirty || hasAdvancedLocalChanges()
                                   || m_ui->checkRSSLoadExternalImages->isChecked() != m_rssImageBaseline
                                   || !remoteChanges().isEmpty()));
     refreshNotificationControls();
@@ -3093,7 +3275,7 @@ void RemotePreferencesDialog::applyWebUITransition(const QJsonObject &changes)
                 tr("Revert the other remote edits and apply them separately from connection changes."));
             return;
         }
-    if (!m_changedProfiles.isEmpty() || m_behaviorDirty || m_additionDirty
+    if (!m_changedProfiles.isEmpty() || m_behaviorDirty || m_additionDirty || hasAdvancedLocalChanges()
         || m_ui->checkRSSLoadExternalImages->isChecked() != m_rssImageBaseline)
     {
         QMessageBox::warning(this, tr("Apply connection settings separately"),
@@ -3525,6 +3707,15 @@ bool RemotePreferencesDialog::applyLocalChanges()
             m_ui->checkBoxHideZeroStatusFilters->isChecked());
         m_behaviorDirty = false;
         emit localBehaviorApplied();
+    }
+    for (auto it = m_advancedLocalChecks.constBegin(); it != m_advancedLocalChecks.constEnd(); ++it)
+    {
+        const bool checked = it.value()->isChecked();
+        if (checked != m_advancedLocalBaseline.value(it.key()))
+        {
+            m_settings.setValue(it.key(), checked);
+            m_advancedLocalBaseline.insert(it.key(), checked);
+        }
     }
     if (m_ui->checkRSSLoadExternalImages->isChecked() != m_rssImageBaseline)
     {
