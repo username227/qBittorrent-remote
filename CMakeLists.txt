@@ -13,6 +13,23 @@ set(CMAKE_AUTORCC ON)
 include(GNUInstallDirs)
 include(CTest)
 
+# Generate build identity at build time so an incremental rebuild after a
+# checkout cannot accidentally retain the previous revision.
+option(QBT_REMOTE_RELEASE_BUILD "Build an official release without a development revision" OFF)
+find_package(Git QUIET)
+set(QBT_REMOTE_VERSION_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/RemoteBuildVersion.h")
+add_custom_target(qbt_remote_build_version ALL
+    COMMAND "${CMAKE_COMMAND}"
+        "-DREPO_DIR=${PROJECT_SOURCE_DIR}"
+        "-DOUTPUT=${QBT_REMOTE_VERSION_HEADER}"
+        "-DVERSION=${PROJECT_VERSION}"
+        "-DGIT_EXECUTABLE=${GIT_EXECUTABLE}"
+        "-DRELEASE_BUILD=${QBT_REMOTE_RELEASE_BUILD}"
+        -P "${PROJECT_SOURCE_DIR}/cmake/GenerateBuildVersion.cmake"
+    BYPRODUCTS "${QBT_REMOTE_VERSION_HEADER}"
+    VERBATIM
+)
+
 # SVG icons from the bundled qBittorrent UI require the QtSvg icon-engine
 # plugin on every platform. Make the dependency explicit so missing SVG
 # support fails at configure time rather than silently hiding all icons.
@@ -145,6 +162,8 @@ add_library(qbittorrent_remote_gui STATIC
 target_include_directories(qbittorrent_remote_gui PUBLIC
     "${PROJECT_SOURCE_DIR}/src"
 )
+add_dependencies(qbittorrent_remote_gui qbt_remote_build_version)
+target_include_directories(qbittorrent_remote_gui PUBLIC "${CMAKE_CURRENT_BINARY_DIR}/generated")
 set_target_properties(qbittorrent_remote_gui PROPERTIES
     AUTOUIC_SEARCH_PATHS "${PROJECT_SOURCE_DIR}/src/gui/upstream;${PROJECT_SOURCE_DIR}/src/gui/upstream/layouts"
 )
@@ -157,6 +176,7 @@ endif()
 qt_add_executable(qbittorrent-remote
     src/main.cpp
 )
+add_dependencies(qbittorrent-remote qbt_remote_build_version)
 target_link_libraries(qbittorrent-remote PRIVATE
     qbittorrent_remote_core
     qbittorrent_remote_gui
@@ -248,6 +268,7 @@ if(BUILD_TESTING)
         mainWindowAndEachServerRestoreNativeLayout
         simultaneousServersHaveIndependentTabsAndKeepPolling
         nativeStatisticsTracksIndependentServerSnapshots
+        nativeMenuActionsFollowServerSessionState
     )
 
     add_remote_workflow_group(remote_tray_and_status_workflow 60

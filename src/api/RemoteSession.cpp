@@ -504,6 +504,16 @@ void RemoteSession::queueOperation(const QString &endpoint, const QByteArray &bo
     pumpOperations();
 }
 
+void RemoteSession::setSessionPaused(bool paused)
+{
+    // A true libtorrent session pause preserves the HTTP API and individual
+    // torrent states. Never emulate it with torrents/stop or torrents/start.
+    queueOperation(paused ? QStringLiteral("api/v2/transfer/pauseSession")
+                          : QStringLiteral("api/v2/transfer/resumeSession"),
+                   {}, QByteArrayLiteral("application/x-www-form-urlencoded"),
+                   paused ? tr("Pause session") : tr("Resume session"), true);
+}
+
 void RemoteSession::setAlternativeSpeedLimitsEnabled(bool enabled)
 {
     // Use an explicit mode, not the toggle endpoint: retrying or switching
