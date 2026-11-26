@@ -356,6 +356,7 @@ RemotePreferencesDialog::RemotePreferencesDialog(QSettings &settings,
     bindBitTorrentSeedingLimits();
     bindBitTorrentAutomaticTrackers();
     buildAdvancedPage();
+    bindAdvancedRemoteControls();
     buildRemotePathsPage(preferredProfileId);
 
     const char *icons[] = {
@@ -2416,6 +2417,26 @@ void RemotePreferencesDialog::refreshRemoteControls()
     for (const auto &field : m_remoteFields)
     {
         const bool supported = m_remotePreferencesLoaded && !field.baseline.isUndefined();
+        // Clear unavailable Advanced previews on a missing/malformed read or
+        // disconnect; never retain an apparently authoritative stale value.
+        if (!supported && field.widget->property("advancedRemote").toBool())
+        {
+            const QSignalBlocker blocker(field.widget);
+            if (auto *box = qobject_cast<QCheckBox *>(field.widget))
+            {
+                box->setTristate(true);
+                box->setCheckState(Qt::PartiallyChecked);
+            }
+            else if (auto *spin = qobject_cast<QSpinBox *>(field.widget))
+            {
+                spin->setSpecialValueText(tr("Unavailable"));
+                spin->setValue(spin->minimum());
+            }
+            else if (auto *combo = qobject_cast<QComboBox *>(field.widget))
+                combo->setCurrentIndex(-1);
+            else if (auto *line = qobject_cast<QLineEdit *>(field.widget))
+                line->clear();
+        }
         field.widget->setEnabled(supported && (!field.dependency || field.dependency()));
         field.widget->setToolTip(supported ? field.tooltip : tr(
             "This setting is unavailable from the connected server. Displayed values are not live."));
@@ -2927,6 +2948,135 @@ void RemotePreferencesDialog::buildAdvancedPage()
     table->scheduleRowHeights();
 }
 
+void RemotePreferencesDialog::bindAdvancedRemoteControls()
+{
+    // API keys, widget IDs and wire units verified against both supported
+    // upstream appcontroller.cpp versions. A typed missing/unrepresentable
+    // value is never substituted with a local default.
+    struct Binding { const char *id; const char *key; int scale; };
+    static const Binding bindings[] = {
+        {"TORRENT_CONTENT_REMOVE_OPTION", "torrent_content_remove_option", 1},
+        {"SAVE_RESUME_DATA_INTERVAL", "save_resume_data_interval", 1},
+        {"SAVE_STATISTICS_INTERVAL", "save_statistics_interval", 1},
+        {"TORRENT_FILE_SIZE_LIMIT", "torrent_file_size_limit", 1048576},
+        {"RECHECK_COMPLETED", "recheck_completed_torrents", 1},
+        {"REANNOUNCE_WHEN_ADDRESS_CHANGED", "reannounce_when_address_changed", 1},
+        {"TRACKER_STATUS", "enable_embedded_tracker", 1},
+        {"TRACKER_PORT", "embedded_tracker_port", 1},
+        {"TRACKER_PORT_FORWARDING", "embedded_tracker_port_forwarding", 1},
+        {"IGNORE_SSL_ERRORS", "ignore_ssl_errors", 1},
+        {"BDECODE_DEPTH_LIMIT", "bdecode_depth_limit", 1},
+        {"BDECODE_TOKEN_LIMIT", "bdecode_token_limit", 1},
+        {"ASYNC_IO_THREADS", "async_io_threads", 1},
+        {"FILE_POOL_SIZE", "file_pool_size", 1},
+        {"DISK_QUEUE_SIZE", "disk_queue_size", 1024},
+        {"PIECE_EXTENT_AFFINITY", "enable_piece_extent_affinity", 1},
+        {"SUGGEST_MODE", "enable_upload_suggestions", 1},
+        {"SEND_BUF_WATERMARK", "send_buffer_watermark", 1},
+        {"SEND_BUF_LOW_WATERMARK", "send_buffer_low_watermark", 1},
+        {"SEND_BUF_WATERMARK_FACTOR", "send_buffer_watermark_factor", 1},
+        {"CONNECTION_SPEED", "connection_speed", 1},
+        {"SEEDING_OUTGOING_CONNECTIONS", "seeding_outgoing_connections", 1},
+        {"SOCKET_SEND_BUFFER_SIZE", "socket_send_buffer_size", 1024},
+        {"SOCKET_RECEIVE_BUFFER_SIZE", "socket_receive_buffer_size", 1024},
+        {"SOCKET_BACKLOG_SIZE", "socket_backlog_size", 1},
+        {"OUTGOING_PORT_MIN", "outgoing_ports_min", 1},
+        {"OUTGOING_PORT_MAX", "outgoing_ports_max", 1},
+        {"UPNP_LEASE_DURATION", "upnp_lease_duration", 1},
+        {"PEER_DSCP", "peer_tos", 1},
+        {"UTP_MIX_MODE", "utp_tcp_mixed_mode", 1},
+        {"HOSTNAME_CACHE_TTL", "hostname_cache_ttl", 1},
+        {"IDN_SUPPORT", "idn_support_enabled", 1},
+        {"MULTI_CONNECTIONS_PER_IP", "enable_multi_connections_from_same_ip", 1},
+        {"MULTI_CONNECTIONS_PER_PEER_ID", "enable_multi_connections_from_same_peer_id", 1},
+        {"VALIDATE_HTTPS_TRACKER_CERTIFICATE", "validate_https_tracker_certificate", 1},
+        {"SSRF_MITIGATION", "ssrf_mitigation", 1},
+        {"BLOCK_PEERS_ON_PRIVILEGED_PORTS", "block_peers_on_privileged_ports", 1},
+        {"CHOKING_ALGORITHM", "upload_slots_behavior", 1},
+        {"SEED_CHOKING_ALGORITHM", "upload_choking_algorithm", 1},
+        {"ANNOUNCE_ALL_TRACKERS", "announce_to_all_trackers", 1},
+        {"ANNOUNCE_ALL_TIERS", "announce_to_all_tiers", 1},
+        {"MAX_CONCURRENT_HTTP_ANNOUNCES", "max_concurrent_http_announces", 1},
+        {"STOP_TRACKER_TIMEOUT", "stop_tracker_timeout", 1},
+        {"PEER_TURNOVER", "peer_turnover", 1},
+        {"PEER_TURNOVER_CUTOFF", "peer_turnover_cutoff", 1},
+        {"PEER_TURNOVER_INTERVAL", "peer_turnover_interval", 1},
+        {"REQUEST_QUEUE_SIZE", "request_queue_size", 1},
+        {"MAX_OUTSTANDING_BLOCK_REQUESTS", "max_outstanding_block_requests", 1},
+        {"DHT_BOOTSTRAP_NODES", "dht_bootstrap_nodes", 1},
+        {"WEBTORRENT_STUN_SERVER", "webtorrent_stun_server", 1}
+    };
+    const auto trackerEnabled = [this] {
+        auto *flag = findChild<QCheckBox *>(QStringLiteral("advanced_TRACKER_STATUS"));
+        return remoteFieldAvailable("enable_embedded_tracker") && flag && flag->isChecked();
+    };
+    for (const auto &entry : bindings)
+    {
+        auto *widget = findChild<QWidget *>(QStringLiteral("advanced_") + QString::fromLatin1(entry.id));
+        Q_ASSERT(widget);
+        if (!widget) continue;
+        widget->setProperty("advancedRemote", true);
+        m_advancedRemoteKeys.insert(QString::fromLatin1(entry.key));
+        const QString key = QString::fromLatin1(entry.key);
+        std::function<bool()> dependency;
+        if (key == QLatin1String("embedded_tracker_port") || key == QLatin1String("embedded_tracker_port_forwarding"))
+            dependency = trackerEnabled;
+        const auto tooltip = tr("Applies to the selected remote daemon, not this desktop. Use Apply to save.");
+        if (auto *box = qobject_cast<QCheckBox *>(widget))
+        {
+            bindRemoteField(RemoteField{key, box,
+                [box] { return QJsonValue(box->isChecked()); },
+                [box](const QJsonValue &v) { box->setTristate(false); box->setChecked(v.toBool()); },
+                [](const QJsonValue &v) { return v.isBool(); }, dependency, tooltip});
+            connect(box, &QCheckBox::toggled, this, [this] { remoteFieldChanged(); });
+        }
+        else if (auto *spin = qobject_cast<QSpinBox *>(widget))
+        {
+            const int scale = entry.scale;
+            bindRemoteField(RemoteField{key, spin,
+                [spin, scale] { return QJsonValue(double(spin->value()) * scale); },
+                [spin, scale](const QJsonValue &v) {
+                    spin->setSpecialValueText(spin->property("advancedNativeSpecialValueText").toString());
+                    spin->setValue(int(v.toDouble() / scale));
+                },
+                [spin, scale](const QJsonValue &v) {
+                    if (!v.isDouble()) return false;
+                    const double n = v.toDouble() / scale;
+                    return n >= spin->minimum() && n <= spin->maximum() && n == int(n);
+                }, dependency, tooltip});
+            connect(spin, QOverload<int>::of(&QSpinBox::valueChanged), this, [this] { remoteFieldChanged(); });
+        }
+        else if (key == QLatin1String("torrent_content_remove_option"))
+            bindStringCombo(entry.key, qobject_cast<QComboBox *>(widget),
+                {QStringLiteral("Delete"), QStringLiteral("MoveToTrash")}, dependency);
+        else
+            bindRemoteControl(entry.key, widget, dependency, tooltip);
+    }
+}
+
+bool RemotePreferencesDialog::validateAdvancedChanges(const QJsonObject &changes)
+{
+    bool advanced = false;
+    for (auto it = changes.constBegin(); it != changes.constEnd(); ++it)
+        advanced |= m_advancedRemoteKeys.contains(it.key());
+    if (!advanced) return true;
+    if (changes.contains("outgoing_ports_min") || changes.contains("outgoing_ports_max"))
+    {
+        const int low = findChild<QSpinBox *>("advanced_OUTGOING_PORT_MIN")->value();
+        const int high = findChild<QSpinBox *>("advanced_OUTGOING_PORT_MAX")->value();
+        if (!remoteFieldAvailable("outgoing_ports_min") || !remoteFieldAvailable("outgoing_ports_max")
+            || (low > 0 && high > 0 && low > high))
+        {
+            QMessageBox::warning(this, tr("Invalid outgoing ports"),
+                tr("The server must expose both outgoing port limits and the minimum must not exceed the maximum."));
+            return false;
+        }
+    }
+    return QMessageBox::question(this, tr("Change Advanced server settings"),
+        tr("These settings modify the selected server's torrent engine and may affect performance, security or tracker connectivity. Ensure you have independent server access. Apply the changes?"),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes;
+}
+
 bool RemotePreferencesDialog::hasAdvancedLocalChanges() const
 {
     for (auto it = m_advancedLocalChecks.constBegin(); it != m_advancedLocalChecks.constEnd(); ++it)
@@ -3215,7 +3365,7 @@ void RemotePreferencesDialog::applyChanges(bool closeAfter)
     if (!validateDownloadChanges(changes) || !validateIPFilterChanges(changes)
         || !validateSpeedChanges(changes) || !validateSeedingLimitChanges(changes)
         || !validateAutomaticTrackerChanges(changes) || !validateRSSChanges(changes)
-        || !validateWebUIChanges(changes))
+        || !validateWebUIChanges(changes) || !validateAdvancedChanges(changes))
     {
         m_closeAfterApply = false;
         return;
