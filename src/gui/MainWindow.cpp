@@ -783,7 +783,11 @@ void MainWindow::setupActions()
     connect(m_ui->actionCreateTorrent, &QAction::triggered, this, [this] {
         const auto server = activeConnection();
         if (!server || !server->connected || !server->session) return;
-        RemoteTorrentCreatorDialog dialog(*m_settings, server->profile, server->session, server->version, this);
+        QList<RemoteTorrentCreatorDialog::SeedTarget> seedTargets;
+        for (const auto &candidate : m_connections)
+            if (candidate != server && candidate->connected && candidate->session)
+                seedTargets.append({candidate->profile, candidate->session});
+        RemoteTorrentCreatorDialog dialog(*m_settings, server->profile, server->session, server->version, this, seedTargets);
         trackDialogGeometry(dialog, QStringLiteral("TorrentCreator"));
         dialog.exec();
     });

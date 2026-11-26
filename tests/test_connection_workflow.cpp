@@ -11,6 +11,8 @@
 #include "gui/TorrentModel.h"
 #include "gui/ConnectionDialog.h"
 #include "gui/RemoteAddTorrentDialog.h"
+#include "gui/RemoteTorrentCreatorDialog.h"
+#include <QTextEdit>
 #include "gui/RemoteTrackerEntriesDialog.h"
 #include "gui/RemoteTorrentContentLayoutDialog.h"
 #include "gui/RemoteTorrentOptionsDialog.h"
@@ -178,6 +180,51 @@ public:
                             const QString iface = query.queryItemValue("iface", QUrl::FullyDecoded);
                             if (!m_networkAddresses.contains(iface)) { code = 404; response = "Unavailable"; }
                             else response = QJsonDocument(m_networkAddresses.value(iface)).toJson(QJsonDocument::Compact);
+                        }
+                        else if (path == "/api/v2/torrentcreator/status" && hasCookie && m_creatorDemo)
+                        {
+                            response = "[]";
+                        }
+                        else if (path == "/api/v2/torrentcreator/addTask" && hasCookie && m_creatorDemo)
+                        {
+                            m_commands.append({path, body});
+                            m_creatorActive = true;
+                            m_creatorPolls = 0;
+                            response = QJsonDocument(QJsonObject{{"taskID", "creator&task"}}).toJson(QJsonDocument::Compact);
+                        }
+                        else if (path.startsWith("/api/v2/torrentcreator/status?") && hasCookie && m_creatorDemo)
+                        {
+                            const QUrlQuery query(QString::fromLatin1(path.mid(path.indexOf('?') + 1)));
+                            if (!m_creatorActive || query.queryItemValue("taskID", QUrl::FullyDecoded) != "creator&task")
+                            { code = 404; response = "Not found"; }
+                            else
+                            {
+                                ++m_creatorPolls;
+                                const QJsonObject task{{"taskID", "creator&task"},
+                                    {"status", m_creatorHold || m_creatorPolls == 1 ? "Running" : "Finished"},
+                                    {"progress", 43}};
+                                response = QJsonDocument(QJsonArray{task}).toJson(QJsonDocument::Compact);
+                            }
+                        }
+                        else if (path.startsWith("/api/v2/torrentcreator/torrentFile?") && hasCookie && m_creatorDemo)
+                        {
+                            const QUrlQuery query(QString::fromLatin1(path.mid(path.indexOf('?') + 1)));
+                            if (!m_creatorActive || m_creatorPolls < 2 || m_creatorHold
+                                || query.queryItemValue("taskID", QUrl::FullyDecoded) != "creator&task")
+                            { code = 409; response = "Not ready"; }
+                            else
+                            {
+                                ++m_creatorDownloads;
+                                response = m_exportedTorrent;
+                            }
+                        }
+                        else if (path == "/api/v2/torrentcreator/deleteTask" && hasCookie && m_creatorDemo)
+                        {
+                            m_commands.append({path, body});
+                            const QUrlQuery query(QString::fromUtf8(body));
+                            if (!m_creatorActive || query.queryItemValue("taskID", QUrl::FullyDecoded) != "creator&task")
+                            { code = 404; response = "Not found"; }
+                            else m_creatorActive = false;
                         }
                         else if (path == "/api/v2/app/buildInfo" && hasCookie)
                         {
@@ -927,6 +974,9 @@ public:
     QJsonObject rssItems() const { return m_rssItems; }
     QJsonObject rssRules() const { return m_rssRules; }
     void setBuildInfo(const QJsonObject &info) { m_buildInfo = info; }
+    void enableCreatorDemo(bool hold = false) { m_creatorDemo = true; m_creatorHold = hold; }
+    int creatorDownloads() const { return m_creatorDownloads; }
+    bool creatorActive() const { return m_creatorActive; }
     void setNetworkLists(const QJsonArray &interfaces, const QHash<QString, QJsonArray> &addresses)
     { m_networkInterfaces = interfaces; m_networkAddresses = addresses; }
     int preferenceReads() const { return m_preferenceReads; }
@@ -1097,6 +1147,11 @@ private:
     int m_preferenceReads = 0;
     QJsonObject m_preferences;
     QJsonObject m_buildInfo;
+    bool m_creatorDemo = false;
+    bool m_creatorHold = false;
+    bool m_creatorActive = false;
+    int m_creatorPolls = 0;
+    int m_creatorDownloads = 0;
     QJsonArray m_networkInterfaces;
     QHash<QString, QJsonArray> m_networkAddresses;
     bool m_queueingEnabled = false;
@@ -8653,6 +8708,257 @@ private slots:
         QTRY_COMPARE(tabs->count(), 1);
         QCOMPARE(tabs->tabText(0), QStringLiteral("Red seedbox"));
         QVERIFY(!tabs->widget(0)->isEnabled());
+    }
+
+    void nativeTorrentCreatorUsesSelectedRemoteServer()
+    {
+        DemoQbittorrentServer legacy(true), modern(true);
+        modern.enableModernResponses();
+        legacy.enableCreatorDemo();
+        modern.enableCreatorDemo();
+        legacy.setBuildInfo({{"libtorrent", "1.2.20.0"}});
+        modern.setBuildInfo({{"libtorrent", "2.1.0.0"}});
+        QVERIFY(legacy.start() && modern.start());
+        QTemporaryDir tmp;
+        QVERIFY(tmp.isValid());
+        QSettings settings(tmp.filePath("profiles.ini"), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        auto *action = window.findChild<QAction *>("actionCreateTorrent");
+        QVERIFY(action && !action->isEnabled());
+        openConnectDialog(window, legacy.url());
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains("v5.1.4"), 6000);
+        openConnectDialog(window, modern.url(), false, true, true, "Modern");
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains("v5.3.0"), 6000);
+        auto *tabs = window.findChild<QTabWidget *>("serverTabs");
+        QVERIFY(tabs && action->isEnabled());
+        const QString tracker = QStringLiteral("https://tracker.example/announce?a=x%2Fy&b=1+2");
+        for (const bool newer : {false, true})
+        {
+            tabs->setCurrentIndex(newer ? 1 : 0);
+            const QString destination = tmp.filePath(newer ? "modern.torrent" : "legacy.torrent");
+            bool finished = false;
+            QTimer::singleShot(0, &window, [&] {
+                auto *dlg = qobject_cast<RemoteTorrentCreatorDialog *>(QApplication::activeModalWidget());
+                QVERIFY(dlg);
+                const auto cleanup = qScopeGuard([dlg] { if (dlg->isVisible()) dlg->QDialog::reject(); });
+                auto *buttons = dlg->findChild<QDialogButtonBox *>("buttonBox");
+                auto *input = dlg->findChild<QLineEdit *>("textInputPath");
+                auto *output = dlg->findChild<QLineEdit *>("creatorLocalOutput");
+                auto *format = dlg->findChild<QComboBox *>("comboTorrentFormat");
+                auto *piece = dlg->findChild<QComboBox *>("comboPieceSize");
+                auto *priv = dlg->findChild<QCheckBox *>("checkPrivate");
+                auto *seed = dlg->findChild<QCheckBox *>("checkStartSeeding");
+                auto *dotfiles = dlg->findChild<QCheckBox *>("checkIgnoreDotfiles");
+                auto *alignment = dlg->findChild<QGroupBox *>("checkOptimizeAlignment");
+                auto *padding = dlg->findChild<QSpinBox *>("spinPaddedFileSizeLimit");
+                auto *trackers = dlg->findChild<QTextEdit *>("trackersList");
+                auto *seeds = dlg->findChild<QTextEdit *>("URLSeedsList");
+                auto *comment = dlg->findChild<QTextEdit *>("txtComment");
+                auto *source = dlg->findChild<QLineEdit *>("lineEditSource");
+                auto *progress = dlg->findChild<QProgressBar *>("progressBar");
+                auto *status = dlg->findChild<QLabel *>("creatorTaskStatus");
+                QVERIFY(buttons && input && output && format && piece && priv && seed && dotfiles
+                    && alignment && padding && trackers && seeds && comment && source && progress && status);
+                auto *seedServer = dlg->findChild<QComboBox *>("seedServerCombo");
+                QVERIFY(seedServer);
+                QCOMPARE(seedServer->count(), 2);
+                QCOMPARE(seedServer->currentText(), newer ? QStringLiteral("Modern") : QStringLiteral("Demo seedbox"));
+                QVERIFY(trackers->toPlainText().isEmpty() && source->text().isEmpty());
+                auto *create = buttons->button(QDialogButtonBox::Ok);
+                QTRY_VERIFY_WITH_TIMEOUT(create->isEnabled(), 6000);
+                QCOMPARE(format->isVisible(), newer);
+                QCOMPARE(dotfiles->isVisible(), newer);
+                QCOMPARE(alignment->isVisible(), !newer);
+                input->setText("/share/Media & Music/Album");
+                output->setText(destination);
+                piece->setCurrentIndex(piece->findData(262144));
+                priv->setChecked(true);
+                seed->setChecked(newer);
+                if (newer) { format->setCurrentIndex(format->findData("v1")); dotfiles->setChecked(false); }
+                else { alignment->setChecked(true); padding->setValue(64); }
+                trackers->setPlainText(tracker + "\n\nudp://tracker2.example:80/announce");
+                seeds->setPlainText("https://seed.example/file%20name");
+                comment->setPlainText("A comment & more");
+                source->setText("TEST");
+                create->click();
+                QTRY_VERIFY_WITH_TIMEOUT(progress->value() == 43 && progress->maximum() == 100, 6000);
+                // Wait for the server to acknowledge completed-task cleanup, not just the local save.
+                QTRY_COMPARE_WITH_TIMEOUT(status->text(), newer
+                    ? QStringLiteral("Torrent saved locally. Immediate seeding was requested on the server.")
+                    : QStringLiteral("Torrent saved locally. Seeding was not requested."), 10000);
+                QVERIFY(create->isEnabled());
+                QFile file(destination);
+                QVERIFY(file.open(QIODevice::ReadOnly));
+                QCOMPARE(file.readAll(), newer ? modern.exportedTorrent() : legacy.exportedTorrent());
+                QCOMPARE(progress->value(), 100);
+                create->click();
+                finished = true;
+            });
+            action->trigger();
+            QVERIFY(finished);
+            auto &server = newer ? modern : legacy;
+            QCOMPARE(server.commandsFor("/api/v2/torrentcreator/addTask"), 1);
+            QCOMPARE(server.commandsFor("/api/v2/torrentcreator/deleteTask"), 1);
+            QCOMPARE(server.creatorDownloads(), 1);
+            QVERIFY(!server.creatorActive());
+            const QUrlQuery request(QString::fromUtf8(server.lastCommandBody("/api/v2/torrentcreator/addTask")));
+            const auto value = [&](const QString &key) { return request.queryItemValue(key, QUrl::FullyDecoded); };
+            QCOMPARE(value("sourcePath"), QStringLiteral("/share/Media & Music/Album"));
+            QCOMPARE(value("private"), QStringLiteral("true"));
+            QCOMPARE(value("startSeeding"), newer ? QStringLiteral("true") : QStringLiteral("false"));
+            QCOMPARE(value("pieceSize"), QStringLiteral("262144"));
+            QCOMPARE(value("comment"), QStringLiteral("A comment & more"));
+            QCOMPARE(value("source"), QStringLiteral("TEST"));
+            QVERIFY(!request.hasQueryItem("torrentFilePath"));
+            const QString expected = tracker + "||udp://tracker2.example:80/announce";
+            QStringList urls = value("trackers").split('|');
+            if (newer)
+                for (auto &url : urls) url = QUrl::fromPercentEncoding(url.toLatin1());
+            QCOMPARE(urls.join('|'), expected);
+            if (newer)
+            {
+                QCOMPARE(value("format"), QStringLiteral("v1"));
+                QCOMPARE(value("ignoreDotfiles"), QStringLiteral("false"));
+                QCOMPARE(QUrl::fromPercentEncoding(value("urlSeeds").toLatin1()), QStringLiteral("https://seed.example/file%20name"));
+                QVERIFY(!request.hasQueryItem("optimizeAlignment"));
+            }
+            else
+            {
+                QCOMPARE(value("optimizeAlignment"), QStringLiteral("true"));
+                QCOMPARE(value("paddedFileSizeLimit"), QStringLiteral("65536"));
+                QVERIFY(!request.hasQueryItem("format") && !request.hasQueryItem("ignoreDotfiles"));
+                QCOMPARE(value("urlSeeds"), QStringLiteral("https://seed.example/file%20name"));
+            }
+        }
+
+        // Reopen each creator after saving: reusable inputs persist but filenames
+        // are blank, and edits to one profile must not leak into the other.
+        for (const bool newer : {false, true})
+        {
+            tabs->setCurrentIndex(newer ? 1 : 0);
+            bool restored = false;
+            QTimer::singleShot(0, &window, [&] {
+                auto *dlg = qobject_cast<RemoteTorrentCreatorDialog *>(QApplication::activeModalWidget());
+                QVERIFY(dlg);
+                const auto cleanup = qScopeGuard([dlg] { if (dlg->isVisible()) dlg->QDialog::reject(); });
+                auto *create = dlg->findChild<QDialogButtonBox *>("buttonBox")->button(QDialogButtonBox::Ok);
+                QTRY_VERIFY_WITH_TIMEOUT(create->isEnabled(), 6000);
+                QCOMPARE(dlg->findChild<QTextEdit *>("trackersList")->toPlainText(), tracker + "\n\nudp://tracker2.example:80/announce");
+                QCOMPARE(dlg->findChild<QTextEdit *>("URLSeedsList")->toPlainText(), QStringLiteral("https://seed.example/file%20name"));
+                QCOMPARE(dlg->findChild<QTextEdit *>("txtComment")->toPlainText(), QStringLiteral("A comment & more"));
+                QCOMPARE(dlg->findChild<QLineEdit *>("lineEditSource")->text(), QStringLiteral("TEST"));
+                QCOMPARE(dlg->findChild<QComboBox *>("comboPieceSize")->currentData().toInt(), 262144);
+                QVERIFY(dlg->findChild<QCheckBox *>("checkPrivate")->isChecked());
+                QCOMPARE(dlg->findChild<QCheckBox *>("checkStartSeeding")->isChecked(), newer);
+                QVERIFY(dlg->findChild<QLineEdit *>("textInputPath")->text().isEmpty());
+                QVERIFY(dlg->findChild<QLineEdit *>("creatorLocalOutput")->text().isEmpty());
+                if (newer)
+                    QCOMPARE(dlg->findChild<QComboBox *>("comboTorrentFormat")->currentData().toString(), QStringLiteral("v1"));
+                else
+                    dlg->findChild<QLineEdit *>("lineEditSource")->setText("LEGACY ONLY");
+                dlg->reject();
+                restored = true;
+            });
+            action->trigger();
+            QVERIFY(restored);
+        }
+
+        // Cancel a live task without downloading or creating another torrent.
+        modern.enableCreatorDemo(true);
+        tabs->setCurrentIndex(1);
+        bool cancelled = false;
+        QTimer::singleShot(0, &window, [&] {
+            auto *dlg = qobject_cast<RemoteTorrentCreatorDialog *>(QApplication::activeModalWidget());
+            QVERIFY(dlg);
+            const auto cleanup = qScopeGuard([dlg] { if (dlg->isVisible()) dlg->QDialog::reject(); });
+            auto *buttons = dlg->findChild<QDialogButtonBox *>("buttonBox");
+            auto *create = buttons->button(QDialogButtonBox::Ok);
+            QTRY_VERIFY_WITH_TIMEOUT(create->isEnabled(), 6000);
+            dlg->findChild<QLineEdit *>("textInputPath")->setText("/share/cancel");
+            dlg->findChild<QLineEdit *>("creatorLocalOutput")->setText(tmp.filePath("cancel.torrent"));
+            create->click();
+            QTRY_VERIFY_WITH_TIMEOUT(modern.creatorActive(), 6000);
+            auto *progress = dlg->findChild<QProgressBar *>("progressBar");
+            QTRY_VERIFY_WITH_TIMEOUT(progress->value() == 43, 6000);
+            QTimer driver;
+            connect(&driver, &QTimer::timeout, dlg, [] {
+                if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget()))
+                    if (box->windowTitle() == "Remove torrent creation task")
+                        box->button(QMessageBox::Yes)->click();
+            });
+            driver.start(20);
+            buttons->button(QDialogButtonBox::Cancel)->click();
+            QTRY_VERIFY_WITH_TIMEOUT(!dlg->isVisible(), 6000);
+            cancelled = true;
+        });
+        action->trigger();
+        QVERIFY(cancelled);
+        QCOMPARE(modern.commandsFor("/api/v2/torrentcreator/addTask"), 2);
+        QCOMPARE(modern.commandsFor("/api/v2/torrentcreator/deleteTask"), 2);
+        QCOMPARE(modern.creatorDownloads(), 1);
+        QCOMPARE(legacy.commandsFor("/api/v2/torrentcreator/addTask"), 1);
+        QVERIFY(!QFileInfo::exists(tmp.filePath("cancel.torrent")));
+
+        // Hash on legacy, seed on the independently authenticated modern
+        // instance using its mapped data path. Never add to the hashing server.
+        const auto profiles = Remote::ProfileStore(settings).profiles();
+        QCOMPARE(profiles.size(), 2);
+        for (const auto &profile : profiles)
+            QVERIFY(Remote::PathMappingStore(settings).replace(profile.id,
+                {{tmp.path(), profile.name == "Modern" ? QStringLiteral("/share/modern") : QStringLiteral("/share/legacy")}}));
+        tabs->setCurrentIndex(0);
+        bool crossSeeded = false;
+        const QString crossFile = tmp.filePath("cross.torrent");
+        QTimer::singleShot(0, &window, [&] {
+            auto *dlg = qobject_cast<RemoteTorrentCreatorDialog *>(QApplication::activeModalWidget());
+            QVERIFY(dlg);
+            const auto cleanup = qScopeGuard([dlg] { if (dlg->isVisible()) dlg->QDialog::reject(); });
+            auto *create = dlg->findChild<QDialogButtonBox *>("buttonBox")->button(QDialogButtonBox::Ok);
+            QTRY_VERIFY_WITH_TIMEOUT(create->isEnabled(), 6000);
+            QCOMPARE(dlg->findChild<QLineEdit *>("lineEditSource")->text(), QStringLiteral("LEGACY ONLY"));
+            dlg->findChild<QLineEdit *>("textInputPath")->setText("/share/legacy/test");
+            dlg->findChild<QLineEdit *>("creatorLocalOutput")->setText(crossFile);
+            auto *seed = dlg->findChild<QCheckBox *>("checkStartSeeding");
+            auto *server = dlg->findChild<QComboBox *>("seedServerCombo");
+            auto *path = dlg->findChild<QLineEdit *>("seedTargetPath");
+            QVERIFY(seed && server && path && !server->isEnabled());
+            seed->setChecked(true);
+            server->setCurrentIndex(server->findText("Modern"));
+            QCOMPARE(path->text(), QStringLiteral("/share/modern/test"));
+            QTimer driver;
+            connect(&driver, &QTimer::timeout, dlg, [] {
+                if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget()))
+                    if (box->windowTitle() == "Seed on another server")
+                        box->button(QMessageBox::Yes)->click();
+            });
+            driver.start(20);
+            create->click();
+            driver.stop();
+            auto *status = dlg->findChild<QLabel *>("creatorTaskStatus");
+            QTRY_COMPARE_WITH_TIMEOUT(status->text(), QStringLiteral("Torrent saved locally. Immediate seeding was requested on Modern."), 10000);
+            QVERIFY(create->isEnabled());
+            create->click();
+            crossSeeded = true;
+        });
+        action->trigger();
+        QVERIFY(crossSeeded);
+        QCOMPARE(legacy.commandsFor("/api/v2/torrentcreator/addTask"), 2);
+        QCOMPARE(legacy.commandsFor("/api/v2/torrentcreator/deleteTask"), 2);
+        QCOMPARE(modern.commandsFor("/api/v2/torrentcreator/addTask"), 2);
+        QCOMPARE(legacy.commandsFor("/api/v2/torrents/add"), 0);
+        QCOMPARE(modern.commandsFor("/api/v2/torrents/add"), 1);
+        const QUrlQuery crossRequest(QString::fromUtf8(legacy.lastCommandBody("/api/v2/torrentcreator/addTask")));
+        QCOMPARE(crossRequest.queryItemValue("startSeeding"), QStringLiteral("false"));
+        const auto multipart = modern.lastCommandBody("/api/v2/torrents/add");
+        QVERIFY(multipart.contains("name=\"savepath\"\r\n\r\n/share/modern\r\n"));
+        QVERIFY(multipart.contains("name=\"seedMode\"\r\n\r\ntrue\r\n"));
+        QVERIFY(multipart.contains("name=\"useDownloadPath\"\r\n\r\nfalse\r\n"));
+        QVERIFY(multipart.contains(legacy.exportedTorrent()));
+        QFile saved(crossFile);
+        QVERIFY(saved.open(QIODevice::ReadOnly));
+        QCOMPARE(saved.readAll(), legacy.exportedTorrent());
     }
 
     void torrentFileUploadPreservesBinaryMetadata()
