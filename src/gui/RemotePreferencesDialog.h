@@ -52,7 +52,8 @@ signals:
 
 private:
     void buildRemotePathsPage(const QString &preferredProfileId);
-    void populateAdvancedPlaceholders();
+    void buildAdvancedPage();
+    bool hasAdvancedLocalChanges() const;
     void disableUnimplementedControls();
     void loadLocalBehaviorControls();
     void loadLocalAdditionControls();
@@ -165,6 +166,8 @@ private:
     QPushButton *m_applyButton = nullptr;
     QHash<QString, QList<Remote::PathMapping>> m_staged;
     QSet<QString> m_changedProfiles;
+    QHash<QString, QCheckBox *> m_advancedLocalChecks;
+    QHash<QString, bool> m_advancedLocalBaseline;
     bool m_behaviorDirty = false;
     bool m_rssImageBaseline = false;
     QString m_webUISubnets;

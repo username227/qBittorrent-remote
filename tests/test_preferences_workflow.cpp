@@ -286,17 +286,48 @@ private slots:
 
         // The upstream Advanced section is dynamically assembled in C++,
         // rather than present in its Designer XML. Keep all named rows.
-        auto *advanced = dialog.findChild<QTreeWidget *>(
-            QStringLiteral("advancedSettingsPreview"));
+        auto *advanced = dialog.findChild<QTableWidget *>(
+            QStringLiteral("advancedSettingsTable"));
         QVERIFY(advanced);
-        QCOMPARE(advanced->topLevelItemCount(), 92);
-        QVERIFY(!advanced->header()->highlightSections());
-        QCOMPARE(advanced->topLevelItem(0)->text(0), QStringLiteral("qBittorrent Section"));
-        QCOMPARE(advanced->topLevelItem(91)->text(0),
-                 QStringLiteral("I2P outbound length variance"));
-        QVERIFY(!(advanced->topLevelItem(12)->flags() & Qt::ItemIsEditable));
-        QCOMPARE(advanced->topLevelItem(12)->text(1),
-                 QStringLiteral("Not implemented"));
+        QCOMPARE(advanced->rowCount(), 92);
+        QVERIFY(!advanced->horizontalHeader()->highlightSections());
+        QCOMPARE(advanced->item(0, 0)->text(), QStringLiteral("qBittorrent Section"));
+        QCOMPARE(advanced->item(35, 0)->text(), QStringLiteral("libtorrent Section"));
+        QCOMPARE(advanced->item(advanced->rowCount() - 1, 0)->text(), QStringLiteral("I2P outbound length variance"));
+        QVERIFY(qobject_cast<QLabel *>(advanced->cellWidget(0, 1))->openExternalLinks());
+        QVERIFY(qobject_cast<QLabel *>(advanced->cellWidget(35, 1))->openExternalLinks());
+        auto *threads = advanced->findChild<QSpinBox *>("advanced_ASYNC_IO_THREADS");
+        auto *storage = advanced->findChild<QComboBox *>("advanced_RESUME_DATA_STORAGE");
+        auto *recheck = advanced->findChild<QCheckBox *>("advanced_CONFIRM_RECHECK_TORRENT");
+        auto *tags = advanced->findChild<QCheckBox *>("advanced_CONFIRM_REMOVE_ALL_TAGS");
+        auto *tracker = advanced->findChild<QCheckBox *>("advanced_CONFIRM_REMOVE_TRACKER_FROM_ALL_TORRENTS");
+        QVERIFY(threads && storage && recheck && tags && tracker);
+        QVERIFY(!threads->isEnabled() && !storage->isEnabled());
+        QCOMPARE(threads->minimum(), 1);
+        QCOMPARE(threads->maximum(), 1024);
+        QCOMPARE(storage->currentIndex(), -1);
+        QCOMPARE(advanced->textElideMode(), Qt::ElideNone);
+        QVERIFY(recheck->isEnabled() && tags->isEnabled() && tracker->isEnabled());
+        QVERIFY(!recheck->isChecked() && tags->isChecked() && tracker->isChecked());
+        const int originalWidth = dialog.width();
+        QTRY_VERIFY(advanced->horizontalScrollBar()->maximum() > 0);
+        advanced->horizontalScrollBar()->setValue(advanced->horizontalScrollBar()->maximum());
+        QCOMPARE(dialog.width(), originalWidth);
+        QCOMPARE(advanced->horizontalScrollBar()->value(), advanced->horizontalScrollBar()->maximum());
+        auto *applyAdvanced = dialog.findChild<QPushButton *>("preferencesApply");
+        QVERIFY(applyAdvanced);
+        recheck->setChecked(true);
+        tags->setChecked(false);
+        tracker->setChecked(false);
+        QVERIFY(applyAdvanced->isEnabled());
+        applyAdvanced->click();
+        QVERIFY(settings.value("Preferences/Advanced/ConfirmTorrentRecheck").toBool());
+        QVERIFY(!settings.value("Preferences/Advanced/ConfirmRemoveAllTags", true).toBool());
+        QVERIFY(!settings.value("Preferences/Advanced/ConfirmRemoveTrackerFromAllTorrents", true).toBool());
+        recheck->setChecked(false);
+        QVERIFY(applyAdvanced->isEnabled());
+        recheck->setChecked(true);
+        QVERIFY(!applyAdvanced->isEnabled());
 
         auto *confirm = dialog.findChild<QCheckBox *>(
             QStringLiteral("confirmDeletion"));

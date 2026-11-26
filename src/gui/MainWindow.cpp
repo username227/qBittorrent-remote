@@ -2331,9 +2331,19 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
                 Remote::RemoteSession::TorrentCommand::ForceStart, selectedTorrentHashes());
             break;
         case ServerPane::TorrentContextAction::ForceRecheck:
-            connection->session->commandTorrents(
-                Remote::RemoteSession::TorrentCommand::ForceRecheck, selectedTorrentHashes());
+        {
+            const QStringList hashes = selectedTorrentHashes();
+            if (hashes.isEmpty()) break;
+            if (m_settings->value(QStringLiteral("Preferences/Advanced/ConfirmTorrentRecheck"), false).toBool()
+                && QMessageBox::question(this, tr("Confirm torrent recheck"),
+                    tr("Force recheck of %1 selected torrent(s) on this server?").arg(hashes.size()),
+                    QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
+                break;
+            if (containsConnection(connection) && connection->connected && activeConnection() == connection
+                && selectedTorrentHashes() == hashes)
+                connection->session->commandTorrents(Remote::RemoteSession::TorrentCommand::ForceRecheck, hashes);
             break;
+        }
         case ServerPane::TorrentContextAction::ForceReannounce:
             connection->session->commandTorrents(
                 Remote::RemoteSession::TorrentCommand::ForceReannounce, selectedTorrentHashes());
@@ -2738,10 +2748,11 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
         if (tracker && action == Action::Remove && named)
         {
             if (name == QLatin1String("(unknown tracker)")) return;
-            if (QMessageBox::question(this, tr("Removal confirmation"),
-                tr("Are you sure you want to remove tracker \"%1\" from all torrents on %2?")
-                    .arg(name, connection->profile.name),
-                QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes
+            if ((m_settings->value(QStringLiteral("Preferences/Advanced/ConfirmRemoveTrackerFromAllTorrents"), true).toBool()
+                && QMessageBox::question(this, tr("Removal confirmation"),
+                    tr("Are you sure you want to remove tracker \"%1\" from all torrents on %2?")
+                        .arg(name, connection->profile.name),
+                    QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
                 || !groupValid())
                 return;
             QHash<QString, QStringList> removals;
@@ -2814,10 +2825,12 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
             const QStringList hashes = selectedForContext();
             if (hashes.isEmpty())
                 return;
-            const auto decision = QMessageBox::question(this, tr("Remove all tags"),
-                tr("Remove all tags from %1 selected torrent(s) on this server? "
-                   "Global tag definitions will be kept.").arg(hashes.size()),
-                QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel);
+            const auto decision = m_settings->value(QStringLiteral("Preferences/Advanced/ConfirmRemoveAllTags"), true).toBool()
+                ? QMessageBox::question(this, tr("Remove all tags"),
+                    tr("Remove all tags from %1 selected torrent(s) on this server? "
+                       "Global tag definitions will be kept.").arg(hashes.size()),
+                    QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel)
+                : QMessageBox::Yes;
             if (decision == QMessageBox::Yes && selectedForContext() == hashes)
                 session->changeTorrentTags(hashes, {}, false);
         });
