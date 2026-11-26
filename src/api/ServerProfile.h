@@ -28,6 +28,8 @@ public:
 
     QList<ServerProfile> profiles() const;
     bool save(ServerProfile &profile);
+    // Only for an explicitly authorized and freshly verified same-host WebUI transition.
+    bool saveVerifiedWebUITransition(ServerProfile &profile, const ServerProfile &previous);
     bool remove(const QString &id);
 
     // Trust is scoped to both the saved profile ID and its exact normalized
@@ -37,6 +39,7 @@ public:
 
 private:
     bool write(const QList<ServerProfile> &profiles);
+    bool saveImpl(ServerProfile &profile, bool preservePaths);
 
     QSettings &m_settings;
 };

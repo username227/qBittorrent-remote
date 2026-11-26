@@ -78,6 +78,27 @@ bool ProfileStore::write(const QList<ServerProfile> &profiles)
 
 bool ProfileStore::save(ServerProfile &profile)
 {
+    return saveImpl(profile, false);
+}
+
+bool ProfileStore::saveVerifiedWebUITransition(ServerProfile &profile, const ServerProfile &previous)
+{
+    const auto oldAddress = ServerAddress::parse(previous.url);
+    const auto newAddress = ServerAddress::parse(profile.url);
+    if (!oldAddress || !newAddress || previous.id.isEmpty() || profile.id != previous.id
+        || oldAddress->baseUrl().host() != newAddress->baseUrl().host()
+        || oldAddress->baseUrl().path() != QLatin1String("/")
+        || newAddress->baseUrl().path() != QLatin1String("/"))
+        return false;
+    for (const auto &saved : profiles())
+        if (saved.id == previous.id && canonicalAddress(saved) == canonicalAddress(previous)
+            && saved.username == previous.username)
+            return saveImpl(profile, true);
+    return false;
+}
+
+bool ProfileStore::saveImpl(ServerProfile &profile, bool preservePaths)
+{
     if (profile.name.trimmed().isEmpty() || !ServerAddress::parse(profile.url))
         return false;
 
@@ -110,9 +131,11 @@ bool ProfileStore::save(ServerProfile &profile)
         // Mapping roots describe a *particular server's* filesystem.
         // Redirecting this saved profile to a new endpoint must never
         // inherit paths belonging to the previous NAS.
-        PathMappingStore(m_settings).remove(profile.id);
-        m_settings.remove(QStringLiteral("AddTorrent/LastRemoteSavePath/")
-                          + trustKey(profile.id));
+        if (!preservePaths)
+        {
+            PathMappingStore(m_settings).remove(profile.id);
+            m_settings.remove(QStringLiteral("AddTorrent/LastRemoteSavePath/") + trustKey(profile.id));
+        }
         m_settings.sync();
         return m_settings.status() == QSettings::NoError;
     }

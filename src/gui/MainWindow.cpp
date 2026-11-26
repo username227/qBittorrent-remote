@@ -1242,8 +1242,34 @@ void MainWindow::openPreferences(const std::shared_ptr<SessionContext> &server)
                                   server && server->connected ? server->version : QString());
     connect(&dialog, &RemotePreferencesDialog::localBehaviorApplied,
             this, &MainWindow::applyLocalBehaviorPreferences);
+    QString newUrl, newUsername, newPassword, fingerprint;
+    connect(&dialog, &RemotePreferencesDialog::webUITransitionVerified, this,
+        [&](const QString &url, const QString &username, const QString &password, const QString &pin) {
+            newUrl = url; newUsername = username; newPassword = password; fingerprint = pin;
+        });
     trackDialogGeometry(dialog, QStringLiteral("Preferences"));
-    dialog.exec();
+    const int result = dialog.exec();
+    if (result == QDialog::Accepted && server && containsConnection(server) && !newUrl.isEmpty())
+    {
+        const auto previous = server->profile;
+        auto profile = previous;
+        profile.url = newUrl;
+        profile.username = newUsername;
+        Remote::ProfileStore store(*m_settings);
+        if (!store.saveVerifiedWebUITransition(profile, previous))
+            QMessageBox::warning(this, tr("Cannot save changed connection"),
+                tr("The new connection was verified, but the local profile could not be updated. Use Reconnect to enter the new settings."));
+        else if (!fingerprint.isEmpty() && !store.trustCertificate(profile, fingerprint))
+            QMessageBox::warning(this, tr("Cannot save certificate trust"),
+                tr("The new profile was saved, but certificate trust could not be saved. Use Reconnect and verify the certificate again."));
+        else
+        {
+            // Even a password-only change must create a fresh login.
+            disconnectConnection(server, tr("WebUI connection settings changed."));
+            connectToProfile(profile, newPassword);
+        }
+        newPassword.clear();
+    }
     refreshContentPathMappings();
 }
 

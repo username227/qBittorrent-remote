@@ -7,6 +7,7 @@
 #include "gui/DesktopAutostart.h"
 #include "gui/TorrentModel.h"
 #include "api/ServerProfile.h"
+#include "api/ServerAddress.h"
 #include "api/RemoteSession.h"
 #include "ui_optionsdialog.h"
 
@@ -59,6 +60,8 @@
 #include <QHBoxLayout>
 #include <QHostAddress>
 #include <QClipboard>
+#include <QInputDialog>
+#include <QTimer>
 
 namespace
 {
@@ -214,6 +217,8 @@ RemotePreferencesDialog::RemotePreferencesDialog(QSettings &settings,
     // These nine pages are the actual upstream Qt Designer preferences
     // layout (GPL-3.0-or-later). Only local-engine-only custom path widgets
     // were substituted with stock QLineEdit widgets.
+    for (const auto &profile : Remote::ProfileStore(m_settings).profiles())
+        if (profile.id == preferredProfileId) { m_webUIProfile = profile; break; }
     disableUnimplementedControls();
     loadLocalBehaviorControls();
     loadLocalAdditionControls();
@@ -697,17 +702,21 @@ void RemotePreferencesDialog::bindWebUIControls()
     m_ui->checkWebUI->setCheckable(false);
     m_ui->checkWebUI->setEnabled(true);
     m_ui->labelWebUIError->setWordWrap(true);
-    m_ui->labelWebUIError->setText(tr("Connection settings are shown for reference. Changing the address, port, HTTPS or login requires a separate connection-safe workflow."));
     const auto locked = [] { return false; };
+    const auto direct = [this] { return m_webUIDirect; };
     const auto connectionTip = tr("Current server value. Editing requires the connection transition workflow.");
-    bindRemoteControl("web_ui_address", m_ui->textWebUIAddress, locked, connectionTip);
-    bindRemoteControl("web_ui_port", m_ui->spinWebUIPort, locked, connectionTip);
-    bindRemoteControl("use_https", m_ui->checkWebUIHttps, locked, connectionTip);
-    bindRemoteControl("web_ui_https_cert_path", m_ui->textWebUIHttpsCert, locked, connectionTip);
-    bindRemoteControl("web_ui_https_key_path", m_ui->textWebUIHttpsKey, locked, connectionTip);
-    bindRemoteControl("web_ui_username", m_ui->textWebUIUsername, locked, connectionTip);
-    m_ui->textWebUIPassword->setToolTip(tr("The server does not return its current password. Password changes require a connection-safe workflow."));
+    const auto directTip = tr("Changing this server setting requires a fresh connection and verification before updating the saved profile.");
+    bindRemoteControl("web_ui_address", m_ui->textWebUIAddress, direct, directTip);
+    if (auto *editor = m_ui->spinWebUIPort->findChild<QLineEdit *>()) editor->setEnabled(true);
+    bindRemoteControl("web_ui_port", m_ui->spinWebUIPort, direct, directTip);
+    bindRemoteControl("use_https", m_ui->checkWebUIHttps, direct, directTip);
+    const auto tls = [this] { return m_webUIDirect && m_ui->checkWebUIHttps->isChecked(); };
+    bindRemoteControl("web_ui_https_cert_path", m_ui->textWebUIHttpsCert, tls, directTip);
+    bindRemoteControl("web_ui_https_key_path", m_ui->textWebUIHttpsKey, tls, directTip);
+    bindRemoteControl("web_ui_username", m_ui->textWebUIUsername, direct, directTip);
+    m_ui->textWebUIPassword->setToolTip(tr("Enter a new password only when changing it. The current password is never returned by the server. Password changes require authentication bypass to be disabled."));
     m_ui->textWebUIPassword->clear();
+    connect(m_ui->textWebUIPassword, &QLineEdit::textChanged, this, [this] { remoteFieldChanged(); });
     // The API key is a secret and its rotation/deletion uses separate actions.
     // Show only a masked existing key, never store it in QSettings.
     m_ui->textWebUIAPIKey->setEchoMode(QLineEdit::Password);
@@ -810,6 +819,12 @@ void RemotePreferencesDialog::refreshWebUIControls()
     m_ui->labelWebUISessionsCountLimit->setVisible(remoteFieldAvailable("web_ui_sessions_count_limit"));
     m_ui->spinBoxWebUISessionsCountLimit->setVisible(remoteFieldAvailable("web_ui_sessions_count_limit"));
     m_ui->lblBanDuration->setEnabled(m_ui->spinBanDuration->isEnabled());
+    const bool canChangePassword = m_remotePreferencesLoaded && m_webUIDirect
+        && m_webUIBaseline.value("bypass_local_auth") == QJsonValue(false)
+        && m_webUIBaseline.value("bypass_auth_subnet_whitelist_enabled") == QJsonValue(false);
+    m_ui->textWebUIPassword->setEnabled(canChangePassword);
+    m_ui->labelWebUIError->setVisible(m_remotePreferencesLoaded && !m_webUIDirect);
+    m_ui->labelWebUIError->setText(tr("Connection changes are available for direct server connections only. For a proxy or a different externally mapped port, use independent server access."));
 }
 
 bool RemotePreferencesDialog::validateWebUIChanges(const QJsonObject &changes)
@@ -2200,6 +2215,22 @@ void RemotePreferencesDialog::populateRemoteFields(const QJsonObject &values,
 {
     m_loadingRemotePreferences = true;
     m_remotePreferencesLoaded = true;
+    m_webUIBaseline = {};
+    for (const char *key : {"web_ui_address", "web_ui_port", "use_https", "web_ui_https_cert_path",
+             "web_ui_https_key_path", "web_ui_username", "bypass_local_auth",
+             "bypass_auth_subnet_whitelist_enabled", "web_ui_reverse_proxy_enabled",
+             "web_ui_secure_cookie_enabled", "web_ui_domain_list", "web_ui_host_header_validation_enabled"})
+        if (values.contains(QLatin1String(key))) m_webUIBaseline.insert(QLatin1String(key), values.value(QLatin1String(key)));
+    const auto address = Remote::ServerAddress::parse(m_webUIProfile.url);
+    m_webUIDirect = address && address->baseUrl().path() == QLatin1String("/")
+        && values.value("web_ui_reverse_proxy_enabled") == QJsonValue(false)
+        && values.value("use_https").isBool() && values.value("web_ui_port").isDouble()
+        && values.value("web_ui_port").toDouble() == address->baseUrl().port(
+            address->baseUrl().scheme() == QLatin1String("https") ? 443 : 80)
+        && values.value("use_https").toBool() == (address->baseUrl().scheme() == QLatin1String("https"))
+        && values.value("web_ui_address").isString() && values.value("web_ui_username").isString()
+        && values.value("web_ui_https_cert_path").isString() && values.value("web_ui_https_key_path").isString()
+        && values.value("bypass_local_auth").isBool() && values.value("bypass_auth_subnet_whitelist_enabled").isBool();
     const auto fetchedTrackers = values.value(QStringLiteral("add_trackers_url_list"));
     m_fetchedTrackersAvailable = fetchedTrackers.isString();
     m_ui->textTrackersFromURL->setPlainText(fetchedTrackers.toString());
@@ -2267,14 +2298,17 @@ QJsonObject RemotePreferencesDialog::remoteChanges() const
         if (field.baseline.isUndefined())
             continue;
         static const QSet<QString> webUIReadOnly{
-            "web_ui_address", "web_ui_port", "use_https", "web_ui_https_cert_path",
-            "web_ui_https_key_path", "web_ui_username", "web_ui_api_key",
+            "web_ui_api_key",
             "web_ui_secure_cookie_enabled", "web_ui_host_header_validation_enabled",
             "web_ui_domain_list", "web_ui_use_custom_http_headers_enabled", "web_ui_custom_http_headers",
             "web_ui_reverse_proxy_enabled", "web_ui_reverse_proxies_list",
             "dyndns_enabled", "dyndns_service", "dyndns_domain", "dyndns_username", "dyndns_password"
         };
         if (webUIReadOnly.contains(field.key)) continue;
+        if (!m_webUIDirect && (field.key == QLatin1String("web_ui_address")
+            || field.key == QLatin1String("web_ui_port") || field.key == QLatin1String("use_https")
+            || field.key == QLatin1String("web_ui_https_cert_path") || field.key == QLatin1String("web_ui_https_key_path")
+            || field.key == QLatin1String("web_ui_username"))) continue;
         const auto value = field.read();
         if (value == field.baseline)
             continue;
@@ -2310,6 +2344,10 @@ QJsonObject RemotePreferencesDialog::remoteChanges() const
     for (const auto keys : seedingLimits)
         if (changes.contains(QLatin1String(keys.value)))
             changes.insert(QLatin1String(keys.enabled), changes.value(QLatin1String(keys.value)).toDouble() >= 0);
+    if (m_webUIDirect && m_webUIBaseline.value("bypass_local_auth") == QJsonValue(false)
+        && m_webUIBaseline.value("bypass_auth_subnet_whitelist_enabled") == QJsonValue(false)
+        && !m_ui->textWebUIPassword->text().isEmpty())
+        changes.insert("web_ui_password", m_ui->textWebUIPassword->text());
     return changes;
 }
 
@@ -2359,6 +2397,11 @@ void RemotePreferencesDialog::remoteDisconnected()
         .arg(m_remoteTargetName.isEmpty() ? tr("Server") : m_remoteTargetName));
     m_remotePreferencesLoaded = false;
     refreshRemoteControls();
+    if (m_webUITransitionInProgress)
+    {
+        QTimer::singleShot(1200, this, &RemotePreferencesDialog::probeWebUITransition);
+        return;
+    }
     if (m_testEmailPending)
     {
         m_testEmailPending = false;
@@ -2832,6 +2875,14 @@ void RemotePreferencesDialog::applyChanges(bool closeAfter)
         remoteSaveFailed(tr("The server is no longer available. Reopen Preferences after reconnecting."));
         return;
     }
+    const QSet<QString> transitionKeys{"web_ui_address", "web_ui_port", "use_https",
+        "web_ui_https_cert_path", "web_ui_https_key_path", "web_ui_username", "web_ui_password"};
+    for (auto it = changes.constBegin(); it != changes.constEnd(); ++it)
+        if (transitionKeys.contains(it.key()))
+        {
+            applyWebUITransition(changes);
+            return;
+        }
     if (!validateDownloadChanges(changes) || !validateIPFilterChanges(changes)
         || !validateSpeedChanges(changes) || !validateSeedingLimitChanges(changes)
         || !validateAutomaticTrackerChanges(changes) || !validateRSSChanges(changes)
@@ -2879,6 +2930,182 @@ void RemotePreferencesDialog::applyChanges(bool closeAfter)
         return;
     }
     sendRemoteChanges(changes);
+}
+
+void RemotePreferencesDialog::applyWebUITransition(const QJsonObject &changes)
+{
+    const QSet<QString> allowed{"web_ui_address", "web_ui_port", "use_https",
+        "web_ui_https_cert_path", "web_ui_https_key_path", "web_ui_username", "web_ui_password"};
+    for (auto it = changes.constBegin(); it != changes.constEnd(); ++it)
+        if (!allowed.contains(it.key()))
+        {
+            QMessageBox::warning(this, tr("Apply connection settings separately"),
+                tr("Revert the other remote edits and apply them separately from connection changes."));
+            return;
+        }
+    if (!m_changedProfiles.isEmpty() || m_behaviorDirty || m_additionDirty
+        || m_ui->checkRSSLoadExternalImages->isChecked() != m_rssImageBaseline)
+    {
+        QMessageBox::warning(this, tr("Apply connection settings separately"),
+            tr("Apply or revert local settings separately before changing the connection."));
+        return;
+    }
+    if (!m_webUIDirect || !m_remoteSession || !m_remoteSession->isConnected()) return;
+    const QString binding = m_ui->textWebUIAddress->text();
+    QHostAddress ip;
+    const QString username = m_ui->textWebUIUsername->text();
+    const bool https = m_ui->checkWebUIHttps->isChecked();
+    const bool changePassword = changes.contains("web_ui_password");
+    const QString newPassword = changes.value("web_ui_password").toString();
+    if ((binding != QLatin1String("*") && !ip.setAddress(binding))
+        || username.size() < 3 || username.contains(QLatin1Char(':')) || username.contains(QChar::Null)
+        || (changePassword && (newPassword.size() < 6 || newPassword.contains(QChar::Null)))
+        || (https && (m_ui->textWebUIHttpsCert->text().trimmed().isEmpty()
+                     || m_ui->textWebUIHttpsKey->text().trimmed().isEmpty())))
+    {
+        QMessageBox::warning(this, tr("Invalid connection settings"),
+            tr("Enter a valid bind IP or *, a username of at least three characters without a colon, a new password of at least six characters if changing it, and server certificate/key paths for HTTPS."));
+        return;
+    }
+    const auto address = Remote::ServerAddress::parse(m_webUIProfile.url);
+    if (!address) return;
+    QUrl candidate = address->baseUrl();
+    candidate.setScheme(https ? QStringLiteral("https") : QStringLiteral("http"));
+    candidate.setPort(m_ui->spinWebUIPort->value());
+    if (QMessageBox::question(this, tr("Change server connection"),
+        tr("This will change the selected server's WebUI settings and close Preferences after a verified reconnect. "
+           "The new connection will use %1. Ensure this is the same server and that you have independent access to restore its settings if the change fails. "
+           "The saved profile will not be changed until a fresh connection confirms the requested values.%2\n\nContinue?")
+            .arg(candidate.toString(), https ? QString() : tr("\n\nHTTP transmits login credentials without TLS protection.")),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
+        return;
+    bool entered = false;
+    const QString password = QInputDialog::getText(this, tr("Verify server login"),
+        changePassword ? tr("Confirm the new password:") : tr("Enter the password for the new connection (blank only if authentication is bypassed):"),
+        QLineEdit::Password, QString(), &entered);
+    if (!entered) return;
+    if ((changePassword && password != newPassword)
+        || (password.isEmpty() && m_webUIBaseline.value("bypass_local_auth") == QJsonValue(false)
+                               && m_webUIBaseline.value("bypass_auth_subnet_whitelist_enabled") == QJsonValue(false)))
+    {
+        QMessageBox::warning(this, tr("Password required"), tr("The password confirmation is missing or does not match."));
+        return;
+    }
+    if (!m_remoteSession || !m_remoteSession->isConnected() || !m_remotePreferencesLoaded) return;
+    m_webUICandidate = m_webUIProfile;
+    m_webUICandidate.url = candidate.toString(QUrl::FullyEncoded);
+    m_webUICandidate.username = username;
+    m_webUIExpected = m_webUIBaseline;
+    for (auto it = changes.constBegin(); it != changes.constEnd(); ++it)
+        if (it.key() != QLatin1String("web_ui_password")) m_webUIExpected.insert(it.key(), it.value());
+    m_webUIPassword = password;
+    m_webUIPasswordChanged = changePassword;
+    setRemoteBusy(true);
+    const QPointer<RemotePreferencesDialog> dialog(this);
+    // Check the original endpoint/credentials/security baseline before the
+    // single mutation. There is no atomic compare-and-set in qBittorrent.
+    m_remoteSession->requestPreferences([dialog, changes](const QJsonObject &values) {
+        if (!dialog || !dialog->m_remoteBusy) return;
+        const auto baseline = dialog->m_webUIBaseline;
+        for (auto it = baseline.constBegin(); it != baseline.constEnd(); ++it)
+            if (values.value(it.key()) != it.value())
+            {
+                dialog->webUITransitionFailed(dialog->tr("The server connection settings changed since Preferences was opened. No update was sent."));
+                return;
+            }
+        if (!dialog->m_remoteSession || !dialog->m_remoteSession->isConnected())
+        {
+            dialog->webUITransitionFailed(dialog->tr("The original connection is unavailable. No update was sent."));
+            return;
+        }
+        dialog->m_webUITransitionInProgress = true;
+        const auto attempt = [dialog] {
+            if (dialog) QTimer::singleShot(1200, dialog, &RemotePreferencesDialog::probeWebUITransition);
+        };
+        // A listener restart may drop the HTTP response after the server has
+        // applied the settings. Never blindly retry; probe exactly once.
+        dialog->m_remoteSession->setPreferences(changes, attempt,
+            [attempt](const QString &) { attempt(); });
+    }, [dialog](const QString &reason) {
+        if (dialog && dialog->m_remoteBusy) dialog->webUITransitionFailed(reason);
+    });
+}
+
+void RemotePreferencesDialog::probeWebUITransition()
+{
+    if (!m_webUITransitionInProgress || m_webUIProbeStarted) return;
+    m_webUIProbeStarted = true;
+    auto *probe = new Remote::RemoteSession(this);
+    m_webUIProbe = probe;
+    Remote::ProfileStore store(m_settings);
+    m_webUIFingerprint = store.trustedCertificateFingerprint(m_webUICandidate);
+    probe->setCertificateTrust(m_webUIFingerprint, [this](const Remote::CertificateChallenge &challenge) {
+        QMessageBox prompt(QMessageBox::Warning, tr("Verify new WebUI certificate"),
+            tr("Verify this certificate independently before sending credentials to the changed endpoint."),
+            QMessageBox::Yes | QMessageBox::No, this);
+        prompt.setTextFormat(Qt::PlainText);
+        prompt.setInformativeText(tr("Endpoint: %1\nSHA-256: %2\n%3")
+            .arg(challenge.endpoint, challenge.presentedFingerprint,
+                 challenge.verificationErrors.join(QLatin1Char('\n'))));
+        prompt.setDetailedText(challenge.certificate.toText());
+        prompt.setDefaultButton(QMessageBox::No);
+        if (prompt.exec() != QMessageBox::Yes) return false;
+        m_webUIFingerprint = challenge.presentedFingerprint;
+        return true;
+    });
+    connect(probe, &Remote::RemoteSession::failed, this, &RemotePreferencesDialog::webUITransitionFailed);
+    connect(probe, &Remote::RemoteSession::connected, this, [this, probe] {
+        const QPointer<RemotePreferencesDialog> dialog(this);
+        probe->requestPreferences([dialog, probe](const QJsonObject &values) {
+            if (!dialog || !dialog->m_webUITransitionInProgress) return;
+            const auto expected = dialog->m_webUIExpected;
+            for (auto it = expected.constBegin(); it != expected.constEnd(); ++it)
+                if (values.value(it.key()) != it.value())
+                {
+                    dialog->webUITransitionFailed(dialog->tr("The new endpoint did not confirm the requested server settings."));
+                    return;
+                }
+            // The password is write-only. A new cookie jar with bypass
+            // disabled must authenticate successfully before it is accepted.
+            dialog->m_ui->textWebUIPassword->clear();
+            emit dialog->webUITransitionVerified(dialog->m_webUICandidate.url,
+                dialog->m_webUICandidate.username, dialog->m_webUIPassword, dialog->m_webUIFingerprint);
+            dialog->m_webUIPassword.clear();
+            // Logout the temporary session before the main window reconnects.
+            QObject::disconnect(probe, nullptr, dialog, nullptr);
+            QObject::connect(probe, &QObject::destroyed, dialog, [dialog] {
+                if (!dialog) return;
+                dialog->m_webUITransitionInProgress = false;
+                dialog->setRemoteBusy(false);
+                dialog->accept();
+            });
+            probe->disconnectFromServer();
+        }, [dialog](const QString &reason) {
+            if (dialog && dialog->m_webUITransitionInProgress) dialog->webUITransitionFailed(reason);
+        });
+    });
+    probe->connectToServer(m_webUICandidate, m_webUIPassword);
+}
+
+void RemotePreferencesDialog::webUITransitionFailed(const QString &reason)
+{
+    // A failed verification is not a rollback. Keep the old saved profile,
+    // do not retry credentials, and require independent recovery if needed.
+    m_webUITransitionInProgress = false;
+    m_webUIPassword.clear();
+    m_ui->textWebUIPassword->clear();
+    if (m_webUIProbe)
+    {
+        QObject::disconnect(m_webUIProbe, nullptr, this, nullptr);
+        m_webUIProbe->disconnectFromServer();
+        m_webUIProbe.clear();
+    }
+    m_remotePreferencesLoaded = false;
+    refreshRemoteControls();
+    setRemoteBusy(false);
+    QMessageBox::warning(this, tr("Cannot verify connection change"),
+        tr("%1\n\nThe saved profile is unchanged. The server may already have applied some changes. Use independent server access or File → Reconnect to recover; do not assume the old settings were restored.").arg(reason));
+    reject();
 }
 
 void RemotePreferencesDialog::sendRemoteChanges(const QJsonObject &changes)
