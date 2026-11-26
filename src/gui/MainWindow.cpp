@@ -75,6 +75,7 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QPointer>
+#include <QShortcut>
 #include <QRegularExpression>
 #include <QSslCertificate>
 #include <QUrl>
@@ -817,6 +818,51 @@ void MainWindow::setupActions()
             if (const auto server = activeConnection(); server && server->connected)
                 server->pane->showRss();
         updateActiveUi();
+    });
+    m_ui->menuLog->setIcon(upstreamIcon("help-contents"));
+    m_ui->menuView->addMenu(m_ui->menuLog);
+    m_ui->actionExecutionLogs->setChecked(m_settings->value("Layout/ShowExecutionLog", false).toBool());
+    const QList<QAction *> logTypes{m_ui->actionNormalMessages, m_ui->actionInformationMessages,
+        m_ui->actionWarningMessages, m_ui->actionCriticalMessages};
+    const auto applyLog = [this, logTypes] {
+        int mask = 0;
+        for (int i = 0; i < logTypes.size(); ++i)
+        {
+            if (logTypes[i]->isChecked()) mask |= (1 << i);
+            logTypes[i]->setEnabled(m_ui->actionExecutionLogs->isChecked());
+        }
+        m_settings->setValue("Layout/ExecutionLogTypes", mask);
+        for (const auto &server : m_connections)
+            server->pane->setLogAvailable(server->connected ? server->session : nullptr,
+                m_ui->actionExecutionLogs->isChecked(), mask);
+    };
+    const int logMask = m_settings->value("Layout/ExecutionLogTypes", 15).toInt();
+    for (int i = 0; i < logTypes.size(); ++i)
+        logTypes[i]->setChecked(logMask & (1 << i));
+    for (auto *action : logTypes)
+        connect(action, &QAction::toggled, this, applyLog);
+    connect(m_ui->actionExecutionLogs, &QAction::toggled, this, [this, applyLog](bool visible) {
+        m_settings->setValue("Layout/ShowExecutionLog", visible);
+        applyLog();
+        if (visible)
+            if (const auto server = activeConnection(); server && server->connected)
+                server->pane->showLog();
+        updateActiveUi();
+    });
+    applyLog();
+    auto *logShortcut = new QShortcut(QKeySequence(Qt::ALT | Qt::Key_4), this);
+    connect(logShortcut, &QShortcut::activated, this, [this] {
+        if (!m_ui->actionExecutionLogs->isChecked()) m_ui->actionExecutionLogs->setChecked(true);
+        if (const auto server = activeConnection(); server && server->connected) server->pane->showLog();
+    });
+    auto *transferShortcut = new QShortcut(QKeySequence(Qt::ALT | Qt::Key_1), this);
+    connect(transferShortcut, &QShortcut::activated, this, [this] {
+        if (const auto server = activeConnection()) server->pane->showTransfers();
+    });
+    auto *rssShortcut = new QShortcut(QKeySequence(Qt::ALT | Qt::Key_3), this);
+    connect(rssShortcut, &QShortcut::activated, this, [this] {
+        if (!m_rssAction->isChecked()) m_rssAction->setChecked(true);
+        if (const auto server = activeConnection(); server && server->connected) server->pane->showRss();
     });
     m_ui->menuView->addSeparator();
 
@@ -1665,7 +1711,7 @@ QStringList MainWindow::selectedTorrentHashes() const
         return {};
 
     const ServerPane *pane = server->pane;
-    if (pane->isRssSelected()) return {};
+    if (!pane->isTransfersSelected()) return {};
     auto *selection = pane->table()->selectionModel();
     if (!selection)
         return {};
@@ -2183,7 +2229,7 @@ void MainWindow::updateActiveUi()
     }
 
     const bool ready = connection && connection->connected;
-    const bool transfers = ready && pane && !pane->isRssSelected();
+    const bool transfers = ready && pane && pane->isTransfersSelected();
     m_searchEdit->setEnabled(transfers);
     m_searchBy->setEnabled(transfers);
     m_disconnectAction->setEnabled(connection && connection->session);
@@ -2296,6 +2342,7 @@ void MainWindow::disconnectConnection(const std::shared_ptr<SessionContext> &con
     connection->session = nullptr;
     connection->connected = false;
     connection->disconnectReason = reason;
+    connection->pane->setLogAvailable(nullptr, false, 15);
     if (connection->statistics) connection->statistics->close();
     connection->altSpeedModeKnown = false;
     connection->pendingOriginalDeletions.clear();
@@ -3255,6 +3302,8 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
             connection->disconnectReason.clear();
             connection->pane->setEnabled(true);
             connection->pane->setRssAvailable(connection->session, m_rssAction && m_rssAction->isChecked());
+            connection->pane->setLogAvailable(connection->session, m_ui->actionExecutionLogs->isChecked(),
+                m_settings->value("Layout/ExecutionLogTypes", 15).toInt());
             updateServerTab(connection);
             connection->version = version;
             connection->apiVersion = apiVersion;

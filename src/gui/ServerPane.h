@@ -19,6 +19,7 @@ class TorrentDetailsWidget;
 class PropTabBar;
 class QTabWidget;
 class RemoteRssWidget;
+class RemoteExecutionLogWidget;
 namespace Remote { class RemoteSession; }
 
 // One independent native transfer view per connected qBittorrent instance.
@@ -56,6 +57,10 @@ public:
     void setSpeedGraphsEnabled(bool enabled);
     void showRss();
     bool isRssSelected() const;
+    bool isTransfersSelected() const;
+    void setLogAvailable(Remote::RemoteSession *session, bool visible, int types);
+    void showLog();
+    void showTransfers();
     void applySync(const QJsonObject &payload);
     QString downloadRateText() const;
     QString uploadRateText() const;
@@ -107,6 +112,8 @@ private:
     QTabWidget *m_sectionTabs = nullptr;
     QWidget *m_transfers = nullptr;
     RemoteRssWidget *m_rssWidget = nullptr;
+    RemoteExecutionLogWidget *m_logWidget = nullptr;
+    void updateSectionTabVisibility();
     bool m_rssLoadExternalImages = false;
     FilterSidebar *m_sidebar = nullptr;
     QTableView *m_table = nullptr;

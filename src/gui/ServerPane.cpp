@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/ServerPane.h"
 #include "gui/RemoteRssDialog.h"
+#include "gui/RemoteExecutionLogWidget.h"
 #include "gui/FilterSidebar.h"
 #include "gui/TorrentModel.h"
 #include "gui/NaturalNameSort.h"
@@ -381,7 +382,48 @@ void ServerPane::setRssAvailable(Remote::RemoteSession *session, bool visible)
             m_sectionTabs->setCurrentWidget(m_transfers);
         m_sectionTabs->setTabVisible(m_sectionTabs->indexOf(m_rssWidget), visible);
     }
-    m_sectionTabs->tabBar()->setVisible(visible && m_rssWidget);
+    updateSectionTabVisibility();
+}
+
+void ServerPane::updateSectionTabVisibility()
+{
+    int visible = 0;
+    for (int i = 0; i < m_sectionTabs->count(); ++i)
+        if (m_sectionTabs->isTabVisible(i)) ++visible;
+    m_sectionTabs->tabBar()->setVisible(visible > 1);
+}
+
+void ServerPane::setLogAvailable(Remote::RemoteSession *session, bool visible, int types)
+{
+    if ((!session || !visible) && m_logWidget)
+    {
+        if (m_sectionTabs->currentWidget() == m_logWidget) showTransfers();
+        m_sectionTabs->removeTab(m_sectionTabs->indexOf(m_logWidget));
+        delete m_logWidget;
+        m_logWidget = nullptr;
+    }
+    if (visible && session && !m_logWidget)
+    {
+        m_logWidget = new RemoteExecutionLogWidget(session, m_sectionTabs);
+        m_sectionTabs->addTab(m_logWidget, tr("Execution Log"));
+    }
+    if (m_logWidget) m_logWidget->setMessageTypes(types);
+    updateSectionTabVisibility();
+}
+
+void ServerPane::showLog()
+{
+    if (m_logWidget) m_sectionTabs->setCurrentWidget(m_logWidget);
+}
+
+void ServerPane::showTransfers()
+{
+    m_sectionTabs->setCurrentWidget(m_transfers);
+}
+
+bool ServerPane::isTransfersSelected() const
+{
+    return m_sectionTabs->currentWidget() == m_transfers;
 }
 
 void ServerPane::setSpeedGraphsEnabled(bool enabled)

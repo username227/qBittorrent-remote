@@ -594,6 +594,25 @@ void RemoteSession::requestBuildInfo(PreferencesResult received, PreferencesErro
     pumpOperations();
 }
 
+void RemoteSession::requestLog(bool peers, int lastKnownId, ArrayResult received, PreferencesError rejected)
+{
+    if (!m_connected || !m_address)
+    {
+        if (rejected) rejected(tr("The selected server is not connected."));
+        return;
+    }
+    QueuedOperation request;
+    request.endpoint = (peers ? QStringLiteral("api/v2/log/peers") : QStringLiteral("api/v2/log/main"))
+        + QStringLiteral("?last_known_id=") + QString::number(lastKnownId);
+    request.description = tr("Read remote execution log");
+    request.jsonArrayRequest = true;
+    request.reportOperation = false;
+    request.onJsonArray = std::move(received);
+    request.onRejected = std::move(rejected);
+    m_operations.enqueue(std::move(request));
+    pumpOperations();
+}
+
 void RemoteSession::requestCookies(ArrayResult received, PreferencesError rejected)
 {
     if (!m_connected || !m_address)

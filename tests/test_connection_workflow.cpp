@@ -613,6 +613,17 @@ public:
                                 response = "Ok.";
                             }
                         }
+                        else if ((path.startsWith("/api/v2/log/main?") || path.startsWith("/api/v2/log/peers?")) && hasCookie)
+                        {
+                            m_commands.append({path, body});
+                            const QUrlQuery query(QString::fromLatin1(path.mid(path.indexOf('?') + 1)));
+                            const int last = query.queryItemValue("last_known_id").toInt();
+                            const auto entries = path.startsWith("/api/v2/log/main?") ? m_generalLog : m_peerLog;
+                            QJsonArray result;
+                            for (const auto &entry : entries)
+                                if (entry.toObject().value("id").toInt() > last) result.append(entry);
+                            response = QJsonDocument(result).toJson(QJsonDocument::Compact);
+                        }
                         else if (path == "/api/v2/app/cookies" && hasCookie)
                         {
                             response = QJsonDocument(m_downloadCookies).toJson(QJsonDocument::Compact);
@@ -1014,6 +1025,7 @@ public:
     void rejectPreferenceWrites(bool reject) { m_rejectPreferences = reject; }
     void ignorePreferenceWrites(bool ignore) { m_ignorePreferences = ignore; }
     bool trayAlternative() const { return m_trayAltMode; }
+    void setLogEntries(const QJsonArray &general, const QJsonArray &peers) { m_generalLog = general; m_peerLog = peers; }
     void setDownloadCookies(const QJsonArray &cookies) { m_downloadCookies = cookies; }
     QJsonArray downloadCookies() const { return m_downloadCookies; }
     void enableSessionPauseDemo() { m_sessionPauseDemo = true; }
@@ -1171,6 +1183,7 @@ private:
     bool m_trayDemo = false;
     bool m_trayAltMode = false;
     QJsonArray m_downloadCookies;
+    QJsonArray m_generalLog, m_peerLog;
     bool m_sessionPauseDemo = false;
     bool m_sessionPaused = false;
     QString m_trayConnectionStatus = QStringLiteral("connected");
@@ -8827,6 +8840,60 @@ private slots:
         QVERIFY(aboutChecked);
     }
 
+    void nativeExecutionLogUsesIndependentCursorsAndFilters()
+    {
+        DemoQbittorrentServer alpha(true), beta(true);
+        const auto msg = [](int id, int type, const QString &message) {
+            return QJsonObject{{"id", id}, {"type", type}, {"timestamp", 1700000000}, {"message", message}};
+        };
+        const QJsonObject peer{{"id", 0}, {"timestamp", 1700000000}, {"ip", "192.0.2.5"},
+            {"blocked", true}, {"reason", "test"}};
+        alpha.setLogEntries({msg(0, 1, "First normal"), msg(1, 4, "First warning")}, {peer});
+        beta.setLogEntries({msg(0, 2, "Second info")}, {});
+        QVERIFY(alpha.start() && beta.start());
+        QTemporaryDir tmp;
+        QSettings settings(tmp.filePath("log.ini"), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, alpha.url());
+        QTRY_VERIFY(window.statusBar()->currentMessage().contains("Connected to"));
+        auto *show = window.findChild<QAction *>("actionExecutionLogs");
+        auto *warnings = window.findChild<QAction *>("actionWarningMessages");
+        QVERIFY(show && warnings && !show->isChecked());
+        show->setChecked(true);
+        auto *tabs = window.findChild<QTabWidget *>("serverTabs");
+        QVERIFY(tabs);
+        auto *first = tabs->currentWidget();
+        auto *general = first->findChild<QListWidget *>("remoteGeneralLog");
+        auto *peers = first->findChild<QListWidget *>("remotePeerLog");
+        QVERIFY(general && peers);
+        QTRY_COMPARE_WITH_TIMEOUT(general->count(), 2, 6000);
+        QTRY_COMPARE_WITH_TIMEOUT(peers->count(), 1, 6000);
+        QVERIFY(general->item(0)->text().contains("First warning"));
+        QVERIFY(peers->item(0)->text().contains("192.0.2.5"));
+        warnings->setChecked(false);
+        QVERIFY(general->item(0)->isHidden());
+        warnings->setChecked(true);
+        QVERIFY(!general->item(0)->isHidden());
+        alpha.setLogEntries({msg(0, 1, "First normal"), msg(1, 4, "First warning"), msg(2, 8, "First critical")}, {peer});
+        QTRY_COMPARE_WITH_TIMEOUT(general->count(), 3, 6000);
+        QVERIFY(general->item(0)->text().contains("First critical"));
+        openConnectDialog(window, beta.url(), false, true, true, "Second");
+        QTRY_VERIFY(window.statusBar()->currentMessage().contains("Connected to Second"));
+        auto *second = qobject_cast<ServerPane *>(tabs->currentWidget());
+        QVERIFY(second && second != first);
+        second->showLog();
+        auto *secondLog = second->findChild<QListWidget *>("remoteGeneralLog");
+        QVERIFY(secondLog);
+        QTRY_COMPARE_WITH_TIMEOUT(secondLog->count(), 1, 6000);
+        QVERIFY(secondLog->item(0)->text().contains("Second info"));
+        QCOMPARE(general->count(), 3);
+        show->setChecked(false);
+        QVERIFY(!first->findChild<QListWidget *>("remoteGeneralLog"));
+        QVERIFY(!second->findChild<QListWidget *>("remoteGeneralLog"));
+    }
+
     void nativeCookiesEditOnlySelectedServer()
     {
         DemoQbittorrentServer alpha(true), beta(true);
@@ -10677,6 +10744,7 @@ private slots:
     {
         DemoQbittorrentServer server(true);
         server.enableTorrentSyncDemo();
+        server.enableQueueingDemo();
         server.keepDemoTorrents();
         QVERIFY(server.start());
 
