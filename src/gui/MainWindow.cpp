@@ -2839,6 +2839,7 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
             session, &Remote::RemoteSession::setTorrentComment);
     connect(session, &Remote::RemoteSession::torrentCommentEditFinished,
             connection->pane, &ServerPane::finishCommentEdit);
+    connect(connection->pane, &ServerPane::trackerDetailActionRequested, session, &Remote::RemoteSession::changeDetailTrackers);
     connect(connection->pane, &ServerPane::trackerTiersRequested,
             session, &Remote::RemoteSession::setTrackerTiers);
     connect(session, &Remote::RemoteSession::trackerTierEditFinished,
@@ -3571,6 +3572,7 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
             updateServerTab(connection);
             connection->version = version;
             connection->apiVersion = apiVersion;
+            connection->pane->setSelectedTrackerReannounceSupported(connection->session->supportsSelectedTrackerReannounce());
             connection->pane->setTrackerTierEditingSupported(
                 connection->session->supportsTrackerTierEditing());
             connection->pane->setCommentEditingSupported(

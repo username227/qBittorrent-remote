@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include "api/WebSeedUrl.h"
+#include "api/TrackerDetailAction.h"
 
 #include "api/PathMappingStore.h"
 #include <QJsonArray>
@@ -37,6 +38,7 @@ public:
     void setContentPathMappings(const QList<Remote::PathMapping> &mappings);
     void setContentDragEnabled(bool enabled);
     void setTrackerTierEditingSupported(bool supported);
+    void setSelectedTrackerReannounceSupported(bool supported);
     void finishTrackerTierEdit(const QString &hash);
     void setCommentEditingSupported(bool supported);
     void finishCommentEdit(const QString &hash);
@@ -46,6 +48,8 @@ public:
 signals:
     void filePriorityRequested(const QString &hash, const QList<int> &ids, int priority);
     void trackerTiersRequested(const QString &hash, const QJsonObject &tiers);
+    void trackerDetailActionRequested(const QString &hash, Remote::TrackerDetailAction action,
+                                      const QStringList &urls, const QString &replacement);
     void commentEditRequested(const QString &hash, const QString &comment);
     void addPeersRequested(const QString &hash, const QStringList &peers);
     void banPeersRequested(const QString &hash, const QStringList &peers);
@@ -57,6 +61,15 @@ private:
     void updateCommentEditor();
     void editComment();
     void displayTrackers(const QJsonArray &trackers);
+    QStringList trackerUrls(bool selectedOnly) const;
+    bool canChangeTrackers() const;
+    bool canAddTrackers() const;
+    bool canReannounceTrackers() const;
+    void addTrackers();
+    void editTracker();
+    void removeTrackers();
+    void copyTrackers();
+    void reannounceTrackers(bool selected);
     QJsonObject adjustedTrackerTiers(int delta) const;
     void updateTrackerTierButtons();
     void changeTrackerTiers(int delta);
@@ -94,6 +107,7 @@ private:
     QString m_hash;
     QString m_pendingTrackerTierHash;
     bool m_trackerTierSupported = false;
+    bool m_selectedTrackerReannounceSupported = false;
     bool m_trackerTiersKnown = false;
     bool m_commentEditingSupported = false;
     bool m_commentKnown = false;
