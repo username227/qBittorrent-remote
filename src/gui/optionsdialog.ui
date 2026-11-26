@@ -4286,20 +4286,20 @@ Use ';' to split multiple entries. Can use wildcard '*'.</string>
                     </item>
                    </layout>
                   </item>
-                  <item>
-                   <widget class="QLabel" name="labelReverseProxyLink">
-                    <property name="text">
-                     <string>&lt;a href=https://github.com/qbittorrent/qBittorrent/wiki#reverse-proxy-setup-for-webui-access&gt;Reverse proxy setup examples&lt;/a&gt;</string>
-                    </property>
-                    <property name="openExternalLinks">
-                     <bool>true</bool>
-                    </property>
-                    <property name="textInteractionFlags">
-                     <set>Qt::TextInteractionFlag::LinksAccessibleByKeyboard|Qt::TextInteractionFlag::LinksAccessibleByMouse</set>
-                    </property>
-                   </widget>
-                  </item>
                  </layout>
+                </widget>
+               </item>
+               <item>
+                <widget class="QLabel" name="labelReverseProxyLink">
+                 <property name="text">
+                  <string>&lt;a href=&quot;https://github.com/qbittorrent/qBittorrent/wiki#reverse-proxy-setup-for-webui-access&quot;&gt;Reverse proxy setup examples&lt;/a&gt;</string>
+                 </property>
+                 <property name="openExternalLinks">
+                  <bool>true</bool>
+                 </property>
+                 <property name="textInteractionFlags">
+                  <set>Qt::TextInteractionFlag::LinksAccessibleByKeyboard|Qt::TextInteractionFlag::LinksAccessibleByMouse</set>
+                 </property>
                 </widget>
                </item>
                <item>

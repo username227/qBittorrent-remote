@@ -4926,6 +4926,169 @@ private slots:
         QCOMPARE(Remote::PathMappingStore(settings).mappings(originalId), mappings);
     }
 
+    void webUISecurityPolicyTransitions()
+    {
+        DemoQbittorrentServer legacy(true), modern(true);
+        modern.enableModernResponses();
+        QVERIFY(legacy.start() && modern.start());
+        const QJsonObject initial{
+            {"web_ui_address", "*"}, {"use_https", false},
+            {"web_ui_https_cert_path", ""}, {"web_ui_https_key_path", ""},
+            {"web_ui_username", "demo"}, {"bypass_local_auth", false},
+            {"bypass_auth_subnet_whitelist_enabled", false},
+            {"web_ui_secure_cookie_enabled", false},
+            {"web_ui_host_header_validation_enabled", true}, {"web_ui_domain_list", "*"},
+            {"web_ui_use_custom_http_headers_enabled", false}, {"web_ui_custom_http_headers", ""},
+            {"web_ui_reverse_proxy_enabled", false}, {"web_ui_reverse_proxies_list", ""}
+        };
+        QJsonObject older = initial, newer = initial;
+        older.insert("web_ui_port", QUrl(legacy.url()).port());
+        newer.insert("web_ui_port", QUrl(modern.url()).port());
+        legacy.setServerPreferences(older);
+        modern.setServerPreferences(newer);
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath("profiles.ini"), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, legacy.url(), true);
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains("v5.1.4"), 6000);
+        openConnectDialog(window, modern.url(), true, true, true, "Modern");
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains("v5.3.0"), 6000);
+        auto *tabs = window.findChild<QTabWidget *>("serverTabs");
+        auto *prefs = window.findChild<QAction *>("actionOptions");
+        QVERIFY(tabs && prefs);
+        const auto profiles = Remote::ProfileStore(settings).profiles();
+        QCOMPARE(profiles.size(), 2);
+        for (const auto &profile : profiles)
+            QTRY_COMPARE_WITH_TIMEOUT(vault.data.value(vault.keyFor(profile)), QStringLiteral("demo-password"), 6000);
+        const auto exercise = [&](bool modernServer, bool save, bool fail) {
+            tabs->setCurrentIndex(modernServer ? 1 : 0);
+            bool edited = false, confirmed = false, entered = false, failure = false;
+            QString unexpected;
+            QTimer modalDriver;
+            modalDriver.setInterval(20);
+            connect(&modalDriver, &QTimer::timeout, &window, [&] {
+                if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget()))
+                {
+                    if (box->windowTitle() == QStringLiteral("Change server connection"))
+                    {
+                        confirmed = true;
+                        box->button(QMessageBox::Yes)->click();
+                    }
+                    else if (fail && box->windowTitle() == QStringLiteral("Cannot verify connection change"))
+                    {
+                        failure = true;
+                        box->accept();
+                    }
+                    else
+                    {
+                        unexpected = box->windowTitle() + QStringLiteral(": ") + box->text();
+                        box->reject();
+                    }
+                }
+                else if (auto *input = qobject_cast<QInputDialog *>(QApplication::activeModalWidget()))
+                {
+                    if (input->windowTitle() == QStringLiteral("Verify server login"))
+                    {
+                        entered = true;
+                        input->setTextValue(QStringLiteral("demo-password"));
+                        input->accept();
+                    }
+                }
+            });
+            QTimer watchdog;
+            watchdog.setSingleShot(true);
+            connect(&watchdog, &QTimer::timeout, &window, [&] {
+                if (auto *dialog = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget()))
+                    dialog->reject();
+            });
+            QTimer::singleShot(0, &window, [&] {
+                auto *dlg = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget());
+                QVERIFY(dlg);
+                auto *nav = dlg->findChild<QListWidget *>("preferencesSections");
+                auto *secure = dlg->findChild<QCheckBox *>("checkSecureCookie");
+                auto *host = dlg->findChild<QGroupBox *>("groupHostHeaderValidation");
+                auto *domains = dlg->findChild<QLineEdit *>("textServerDomains");
+                auto *headers = dlg->findChild<QGroupBox *>("groupWebUIAddCustomHTTPHeaders");
+                auto *text = dlg->findChild<QPlainTextEdit *>("textWebUICustomHTTPHeaders");
+                auto *proxy = dlg->findChild<QGroupBox *>("groupEnableReverseProxySupport");
+                auto *trusted = dlg->findChild<QLineEdit *>("textTrustedReverseProxiesList");
+                auto *link = dlg->findChild<QLabel *>("labelReverseProxyLink");
+                auto *apply = dlg->findChild<QPushButton *>("preferencesApply");
+                QVERIFY(nav && secure && host && domains && headers && text && proxy && trusted && link && apply);
+                nav->setCurrentRow(8);
+                QTRY_VERIFY_WITH_TIMEOUT(secure->isEnabled() && host->isEnabled() && proxy->isEnabled(), 6000);
+                QVERIFY(!text->isEnabled() && !trusted->isEnabled() && link->isEnabled());
+                QVERIFY(domains->isEnabled());
+                host->setChecked(false);
+                QVERIFY(!domains->isEnabled());
+                host->setChecked(true);
+                domains->setText("localhost;*.example.test");
+                // Change the host flag while preserving the staged domain list.
+                host->setChecked(false);
+                secure->setChecked(true);
+                headers->setChecked(true);
+                proxy->setChecked(true);
+                QVERIFY(text->isEnabled() && trusted->isEnabled() && link->isEnabled());
+                text->setPlainText("X-Test: yes:two");
+                trusted->setText("127.0.0.1;192.0.2.0/24");
+                QVERIFY(apply->isEnabled());
+                edited = true;
+                if (save) apply->click();
+                else dlg->reject();
+            });
+            modalDriver.start();
+            watchdog.start(25000);
+            prefs->trigger();
+            watchdog.stop();
+            modalDriver.stop();
+            QVERIFY2(unexpected.isEmpty(), qPrintable(unexpected));
+            QVERIFY(edited);
+            QCOMPARE(confirmed, save);
+            QCOMPARE(entered, save);
+            QCOMPARE(failure, fail);
+            if (save && !fail)
+                QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(modernServer ? "v5.3.0" : "v5.1.4"), 12000);
+        };
+        exercise(false, false, false);
+        QCOMPARE(legacy.serverPreferences(), older);
+        exercise(true, true, false);
+        QJsonObject delta{
+            {"web_ui_secure_cookie_enabled", true},
+            {"web_ui_host_header_validation_enabled", false}, {"web_ui_domain_list", "localhost;*.example.test"},
+            {"web_ui_use_custom_http_headers_enabled", true}, {"web_ui_custom_http_headers", "X-Test: yes:two"},
+            {"web_ui_reverse_proxy_enabled", true}, {"web_ui_reverse_proxies_list", "127.0.0.1;192.0.2.0/24"}
+        };
+        const QUrlQuery form(QString::fromUtf8(modern.lastCommandBody("/api/v2/app/setPreferences")));
+        QCOMPARE(QJsonDocument::fromJson(form.queryItemValue("json", QUrl::FullyDecoded).toUtf8()).object(), delta);
+        for (auto it = delta.constBegin(); it != delta.constEnd(); ++it) newer.insert(it.key(), it.value());
+        QCOMPARE(modern.serverPreferences(), newer);
+        QCOMPARE(legacy.serverPreferences(), older);
+        legacy.ignorePreferenceWrites(true);
+        exercise(false, true, true);
+        QCOMPARE(legacy.serverPreferences(), older);
+        QCOMPARE(modern.serverPreferences(), newer);
+        QCOMPARE(legacy.commandsFor("/api/v2/app/setPreferences"), 1);
+        QCOMPARE(modern.commandsFor("/api/v2/app/setPreferences"), 1);
+        const auto after = Remote::ProfileStore(settings).profiles();
+        QCOMPARE(after.size(), profiles.size());
+        for (const auto &profile : profiles)
+        {
+            bool found = false;
+            for (const auto &saved : after)
+                if (saved.id == profile.id)
+                {
+                    found = true;
+                    QCOMPARE(saved.url, profile.url);
+                    QCOMPARE(saved.username, profile.username);
+                }
+            QVERIFY(found);
+            QCOMPARE(vault.data.value(vault.keyFor(profile)), QStringLiteral("demo-password"));
+        }
+    }
+
     void webUIPreferencesFollowSelectedServer()
     {
         DemoQbittorrentServer legacy(true), modern(true);
