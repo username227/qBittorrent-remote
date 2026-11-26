@@ -2973,10 +2973,14 @@ void RemotePreferencesDialog::buildAdvancedPage()
     row("I2P_INBOUND_LENGTH_VARIANCE", tr("I2P inbound length variance"), spin(-7, 7, tr(""), tr("")), "https://www.libtorrent.org/reference-Settings.html#i2p_inbound_length_variance");
     row("I2P_OUTBOUND_LENGTH_VARIANCE", tr("I2P outbound length variance"), spin(-7, 7, tr(""), tr("")), "https://www.libtorrent.org/reference-Settings.html#i2p_outbound_length_variance");
 
-    auto *priority = table->findChild<QComboBox *>("advanced_OS_MEMORY_PRIORITY");
-    priority->setToolTip(tr("The Web API does not expose the server's Windows process memory priority."));
-    auto *favicon = table->findChild<QCheckBox *>("advanced_DOWNLOAD_TRACKER_FAVICON");
-    favicon->setToolTip(tr("The server does not expose tracker icons. Downloading them directly from this desktop could disclose its IP address and tracker membership."));
+    // Keep the upstream row definitions for a future supported implementation,
+    // but never present permanently nonfunctional controls as preferences.
+    for (const char *id : {"advanced_OS_MEMORY_PRIORITY", "advanced_DOWNLOAD_TRACKER_FAVICON"})
+    {
+        auto *editor = table->findChild<QWidget *>(QString::fromLatin1(id));
+        for (int row = 0; editor && row < table->rowCount(); ++row)
+            if (table->cellWidget(row, 1) == editor) table->setRowHidden(row, true);
+    }
     auto *timeout = table->findChild<QSpinBox *>("advanced_NOTIFICATION_TIMEOUT");
     timeout->setSpecialValueText(tr("-1 (system default)"));
     timeout->setToolTip(tr("Local notification duration in milliseconds. The desktop notification service controls the final display duration."));
@@ -3141,13 +3145,6 @@ void RemotePreferencesDialog::configureAdvancedCapabilities(const QJsonObject &i
     const bool lt2 = known && version.majorVersion() == 2;
     const bool lt21 = lt2 && version.minorVersion() >= 1;
     const QString platform = info.value("platform").toString();
-    if (!platform.isEmpty() && platform != QLatin1String("unknown") && platform != QLatin1String("windows"))
-    {
-        auto *table = findChild<QTableWidget *>("advancedSettingsTable");
-        auto *priority = findChild<QComboBox *>("advanced_OS_MEMORY_PRIORITY");
-        for (int row = 0; table && row < table->rowCount(); ++row)
-            if (table->cellWidget(row, 1) == priority) table->setRowHidden(row, true);
-    }
     const int bits = info.value("bitness").toInt();
     const bool knownBits = bits == 32 || bits == 64;
     m_advancedSupportedKeys.clear();
