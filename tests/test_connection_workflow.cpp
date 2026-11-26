@@ -385,6 +385,8 @@ public:
                         }
                         else if (m_demoDetails && hasCookie
                                  && (path.startsWith("/api/v2/torrents/properties?")
+                                     || path.startsWith("/api/v2/torrents/pieceStates?")
+                                     || path.startsWith("/api/v2/torrents/pieceAvailability?")
                                      || path.startsWith("/api/v2/torrents/trackers?")
                                      || path.startsWith("/api/v2/sync/torrentPeers?")
                                      || path.startsWith("/api/v2/torrents/webseeds?")
@@ -409,8 +411,17 @@ public:
                                 response = QJsonDocument(m_contentEntries.value(hash))
                                     .toJson(QJsonDocument::Compact);
                             }
+                            else if (path.startsWith("/api/v2/torrents/pieceStates?"))
+                            {
+                                const auto hash = QUrlQuery(QString::fromLatin1(
+                                    path.mid(path.indexOf('?') + 1))).queryItemValue(QStringLiteral("hash"));
+                                response = hash == QLatin1String("0000000000000000000000000000000000000002")
+                                    ? "[2,0,1,0]" : "[2,2,2,2]";
+                            }
+                            else if (path.startsWith("/api/v2/torrents/pieceAvailability?"))
+                                response = "[0,2,4,2]";
                             else if (path.startsWith("/api/v2/torrents/properties?"))
-                                response = R"DEMO({"save_path":"/share/NAS/torrents","comment":"Get it at https://example.test/files?id=7&part=2 and <b>plain markup</b>; javascript:alert(1)","total_downloaded":1048576,"total_uploaded":2048,"total_size":1048576,"time_elapsed":3600,"eta":0,"share_ratio":1.25,"pieces_num":4,"seeds":2,"peers":1})DEMO";
+                                response = R"DEMO({"save_path":"/share/NAS/torrents","comment":"Get it at https://example.test/files?id=7&part=2 and <b>plain markup</b>; javascript:alert(1)","total_downloaded":1048576,"total_uploaded":2048,"total_size":1048576,"time_elapsed":3600,"eta":0,"share_ratio":1.25,"pieces_num":4,"piece_size":262144,"pieces_have":2,"availability":2.5,"seeds":2,"peers":1})DEMO";
                             else if (path.startsWith("/api/v2/torrents/trackers?"))
                             {
                                 response = R"TRACK([
@@ -8669,6 +8680,7 @@ private slots:
     void nativeTorrentDetailsUseSelectedRemoteServerAndFilePriorityApis()
     {
         DemoQbittorrentServer server(true);
+        server.setReportedVersions(QStringLiteral("v5.3.0"), QStringLiteral("2.16.0"));
         server.enableNativePresentationDemo();
         server.enableDetailsDemo();
         QVERIFY(server.start());
@@ -8730,6 +8742,43 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(savePath->text(), QStringLiteral("/share/NAS/torrents"), 6000);
         auto *propertiesBar = window.findChild<QProgressBar *>(QStringLiteral("detailsProgressBar"));
         QVERIFY(propertiesBar);
+        QCOMPARE(propertiesBar->value(), 1000);
+        QTRY_COMPARE_WITH_TIMEOUT(propertiesBar->property("pieceCount").toInt(), 4, 6000);
+        auto *availabilityBar = window.findChild<QProgressBar *>("detailsAvailabilityBar");
+        auto *availabilityLabel = window.findChild<QLabel *>("labelAverageAvailabilityVal");
+        QVERIFY(availabilityBar && availabilityLabel && !availabilityBar->isVisible());
+        QCOMPARE(server.detailsFor("/api/v2/torrents/pieceAvailability?"), 0);
+        int partialRow = -1;
+        for (int i = 0; i < table->model()->rowCount(); ++i)
+            if (table->model()->index(i, 0).data().toString() == QStringLiteral("Partial download"))
+                partialRow = i;
+        QVERIFY(partialRow >= 0);
+        table->selectRow(partialRow);
+        QTRY_VERIFY_WITH_TIMEOUT(availabilityBar->isVisible(), 6000);
+        QCOMPARE(availabilityBar->property("pieceCount").toInt(), 4);
+        QCOMPARE(availabilityLabel->text(), QLocale().toString(2.5, 'f', 3));
+        QTRY_COMPARE_WITH_TIMEOUT(propertiesBar->property("pieceCount").toInt(), 4, 6000);
+        // Use a deterministic contrasting palette and wait for the real
+        // visible layout before comparing exact rendered piece colors.
+        const QColor baseColor(240, 240, 240);
+        const QColor completeColor(0, 85, 170);
+        auto palette = propertiesBar->palette();
+        palette.setColor(QPalette::Base, baseColor);
+        palette.setColor(QPalette::Highlight, completeColor);
+        propertiesBar->setPalette(palette);
+        QTRY_VERIFY(propertiesBar->isVisible() && propertiesBar->width() >= 64);
+        const auto colorAt = [propertiesBar](int eighth) {
+            const auto pixels = propertiesBar->grab().toImage();
+            if (pixels.isNull()) return QColor();
+            return pixels.pixelColor(pixels.width() * eighth / 8, pixels.height() / 2);
+        };
+        QTRY_COMPARE_WITH_TIMEOUT(colorAt(1), completeColor, 6000);
+        QCOMPARE(colorAt(3), baseColor);
+        QCOMPARE(colorAt(7), baseColor);
+        QVERIFY(colorAt(5) != baseColor && colorAt(5) != completeColor);
+        table->selectRow(targetRow);
+        QTRY_VERIFY(!availabilityBar->isVisible());
+        QTRY_COMPARE_WITH_TIMEOUT(propertiesBar->property("pieceCount").toInt(), 4, 6000);
         QCOMPARE(propertiesBar->value(), 1000);
         auto *comment = window.findChild<QLabel *>(QStringLiteral("labelCommentVal"));
         QVERIFY(comment);

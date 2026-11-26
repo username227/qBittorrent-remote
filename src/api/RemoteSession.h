@@ -164,7 +164,7 @@ public:
     // The Web API implements this as a checked remove followed by add.
     void replaceTorrentTrackers(const QString &hash, const QString &previousEntries,
                                 const QString &replacementEntries, bool privateOrUnknown);
-    void requestTorrentDetails(const QString &hash, int tab);
+    void requestTorrentDetails(const QString &hash, int tab, bool availability = false);
     void setRefreshInterval(int milliseconds);
     void setFilePriority(const QString &hash, const QList<int> &fileIds, int priority);
 
@@ -230,6 +230,7 @@ private:
         QString exportHash;
         QString detailHash;
         int detailTab = -1;
+        quint64 detailGeneration = 0;
         // Used only for dependent create-then-assign operations. A failed
         // category/tag creation must never enqueue an invalid assignment.
         std::function<void()> onAccepted;
@@ -250,6 +251,11 @@ private:
     bool m_connected = false;
     bool m_trackerTierEditing = false;
     bool m_pathFreeSpace = false;
+    bool m_pieceAvailability = false;
+    QString m_detailHash;
+    int m_detailPage = -1;
+    bool m_detailAvailability = false;
+    quint64 m_detailGeneration = 0;
     qint64 m_syncRid = 0;
     QTimer m_syncTimer;
 };

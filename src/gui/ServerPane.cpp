@@ -466,6 +466,7 @@ ServerPane::ServerPane(QWidget *parent) : QWidget(parent)
                     m_expandedDetailsState = vertical->saveState();
                     m_originalDetailsHandleWidth = vertical->handleWidth();
                     m_details->hide();
+                    requestSelectedDetails();
                     const int tabHeight = m_detailTabs->sizeHint().height()
                         + m_detailTabs->contentsMargins().top()
                         + m_detailTabs->contentsMargins().bottom();
@@ -1237,7 +1238,9 @@ void ServerPane::requestSelectedDetails()
 {
     if (!m_selectedHash.isEmpty() && m_details->isVisible()
         && m_details->currentTab() >= 0 && m_details->currentTab() < 5)
-        emit torrentDetailsRequested(m_selectedHash, m_details->currentTab());
+        emit torrentDetailsRequested(m_selectedHash, m_details->currentTab(), m_details->wantsPieceAvailability());
+    else
+        emit torrentDetailsRequested({}, -1, false);
 }
 
 void ServerPane::setTrackerTierEditingSupported(bool supported)

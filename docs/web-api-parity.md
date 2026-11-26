@@ -43,3 +43,7 @@ This aims for **feature parity** with qBittorrent's exposed Web API. We do
 not embed the Web UI's HTML/JavaScript or link the Web UI's server-side
 controller code into the native desktop application. The remote server's
 API responses are the source of truth.
+
+## Phase 3 — General piece graphs
+
+The native General property layout draws authenticated `torrents/pieceStates` (0 missing, 1 requested/downloading, 2 complete) using palette-derived colors and weighted pixel coverage. When data is missing, the existing overall progress bar remains explicitly identified as the fallback. `torrents/pieceAvailability` is available in upstream 5.2.0/5.2.1 and 5.3.x but absent in 5.1.4; request only for eligible active incomplete downloads on supported versions. Its gradient is normalized to the maximum peer count as upstream does. The number beside the graph is the server's `properties.availability` distributed-copies value, not an arithmetic mean. Missing/malformed arrays clear the relevant graph, not unrelated properties. Existing 10-second selected-visible-detail refresh and authenticated queue are reused; selection/page generations discard obsolete responses including A→B→A. The native piece count/size/have label is restored when the API supplies all three values. Shift-hover file-to-piece mapping remains a follow-up; no additional files requests or local engine. Functional coverage exercises the actual General pane, completed and incomplete selections and graph rendering.

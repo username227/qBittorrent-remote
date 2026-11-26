@@ -100,7 +100,7 @@ signals:
     void torrentClearTagsRequested();
     void torrentAutoManagementRequested(bool enabled);
     void torrentModeRequested(TorrentContextAction action, bool enabled);
-    void torrentDetailsRequested(const QString &hash, int tab);
+    void torrentDetailsRequested(const QString &hash, int tab, bool availability);
     void filePriorityRequested(const QString &hash, const QList<int> &ids, int priority);
     void trackerTiersRequested(const QString &hash, const QJsonObject &tiers);
 

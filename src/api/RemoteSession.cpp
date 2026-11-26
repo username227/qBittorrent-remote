@@ -427,6 +427,11 @@ void RemoteSession::requestApiVersion(const QString &version)
                 && QVersionNumber::fromString(apiVersion) >= QVersionNumber(2, 13, 0);
             m_pathFreeSpace = numericVersion.match(apiVersion).hasMatch()
                 && QVersionNumber::fromString(apiVersion) >= QVersionNumber(2, 16, 0);
+            QString numeric = version;
+            if (numeric.startsWith(QLatin1Char('v'))) numeric.remove(0, 1);
+            const auto qbtVersion = QVersionNumber::fromString(numeric);
+            m_pieceAvailability = qbtVersion.segmentCount() >= 3
+                && qbtVersion >= QVersionNumber(5, 2, 0);
             m_connected = true;
             emit connected(version, apiVersion);
             // The first request uses rid=0 for the full server snapshot.
@@ -987,6 +992,7 @@ void RemoteSession::pumpOperations()
             }
             else if (operation.detailsRequest)
             {
+                if (operation.detailGeneration != m_detailGeneration) return;
                 QJsonParseError error;
                 const QJsonDocument json = QJsonDocument::fromJson(response, &error);
                 const bool expectsObject = (operation.detailTab == 0 || operation.detailTab == 2);
@@ -1019,7 +1025,10 @@ void RemoteSession::pumpOperations()
             }
         }, [this, operation](const QString &reason) {
             if (operation.detailsRequest)
-                emit torrentDetailsFailed(operation.detailHash, operation.detailTab, reason);
+            {
+                if (operation.detailGeneration == m_detailGeneration)
+                    emit torrentDetailsFailed(operation.detailHash, operation.detailTab, reason);
+            }
             else if (operation.jsonObjectRequest || operation.jsonArrayRequest)
             {
                 if (operation.onRejected)
@@ -1049,14 +1058,26 @@ void RemoteSession::setRefreshInterval(int milliseconds)
     if (m_syncTimer.interval() != interval) m_syncTimer.setInterval(interval);
 }
 
-void RemoteSession::requestTorrentDetails(const QString &hash, int tab)
+void RemoteSession::requestTorrentDetails(const QString &hash, int tab, bool availability)
 {
     static const QRegularExpression validHash(
         QStringLiteral("^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$"));
-    if (!m_connected || !m_address || !validHash.match(hash).hasMatch()
-        || tab < 0 || tab > 4)
-        return;
-
+    const bool valid = m_connected && m_address && validHash.match(hash).hasMatch()
+        && tab >= 0 && tab <= 4;
+    const QString selected = valid ? hash : QString();
+    const int page = valid ? tab : -1;
+    availability = valid && page == 0 && availability && m_pieceAvailability;
+    if (m_detailHash != selected || m_detailPage != page || m_detailAvailability != availability)
+    {
+        ++m_detailGeneration;
+        m_detailHash = selected;
+        m_detailPage = page;
+        m_detailAvailability = availability;
+    }
+    for (int i = m_operations.size() - 1; i >= 0; --i)
+        if (m_operations.at(i).detailsRequest)
+            m_operations.removeAt(i);
+    if (!valid) return;
     static const QStringList endpoints {
         QStringLiteral("torrents/properties"),
         QStringLiteral("torrents/trackers"),
@@ -1064,20 +1085,23 @@ void RemoteSession::requestTorrentDetails(const QString &hash, int tab)
         QStringLiteral("torrents/webseeds"),
         QStringLiteral("torrents/files")
     };
-    // Discard queued requests for old selections or inactive pages. Already
-    // running replies are still verified and discarded by the receiving pane.
-    for (int i = m_operations.size() - 1; i >= 0; --i)
-        if (m_operations.at(i).detailsRequest)
-            m_operations.removeAt(i);
-
-    const QString url = QStringLiteral("api/v2/%1?hash=%2%3")
-        .arg(endpoints.at(tab), QString::fromLatin1(QUrl::toPercentEncoding(hash)),
-             tab == 2 ? QStringLiteral("&rid=0") : QString());
-    QueuedOperation request {url, {}, {}, {}, false};
-    request.detailsRequest = true;
-    request.detailHash = hash;
-    request.detailTab = tab;
-    m_operations.enqueue(std::move(request));
+    const auto enqueue = [&](const QString &endpoint, int kind) {
+        const QString url = QStringLiteral("api/v2/%1?hash=%2%3")
+            .arg(endpoint, QString::fromLatin1(QUrl::toPercentEncoding(hash)),
+                kind == 2 ? QStringLiteral("&rid=0") : QString());
+        QueuedOperation request {url, {}, {}, {}, false};
+        request.detailsRequest = true;
+        request.detailHash = hash;
+        request.detailTab = kind;
+        request.detailGeneration = m_detailGeneration;
+        m_operations.enqueue(std::move(request));
+    };
+    enqueue(endpoints.at(tab), tab);
+    if (tab == 0)
+    {
+        enqueue(QStringLiteral("torrents/pieceStates"), 6);
+        if (availability) enqueue(QStringLiteral("torrents/pieceAvailability"), 7);
+    }
     pumpOperations();
 }
 
