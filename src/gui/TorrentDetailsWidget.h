@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
+#include "api/WebSeedUrl.h"
 
 #include "api/PathMappingStore.h"
 #include <QJsonArray>
@@ -40,6 +41,7 @@ public:
     void setCommentEditingSupported(bool supported);
     void finishCommentEdit(const QString &hash);
     void finishPeerAction(const QString &hash, const QString &message);
+    void finishWebSeedAction(const QString &hash);
 
 signals:
     void filePriorityRequested(const QString &hash, const QList<int> &ids, int priority);
@@ -47,6 +49,8 @@ signals:
     void commentEditRequested(const QString &hash, const QString &comment);
     void addPeersRequested(const QString &hash, const QStringList &peers);
     void banPeersRequested(const QString &hash, const QStringList &peers);
+    void webSeedActionRequested(const QString &hash, Remote::WebSeedAction action,
+                                const QStringList &urls, const QString &replacement);
 
 private:
     void displayGeneral(const QJsonObject &properties);
@@ -63,6 +67,12 @@ private:
     void addPeers();
     void banSelectedPeers();
     void displayWebSeeds(const QJsonArray &sources);
+    QStringList selectedWebSeeds() const;
+    bool canEditWebSeeds() const;
+    void addWebSeed();
+    void editWebSeed();
+    void removeWebSeeds();
+    void copyWebSeeds();
     void displayFiles(const QJsonArray &files);
     void chooseFilePriorities(int priority, bool allFiles);
     void updateFileFolders();
@@ -75,6 +85,8 @@ private:
     QJsonObject m_peerRecords;
     QJsonValue m_peerPrivacy;
     QString m_pendingPeerHash;
+    QString m_pendingWebSeedHash;
+    bool m_webSeedsKnown = false;
     SpeedGraphWidget *m_speedGraph = nullptr;
     RemotePiecesBar *m_progressBar = nullptr;
     RemotePiecesBar *m_availabilityBar = nullptr;

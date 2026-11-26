@@ -1699,6 +1699,40 @@ void RemoteSession::banTorrentPeers(const QString &hash, const QStringList &peer
         [this, hash](const QString &) { emit torrentPeerActionFinished(hash, {}); });
 }
 
+void RemoteSession::changeWebSeeds(const QString &hash, WebSeedAction action,
+                                   const QStringList &urls, const QString &replacement)
+{
+    const auto reject = [this, hash]() {
+        emit webSeedActionFinished(hash);
+        emit operationFailed(tr("Change web seeds"), tr("Invalid torrent selection or web seed URL."));
+    };
+    if (!m_connected || hash.isEmpty() || hash != m_detailHash || m_detailPage != 3
+        || urls.isEmpty() || !std::all_of(urls.cbegin(), urls.cend(), validWebSeedUrl)
+        || (action == WebSeedAction::Edit && (urls.size() != 1 || !validWebSeedUrl(replacement))))
+    {
+        reject();
+        return;
+    }
+    QString endpoint;
+    QByteArray body = QByteArrayLiteral("hash=") + QUrl::toPercentEncoding(hash);
+    switch (action)
+    {
+    case WebSeedAction::Add: endpoint = QStringLiteral("api/v2/torrents/addWebSeeds"); break;
+    case WebSeedAction::Remove: endpoint = QStringLiteral("api/v2/torrents/removeWebSeeds"); break;
+    case WebSeedAction::Edit: endpoint = QStringLiteral("api/v2/torrents/editWebSeed"); break;
+    default: reject(); return;
+    }
+    if (action == WebSeedAction::Edit)
+        body += QByteArrayLiteral("&origUrl=") + encodeWebSeedUrls(urls)
+            + QByteArrayLiteral("&newUrl=") + encodeWebSeedUrls({replacement});
+    else
+        body += QByteArrayLiteral("&urls=") + encodeWebSeedUrls(urls);
+    queueOperation(endpoint, body, QByteArrayLiteral("application/x-www-form-urlencoded"),
+        tr("Change web seeds"), true,
+        [this, hash]() { emit webSeedActionFinished(hash); },
+        [this, hash](const QString &) { emit webSeedActionFinished(hash); });
+}
+
 void RemoteSession::setTorrentComment(const QString &hash, const QString &comment)
 {
     static const QRegularExpression validHash(
