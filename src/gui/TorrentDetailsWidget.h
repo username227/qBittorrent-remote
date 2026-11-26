@@ -10,7 +10,7 @@
 #include <QWidget>
 
 class QLabel;
-class QProgressBar;
+class RemotePiecesBar;
 class QTableWidget;
 class QTreeWidget;
 class SpeedGraphWidget;
@@ -27,6 +27,7 @@ public:
 
     void showTab(int tab);
     int currentTab() const noexcept { return m_currentTab; }
+    bool wantsPieceAvailability() const;
     void setSelection(const QString &hash, const QJsonObject &summary = {});
     void setDateFormat(const QString &pattern);
     void displayDetails(const QString &hash, int tab, const QJsonValue &data);
@@ -59,7 +60,8 @@ private:
     QTreeWidget *m_trackers = nullptr;
     QTableWidget *m_peers = nullptr;
     SpeedGraphWidget *m_speedGraph = nullptr;
-    QProgressBar *m_progressBar = nullptr;
+    RemotePiecesBar *m_progressBar = nullptr;
+    RemotePiecesBar *m_availabilityBar = nullptr;
     QLabel *m_error = nullptr;
     QString m_hash;
     QString m_pendingTrackerTierHash;

@@ -426,6 +426,129 @@ private:
 };
 } // namespace
 
+// Remote adaptation of upstream DownloadedPiecesBar / PieceAvailabilityBar
+// (Copyright 2006 Christophe Dumez; 2024 Vladimir Golovnev).
+class RemotePiecesBar final : public QProgressBar
+{
+public:
+    explicit RemotePiecesBar(bool availability, QWidget *parent)
+        : QProgressBar(parent), m_availability(availability)
+    {
+        setTextVisible(false);
+        setRange(0, 1000);
+        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        setMinimumSize(64, 14);
+        clearPieces();
+    }
+
+    void clearPieces()
+    {
+        if (!m_pieces.isEmpty()) m_pieces.clear();
+        m_maximum = 0;
+        setProperty("pieceCount", 0);
+        setToolTip(m_availability ? tr("Piece availability is unavailable.")
+            : tr("Overall progress (piece data unavailable)."));
+        update();
+    }
+
+    bool setPieces(const QJsonArray &values)
+    {
+        QList<int> pieces;
+        pieces.reserve(values.size());
+        int maximum = 0;
+        for (const auto &value : values)
+        {
+            const auto number = value.toInteger(-1);
+            if (number < 0 || number > (m_availability ? 2147483647 : 2))
+            {
+                clearPieces();
+                return false;
+            }
+            pieces.append(static_cast<int>(number));
+            maximum = qMax(maximum, static_cast<int>(number));
+        }
+        if (pieces.isEmpty())
+        {
+            clearPieces();
+            return false;
+        }
+        m_pieces = std::move(pieces);
+        m_maximum = maximum;
+        setProperty("pieceCount", m_pieces.size());
+        const auto row = [](const QColor &color, const QString &text) {
+            return QStringLiteral("<tr><td width='20' bgcolor='%1'></td><td>%2</td></tr>")
+                .arg(color.name(), text.toHtmlEscaped());
+        };
+        const auto bg = palette().color(QPalette::Base);
+        const auto highlight = palette().color(QPalette::Highlight);
+        setToolTip(QStringLiteral("<table cellspacing='4'>")
+            + (m_availability
+                ? row(bg, tr("Unavailable pieces")) + row(highlight, tr("Available pieces"))
+                : row(bg, tr("Missing pieces")) + row(partialColor(), tr("Partial pieces"))
+                    + row(highlight, tr("Completed pieces")))
+            + QStringLiteral("</table>"));
+        update();
+        return true;
+    }
+
+protected:
+    void paintEvent(QPaintEvent *event) override
+    {
+        if (m_pieces.isEmpty() && !m_availability)
+        {
+            QProgressBar::paintEvent(event);
+            return;
+        }
+        QPainter painter(this);
+        const QRect area = rect().adjusted(1, 1, -1, -1);
+        if (area.isEmpty()) return;
+        const QColor bg = palette().color(QPalette::Base);
+        const QColor full = palette().color(QPalette::Highlight);
+        const QColor partial = partialColor();
+        painter.fillRect(rect(), palette().color(QPalette::Dark));
+        painter.fillRect(area, bg);
+        if (m_pieces.isEmpty()) return;
+        // Weighted pixel coverage preserves relative distribution for large
+        // piece arrays. Availability is normalized to its peak, as upstream.
+        const double scale = static_cast<double>(m_pieces.size()) / area.width();
+        for (int x = 0; x < area.width(); ++x)
+        {
+            const double from = x * scale;
+            const double to = qMin(static_cast<double>(m_pieces.size()), (x + 1) * scale);
+            double complete = 0, downloading = 0;
+            for (qsizetype i = static_cast<qsizetype>(from); i < m_pieces.size() && i < to; ++i)
+            {
+                const double weight = qMax(0.0, qMin(to, static_cast<double>(i + 1))
+                    - qMax(from, static_cast<double>(i)));
+                const int piece = m_pieces.at(i);
+                if (m_availability)
+                    complete += m_maximum > 0 ? weight * piece / m_maximum : 0;
+                else if (piece == 2) complete += weight;
+                else if (piece == 1) downloading += weight;
+            }
+            const double a = qBound(0.0, complete / scale, 1.0);
+            const double b = qBound(0.0, downloading / scale, 1.0 - a);
+            const auto mix = [&](int base, int done, int pending) {
+                return qRound(base * (1 - a - b) + done * a + pending * b);
+            };
+            const QColor color(mix(bg.red(), full.red(), partial.red()),
+                mix(bg.green(), full.green(), partial.green()),
+                mix(bg.blue(), full.blue(), partial.blue()));
+            painter.fillRect(area.left() + x, area.top(), 1, area.height(), color);
+        }
+    }
+
+private:
+    QColor partialColor() const
+    {
+        const auto full = palette().color(QPalette::Highlight);
+        return QColor::fromHsl(120, full.hslSaturation(), full.lightness());
+    }
+    const bool m_availability;
+    QList<int> m_pieces;
+    int m_maximum = 0;
+};
+
 class SpeedGraphWidget final : public QWidget
 {
 public:
@@ -645,9 +768,8 @@ TorrentDetailsWidget::TorrentDetailsWidget(QWidget *parent)
     m_speedGraph = new SpeedGraphWidget(m_ui->pageSpeed);
     m_ui->speedLayout->addWidget(m_speedGraph);
 
-    // The upstream layout reserves a spot for its original piece bar.
-    // Replace only that local-engine-dependent widget with Qt's native bar.
-    m_progressBar = new QProgressBar(this);
+    // Use the original native layout with remote, palette-aware piece strips.
+    m_progressBar = new RemotePiecesBar(false, this);
     m_progressBar->setObjectName(QStringLiteral("detailsProgressBar"));
     m_progressBar->setRange(0, 1000);
     QLayout *layout = m_ui->tempProgressBarArea->parentWidget()->layout();
@@ -659,10 +781,15 @@ TorrentDetailsWidget::TorrentDetailsWidget(QWidget *parent)
     }
     else
         m_ui->verticalLayout->insertWidget(0, m_progressBar);
-    // Piece availability requires a separate piece-level API request.
-    // Do not display a meaningless placeholder bar for it.
-    m_ui->labelPiecesAvailability->hide();
+    m_ui->groupBarLayout->setColumnStretch(1, 1);
+    m_availabilityBar = new RemotePiecesBar(true, this);
+    m_availabilityBar->setObjectName(QStringLiteral("detailsAvailabilityBar"));
+    if (QLayoutItem *removed = layout ? layout->replaceWidget(
+            m_ui->tempAvailabilityBarArea, m_availabilityBar) : nullptr)
+        delete removed;
     m_ui->tempAvailabilityBarArea->hide();
+    m_ui->labelPiecesAvailability->hide();
+    m_availabilityBar->hide();
     m_ui->labelAverageAvailabilityVal->hide();
 
     resetPages();
@@ -717,6 +844,12 @@ void TorrentDetailsWidget::resetPages()
     })
         setValue(name, QStringLiteral("—"));
     m_progressBar->setValue(0);
+    m_progressBar->clearPieces();
+    m_availabilityBar->clearPieces();
+    m_ui->labelPiecesAvailability->hide();
+    m_availabilityBar->hide();
+    m_ui->labelAverageAvailabilityVal->hide();
+    setValue("labelAverageAvailabilityVal", QStringLiteral("—"));
     m_trackerTiersKnown = false;
     m_trackers->clear();
     updateTrackerTierButtons();
@@ -737,6 +870,13 @@ void TorrentDetailsWidget::setSelection(const QString &hash, const QJsonObject &
         resetPages();
     }
     m_summary = summary;
+    if (!wantsPieceAvailability())
+    {
+        if (!m_availabilityBar->isHidden()) m_availabilityBar->clearPieces();
+        m_availabilityBar->hide();
+        m_ui->labelPiecesAvailability->hide();
+        m_ui->labelAverageAvailabilityVal->hide();
+    }
     m_ui->filesList->setRemoteRoots(summary.value(QStringLiteral("save_path")).toString(),
                                    summary.value(QStringLiteral("content_path")).toString());
     if (hash.isEmpty())
@@ -750,6 +890,15 @@ void TorrentDetailsWidget::setSelection(const QString &hash, const QJsonObject &
              summary.value(QStringLiteral("infohash_v2")).toString(QStringLiteral("—")));
     setValue("labelSavePathVal",
              summary.value(QStringLiteral("save_path")).toString(QStringLiteral("—")));
+}
+
+bool TorrentDetailsWidget::wantsPieceAvailability() const
+{
+    const auto state = m_summary.value(QStringLiteral("state")).toString();
+    const auto progress = m_summary.value(QStringLiteral("progress"));
+    return !m_hash.isEmpty() && progress.isDouble() && progress.toDouble() < 1.0
+        && (state == QLatin1String("downloading") || state == QLatin1String("stalledDL")
+            || state == QLatin1String("forcedDL"));
 }
 
 void TorrentDetailsWidget::setDateFormat(const QString &pattern)
@@ -781,7 +930,13 @@ void TorrentDetailsWidget::displayGeneral(const QJsonObject &p)
     if (const auto v = p.value(QStringLiteral("popularity")); v.isDouble())
         setValue("labelPopularityVal", QLocale().toString(v.toDouble(), 'f', 2));
     setValue("labelTotalSizeVal", sizeText(p.value(QStringLiteral("total_size"))));
-    setValue("labelTotalPiecesVal", numberText(p.value(QStringLiteral("pieces_num"))));
+    const auto count = p.value(QStringLiteral("pieces_num"));
+    const auto size = p.value(QStringLiteral("piece_size"));
+    const auto have = p.value(QStringLiteral("pieces_have"));
+    setValue("labelTotalPiecesVal", count.toInteger(-1) > 0 && size.toInteger(-1) > 0
+        && have.toInteger(-1) >= 0 && have.toInteger() <= count.toInteger()
+        ? tr("%1 x %2 (have %3)").arg(numberText(count), sizeText(size), numberText(have))
+        : numberText(count));
     setValue("labelCreatedByVal", p.value(QStringLiteral("created_by")).toString(QStringLiteral("—")));
     setValue("labelAddedOnVal", dateText(p.value(QStringLiteral("addition_date")), m_dateFormat));
     setValue("labelCompletedOnVal", dateText(p.value(QStringLiteral("completion_date")), m_dateFormat));
@@ -792,8 +947,10 @@ void TorrentDetailsWidget::displayGeneral(const QJsonObject &p)
              p.value(QStringLiteral("save_path")).toString(
                  m_summary.value(QStringLiteral("save_path")).toString(QStringLiteral("—"))));
     setValue("labelCommentVal", p.value(QStringLiteral("comment")).toString(QStringLiteral("—")));
-    // The native UI also has a separate per-piece availability strip. This
-    // is deliberately hidden until piece-level data is implemented.
+    const auto copies = p.value(QStringLiteral("availability"));
+    setValue("labelAverageAvailabilityVal", copies.isDouble() && copies.toDouble() >= 0
+        && std::isfinite(copies.toDouble()) ? QLocale().toString(copies.toDouble(), 'f', 3)
+        : QStringLiteral("—"));
 }
 
 void TorrentDetailsWidget::setTrackerTierEditingSupported(bool supported)
@@ -1331,8 +1488,21 @@ void TorrentDetailsWidget::chooseFilePriorities(int priority, bool allFiles)
 void TorrentDetailsWidget::displayDetails(const QString &hash, int tab,
                                          const QJsonValue &data)
 {
-    if (hash != m_hash || tab != m_currentTab)
+    if (hash != m_hash) return;
+    if (tab == 6 || tab == 7)
+    {
+        if (m_currentTab != 0 || !isVisible()) return;
+        if (tab == 6) m_progressBar->setPieces(data.toArray());
+        else if (wantsPieceAvailability())
+        {
+            const bool available = m_availabilityBar->setPieces(data.toArray());
+            m_availabilityBar->setVisible(available);
+            m_ui->labelPiecesAvailability->setVisible(available);
+            m_ui->labelAverageAvailabilityVal->setVisible(available);
+        }
         return;
+    }
+    if (tab != m_currentTab) return;
     m_error->hide();
     switch (tab)
     {
@@ -1347,8 +1517,21 @@ void TorrentDetailsWidget::displayDetails(const QString &hash, int tab,
 
 void TorrentDetailsWidget::displayError(const QString &hash, int tab, const QString &reason)
 {
-    if (hash != m_hash || tab != m_currentTab)
+    if (hash != m_hash) return;
+    if (tab == 6 || tab == 7)
+    {
+        if (m_currentTab != 0 || !isVisible()) return;
+        if (tab == 6) m_progressBar->clearPieces();
+        else
+        {
+            m_availabilityBar->clearPieces();
+            m_availabilityBar->hide();
+            m_ui->labelPiecesAvailability->hide();
+            m_ui->labelAverageAvailabilityVal->hide();
+        }
         return;
+    }
+    if (tab != m_currentTab) return;
     if (tab == 1)
     {
         m_trackerTiersKnown = false;
