@@ -36,6 +36,7 @@
 #include <QGuiApplication>
 #include <QPushButton>
 #include <QRandomGenerator>
+#include <QRegularExpression>
 #include <limits>
 #include <type_traits>
 #include <QScrollArea>
@@ -65,6 +66,12 @@
 
 namespace
 {
+const QSet<QString> webUISecurityKeys{
+    "web_ui_secure_cookie_enabled", "web_ui_host_header_validation_enabled",
+    "web_ui_domain_list", "web_ui_use_custom_http_headers_enabled",
+    "web_ui_custom_http_headers", "web_ui_reverse_proxy_enabled",
+    "web_ui_reverse_proxies_list"
+};
 // Both supported upstream generations normalize nonpositive connection
 // and upload-slot limits to -1. Normalize only integral JSON numbers,
 // never missing, fractional, out-of-range or nonnumeric values.
@@ -793,16 +800,27 @@ void RemotePreferencesDialog::bindWebUIControls()
     m_ui->lblAltWebUIList->setToolTip(alternateTip);
     bindRemoteControl("web_ui_clickjacking_protection_enabled", m_ui->checkClickjacking);
     bindRemoteControl("web_ui_csrf_protection_enabled", m_ui->checkCSRFProtection);
-    // These settings can reject the currently used HTTP connection or change
-    // reverse-proxy authentication. Read live values now; edit in the next
-    // checkpoint together with the endpoint/credential recovery workflow.
-    bindRemoteControl("web_ui_secure_cookie_enabled", m_ui->checkSecureCookie, locked, connectionTip);
-    bindRemoteControl("web_ui_host_header_validation_enabled", m_ui->groupHostHeaderValidation, locked, connectionTip);
-    bindRemoteControl("web_ui_domain_list", m_ui->textServerDomains, locked, connectionTip);
-    bindRemoteControl("web_ui_use_custom_http_headers_enabled", m_ui->groupWebUIAddCustomHTTPHeaders, locked, connectionTip);
-    bindRemoteControl("web_ui_custom_http_headers", m_ui->textWebUICustomHTTPHeaders, locked, connectionTip);
-    bindRemoteControl("web_ui_reverse_proxy_enabled", m_ui->groupEnableReverseProxySupport, locked, connectionTip);
-    bindRemoteControl("web_ui_reverse_proxies_list", m_ui->textTrustedReverseProxiesList, locked, connectionTip);
+    const auto security = [this] { return Remote::ServerAddress::parse(m_webUIProfile.url).has_value(); };
+    bindRemoteControl("web_ui_secure_cookie_enabled", m_ui->checkSecureCookie, security,
+        tr("Request secure session cookies on trustworthy origins (HTTPS or localhost). A fresh connection will verify continued access."));
+    bindRemoteControl("web_ui_host_header_validation_enabled", m_ui->groupHostHeaderValidation, security,
+        tr("Validate the server's HTTP Host header to protect against DNS rebinding."));
+    bindRemoteControl("web_ui_domain_list", m_ui->textServerDomains, [this, security] {
+        return security() && remoteFieldAvailable("web_ui_host_header_validation_enabled")
+            && m_ui->groupHostHeaderValidation->isChecked();
+    }, tr("Allowed server domain names, separated by semicolons. Wildcards (*) are supported."));
+    bindRemoteControl("web_ui_use_custom_http_headers_enabled", m_ui->groupWebUIAddCustomHTTPHeaders, security,
+        tr("Set custom response headers on the server. These may affect browser security or API connectivity."));
+    bindRemoteControl("web_ui_custom_http_headers", m_ui->textWebUICustomHTTPHeaders, [this, security] {
+        return security() && remoteFieldAvailable("web_ui_use_custom_http_headers_enabled")
+            && m_ui->groupWebUIAddCustomHTTPHeaders->isChecked();
+    }, tr("One Header: value pair per line."));
+    bindRemoteControl("web_ui_reverse_proxy_enabled", m_ui->groupEnableReverseProxySupport, security,
+        tr("Allow the server to use forwarded client addresses from explicitly trusted reverse proxies."));
+    bindRemoteControl("web_ui_reverse_proxies_list", m_ui->textTrustedReverseProxiesList, [this, security] {
+        return security() && remoteFieldAvailable("web_ui_reverse_proxy_enabled")
+            && m_ui->groupEnableReverseProxySupport->isChecked();
+    }, tr("Trusted reverse-proxy IP addresses or CIDR subnets, separated by semicolons. Only trust proxies you control."));
 
     // Dynamic DNS can change the hostname through which the client connects.
     // Expose its current server configuration, but defer writes for now.
@@ -2219,7 +2237,9 @@ void RemotePreferencesDialog::populateRemoteFields(const QJsonObject &values,
     for (const char *key : {"web_ui_address", "web_ui_port", "use_https", "web_ui_https_cert_path",
              "web_ui_https_key_path", "web_ui_username", "bypass_local_auth",
              "bypass_auth_subnet_whitelist_enabled", "web_ui_reverse_proxy_enabled",
-             "web_ui_secure_cookie_enabled", "web_ui_domain_list", "web_ui_host_header_validation_enabled"})
+             "web_ui_secure_cookie_enabled", "web_ui_domain_list", "web_ui_host_header_validation_enabled",
+             "web_ui_use_custom_http_headers_enabled", "web_ui_custom_http_headers",
+             "web_ui_reverse_proxies_list", "bypass_auth_subnet_whitelist"})
         if (values.contains(QLatin1String(key))) m_webUIBaseline.insert(QLatin1String(key), values.value(QLatin1String(key)));
     const auto address = Remote::ServerAddress::parse(m_webUIProfile.url);
     m_webUIDirect = address && address->baseUrl().path() == QLatin1String("/")
@@ -2299,9 +2319,6 @@ QJsonObject RemotePreferencesDialog::remoteChanges() const
             continue;
         static const QSet<QString> webUIReadOnly{
             "web_ui_api_key",
-            "web_ui_secure_cookie_enabled", "web_ui_host_header_validation_enabled",
-            "web_ui_domain_list", "web_ui_use_custom_http_headers_enabled", "web_ui_custom_http_headers",
-            "web_ui_reverse_proxy_enabled", "web_ui_reverse_proxies_list",
             "dyndns_enabled", "dyndns_service", "dyndns_domain", "dyndns_username", "dyndns_password"
         };
         if (webUIReadOnly.contains(field.key)) continue;
@@ -2887,7 +2904,7 @@ void RemotePreferencesDialog::applyChanges(bool closeAfter)
     const QSet<QString> transitionKeys{"web_ui_address", "web_ui_port", "use_https",
         "web_ui_https_cert_path", "web_ui_https_key_path", "web_ui_username", "web_ui_password"};
     for (auto it = changes.constBegin(); it != changes.constEnd(); ++it)
-        if (transitionKeys.contains(it.key()))
+        if (transitionKeys.contains(it.key()) || webUISecurityKeys.contains(it.key()))
         {
             applyWebUITransition(changes);
             return;
@@ -2945,8 +2962,11 @@ void RemotePreferencesDialog::applyWebUITransition(const QJsonObject &changes)
 {
     const QSet<QString> allowed{"web_ui_address", "web_ui_port", "use_https",
         "web_ui_https_cert_path", "web_ui_https_key_path", "web_ui_username", "web_ui_password"};
+    bool securityOnly = false;
     for (auto it = changes.constBegin(); it != changes.constEnd(); ++it)
-        if (!allowed.contains(it.key()))
+        securityOnly |= webUISecurityKeys.contains(it.key());
+    for (auto it = changes.constBegin(); it != changes.constEnd(); ++it)
+        if (!(securityOnly ? webUISecurityKeys : allowed).contains(it.key()))
         {
             QMessageBox::warning(this, tr("Apply connection settings separately"),
                 tr("Revert the other remote edits and apply them separately from connection changes."));
@@ -2959,32 +2979,134 @@ void RemotePreferencesDialog::applyWebUITransition(const QJsonObject &changes)
             tr("Apply or revert local settings separately before changing the connection."));
         return;
     }
-    if (!m_webUIDirect || !m_remoteSession || !m_remoteSession->isConnected()) return;
+    if ((!securityOnly && !m_webUIDirect) || !m_remoteSession || !m_remoteSession->isConnected()) return;
+    const auto address = Remote::ServerAddress::parse(m_webUIProfile.url);
+    if (!address) return;
+    if (securityOnly)
+    {
+        const auto touches = [&changes](const char *flag, const char *value) {
+            return changes.contains(QLatin1String(flag)) || changes.contains(QLatin1String(value));
+        };
+        const auto invalid = [this](const QString &message) {
+            QMessageBox::warning(this, tr("Invalid WebUI security settings"), message);
+        };
+        if (touches("web_ui_host_header_validation_enabled", "web_ui_domain_list")
+            && m_ui->groupHostHeaderValidation->isChecked())
+        {
+            if (!remoteFieldAvailable("web_ui_domain_list"))
+            {
+                invalid(tr("The server does not expose its allowed domain list."));
+                return;
+            }
+            const auto domains = m_ui->textServerDomains->text().split(QLatin1Char(';'), Qt::SkipEmptyParts);
+            for (const QString &domain : domains)
+            {
+                const QString entry = domain.trimmed();
+                if (entry.contains(QRegularExpression(QStringLiteral("[\\s/\\\\?#]"))))
+                {
+                    invalid(tr("Enter domain names or wildcard patterns separated by semicolons, not URLs."));
+                    return;
+                }
+            }
+            // A direct hostname is not the listener's literal IP. Avoid
+            // knowingly excluding it before sending a potentially locking write.
+            QHostAddress literal;
+            const QString host = address->baseUrl().host();
+            if (m_webUIDirect && !literal.setAddress(host))
+            {
+                bool match = false;
+                for (const QString &domain : domains)
+                {
+                    const QRegularExpression pattern(
+                        QRegularExpression::wildcardToRegularExpression(domain.trimmed(), QRegularExpression::NonPathWildcardConversion),
+                        QRegularExpression::CaseInsensitiveOption);
+                    match |= pattern.match(host).hasMatch();
+                }
+                if (!match)
+                {
+                    invalid(tr("The allowed domains do not include the current server hostname (%1).").arg(host));
+                    return;
+                }
+            }
+        }
+        if (touches("web_ui_use_custom_http_headers_enabled", "web_ui_custom_http_headers")
+            && m_ui->groupWebUIAddCustomHTTPHeaders->isChecked())
+        {
+            if (!remoteFieldAvailable("web_ui_custom_http_headers"))
+            {
+                invalid(tr("The server does not expose its custom HTTP headers."));
+                return;
+            }
+            const QRegularExpression name(QStringLiteral("^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"));
+            for (const QString &line : m_ui->textWebUICustomHTTPHeaders->toPlainText().split(QLatin1Char('\n')))
+            {
+                if (line.trimmed().isEmpty()) continue;
+                const qsizetype colon = line.indexOf(QLatin1Char(':'));
+                if (colon <= 0 || !name.match(line.left(colon).trimmed()).hasMatch()
+                    || line.mid(colon + 1).contains(QRegularExpression(QStringLiteral("[\\x00-\\x08\\x0b-\\x1f\\x7f]"))))
+                {
+                    invalid(tr("Enter a valid HTTP header name and value separated by a colon on each line."));
+                    return;
+                }
+            }
+        }
+        if (touches("web_ui_reverse_proxy_enabled", "web_ui_reverse_proxies_list")
+            && m_ui->groupEnableReverseProxySupport->isChecked())
+        {
+            bool any = false;
+            if (!remoteFieldAvailable("web_ui_reverse_proxies_list"))
+            {
+                invalid(tr("The server does not expose its trusted proxy list."));
+                return;
+            }
+            for (const QString &value : m_ui->textTrustedReverseProxiesList->text().split(QLatin1Char(';'), Qt::SkipEmptyParts))
+            {
+                const QString entry = value.trimmed();
+                if (entry.isEmpty()) continue;
+                QHostAddress ip;
+                const auto subnet = QHostAddress::parseSubnet(entry);
+                if (!(ip.setAddress(entry) || (entry.contains(QLatin1Char('/')) && !subnet.first.isNull() && subnet.second >= 0)))
+                {
+                    invalid(tr("Enter valid proxy IP addresses or CIDR subnets separated by semicolons."));
+                    return;
+                }
+                any = true;
+            }
+            if (!any)
+            {
+                invalid(tr("Specify at least one trusted proxy IP address or subnet."));
+                return;
+            }
+        }
+    }
     const QString binding = m_ui->textWebUIAddress->text();
     QHostAddress ip;
-    const QString username = m_ui->textWebUIUsername->text();
-    const bool https = m_ui->checkWebUIHttps->isChecked();
+    const QString username = securityOnly ? m_webUIProfile.username : m_ui->textWebUIUsername->text();
+    const bool https = securityOnly ? address->baseUrl().scheme() == QLatin1String("https") : m_ui->checkWebUIHttps->isChecked();
     const bool changePassword = changes.contains("web_ui_password");
     const QString newPassword = changes.value("web_ui_password").toString();
-    if ((binding != QLatin1String("*") && !ip.setAddress(binding))
+    if (!securityOnly && ((binding != QLatin1String("*") && !ip.setAddress(binding))
         || username.size() < 3 || username.contains(QLatin1Char(':')) || username.contains(QChar::Null)
         || (changePassword && (newPassword.size() < 6 || newPassword.contains(QChar::Null)))
         || (https && (m_ui->textWebUIHttpsCert->text().trimmed().isEmpty()
-                     || m_ui->textWebUIHttpsKey->text().trimmed().isEmpty())))
+                     || m_ui->textWebUIHttpsKey->text().trimmed().isEmpty()))))
     {
         QMessageBox::warning(this, tr("Invalid connection settings"),
             tr("Enter a valid bind IP or *, a username of at least three characters without a colon, a new password of at least six characters if changing it, and server certificate/key paths for HTTPS."));
         return;
     }
-    const auto address = Remote::ServerAddress::parse(m_webUIProfile.url);
-    if (!address) return;
     QUrl candidate = address->baseUrl();
-    candidate.setScheme(https ? QStringLiteral("https") : QStringLiteral("http"));
-    candidate.setPort(m_ui->spinWebUIPort->value());
+    if (!securityOnly)
+    {
+        candidate.setScheme(https ? QStringLiteral("https") : QStringLiteral("http"));
+        candidate.setPort(m_ui->spinWebUIPort->value());
+    }
     if (QMessageBox::question(this, tr("Change server connection"),
-        tr("This will change the selected server's WebUI settings and close Preferences after a verified reconnect. "
-           "The new connection will use %1. Ensure this is the same server and that you have independent access to restore its settings if the change fails. "
-           "The saved profile will not be changed until a fresh connection confirms the requested values.%2\n\nContinue?")
+        (securityOnly
+            ? tr("These WebUI security settings can interrupt access or affect other clients. Trust only proxies you control. A fresh login at %1 will verify continued access; the saved endpoint and credentials will not be changed. Ensure you have independent recovery access.%2\n\nContinue?")
+            : tr("This will change the selected server's WebUI settings and close Preferences after a verified reconnect. "
+                 "The new connection will use %1. Ensure this is the same server and that you have independent access to restore its settings if the change fails. "
+                 "The saved profile will not be changed until a fresh connection confirms the requested values.%2\n\nContinue?"))
             .arg(candidate.toString(), https ? QString() : tr("\n\nHTTP transmits login credentials without TLS protection.")),
         QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
         return;
@@ -3006,8 +3128,12 @@ void RemotePreferencesDialog::applyWebUITransition(const QJsonObject &changes)
     }
     if (!m_remoteSession || !m_remoteSession->isConnected() || !m_remotePreferencesLoaded) return;
     m_webUICandidate = m_webUIProfile;
-    m_webUICandidate.url = candidate.toString(QUrl::FullyEncoded);
-    m_webUICandidate.username = username;
+    if (!securityOnly)
+    {
+        m_webUICandidate.url = candidate.toString(QUrl::FullyEncoded);
+        m_webUICandidate.username = username;
+    }
+    m_webUISecurityOnly = securityOnly;
     m_webUIExpected = m_webUIBaseline;
     for (auto it = changes.constBegin(); it != changes.constEnd(); ++it)
         if (it.key() != QLatin1String("web_ui_password")) m_webUIExpected.insert(it.key(), it.value());
@@ -3098,7 +3224,8 @@ void RemotePreferencesDialog::probeWebUITransition()
             }
             dialog->m_ui->textWebUIPassword->clear();
             emit dialog->webUITransitionVerified(dialog->m_webUICandidate.url,
-                dialog->m_webUICandidate.username, dialog->m_webUIPassword, dialog->m_webUIFingerprint);
+                dialog->m_webUICandidate.username, dialog->m_webUIPassword, dialog->m_webUIFingerprint,
+                dialog->m_webUISecurityOnly);
             dialog->m_webUIPassword.clear();
             // Logout the temporary session before the main window reconnects.
             QObject::disconnect(probe, nullptr, dialog.data(), nullptr);

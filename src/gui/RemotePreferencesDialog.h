@@ -48,7 +48,7 @@ public:
 signals:
     void localBehaviorApplied();
     void webUITransitionVerified(const QString &url, const QString &username,
-                                 const QString &password, const QString &fingerprint);
+                                 const QString &password, const QString &fingerprint, bool securityOnly);
 
 private:
     void buildRemotePathsPage(const QString &preferredProfileId);
@@ -176,6 +176,7 @@ private:
     bool m_webUIPasswordChanged = false;
     bool m_webUIBypassPossible = false;
     bool m_webUIWriteAcknowledged = false;
+    bool m_webUISecurityOnly = false;
     QPointer<Remote::RemoteSession> m_webUIProbe;
     bool m_additionDirty = false;
     QStandardItemModel *m_watchedFoldersModel = nullptr;

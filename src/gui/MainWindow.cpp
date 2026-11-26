@@ -1243,9 +1243,11 @@ void MainWindow::openPreferences(const std::shared_ptr<SessionContext> &server)
     connect(&dialog, &RemotePreferencesDialog::localBehaviorApplied,
             this, &MainWindow::applyLocalBehaviorPreferences);
     QString newUrl, newUsername, newPassword, fingerprint;
+    bool securityOnly = false;
     connect(&dialog, &RemotePreferencesDialog::webUITransitionVerified, this,
-        [&](const QString &url, const QString &username, const QString &password, const QString &pin) {
+        [&](const QString &url, const QString &username, const QString &password, const QString &pin, bool policyOnly) {
             newUrl = url; newUsername = username; newPassword = password; fingerprint = pin;
+            securityOnly = policyOnly;
         });
     trackDialogGeometry(dialog, QStringLiteral("Preferences"));
     const int result = dialog.exec();
@@ -1256,7 +1258,7 @@ void MainWindow::openPreferences(const std::shared_ptr<SessionContext> &server)
         profile.url = newUrl;
         profile.username = newUsername;
         Remote::ProfileStore store(*m_settings);
-        if (!store.saveVerifiedWebUITransition(profile, previous))
+        if (!securityOnly && !store.saveVerifiedWebUITransition(profile, previous))
             QMessageBox::warning(this, tr("Cannot save changed connection"),
                 tr("The new connection was verified, but the local profile could not be updated. Use Reconnect to enter the new settings."));
         else if (!fingerprint.isEmpty() && !store.trustCertificate(profile, fingerprint))
@@ -1266,7 +1268,7 @@ void MainWindow::openPreferences(const std::shared_ptr<SessionContext> &server)
         {
             // Even a password-only change must create a fresh login.
             disconnectConnection(server, tr("WebUI connection settings changed."));
-            connectToProfile(profile, newPassword, previous);
+            connectToProfile(profile, newPassword, previous, securityOnly);
         }
         newPassword.clear();
     }
@@ -2166,7 +2168,8 @@ void MainWindow::showConnectionDialog(const QString &profileId)
 
 void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
                                   const QString &password,
-                                  const Remote::ServerProfile &previousWebUIProfile)
+                                  const Remote::ServerProfile &previousWebUIProfile,
+                                  bool preserveCredential)
 {
     // A live profile keeps its session; an offline profile or edited
     // endpoint receives a fresh session/model at the same tab position.
@@ -2976,7 +2979,7 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
         });
 
     connect(session, &Remote::RemoteSession::connected, this,
-        [this, connection, profile, password, previousWebUIProfile](const QString &version,
+        [this, connection, profile, password, previousWebUIProfile, preserveCredential](const QString &version,
                                                const QString &apiVersion) {
             if (!containsConnection(connection))
                 return;
@@ -2992,7 +2995,7 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
             if (activeConnection() == connection)
                 updateActiveUi();
 
-            if (profile.rememberPassword && !password.isEmpty() && m_vault->available())
+            if (!preserveCredential && profile.rememberPassword && !password.isEmpty() && m_vault->available())
             {
                 QPointer<MainWindow> safeWindow(this);
                 m_vault->write(profile, password, [safeWindow, profile, previousWebUIProfile](const QString &error) {

@@ -59,7 +59,7 @@ private:
     void toggleWindowFromTray();
     void quitCompletely();
     void connectToProfile(const Remote::ServerProfile &profile, const QString &password,
-                          const Remote::ServerProfile &previousWebUIProfile = {});
+                          const Remote::ServerProfile &previousWebUIProfile = {}, bool preserveCredential = false);
     void disconnectCurrentServer();
     void showConnectionDialog(const QString &profileId = {});
     QString disconnectedStatus(const SessionContext &connection) const;
