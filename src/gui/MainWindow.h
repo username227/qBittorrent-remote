@@ -79,6 +79,7 @@ private:
     void updateStatusBarFieldWidths();
     void updateStatusBarIndicators();
     void updateTransferRates(const ServerPane *pane);
+    void refreshWindowTitle();
     QStringList selectedTorrentHashes() const;
     void openSelectedTorrentDestinations();
     void removeRemoteTorrents(const std::shared_ptr<SessionContext> &server, const QStringList &hashes);

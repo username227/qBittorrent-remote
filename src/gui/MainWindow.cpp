@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/MainWindow.h"
+#include "RemoteBuildVersion.h"
 #include "gui/CompletionNotifier.h"
 #include "gui/ServerPane.h"
 #include "gui/TorrentModel.h"
@@ -654,6 +655,9 @@ void MainWindow::setupActions()
         {m_ui->actionBottomQueuePos, "go-bottom"},
         {m_ui->actionCreateTorrent, "torrent-creator"},
         {m_ui->actionStatistics, "view-statistics"},
+        {m_ui->actionPauseSession, "pause-session"},
+        {m_ui->actionResumeSession, "torrent-start"},
+        {m_ui->actionDocumentation, "help-contents"},
         {m_ui->actionOptions, "configure"},
         {m_ui->actionSetGlobalSpeedLimits, "speedometer"},
         {m_ui->actionExit, "application-exit"},
@@ -679,6 +683,37 @@ void MainWindow::setupActions()
         action->setEnabled(false);
 
     m_ui->actionLock->setVisible(false);
+    m_ui->actionPauseSession->setVisible(true);
+    m_ui->actionResumeSession->setVisible(false);
+    m_ui->actionPauseSession->setEnabled(false);
+    m_ui->actionResumeSession->setEnabled(false);
+    m_ui->actionOpen->setShortcut(QKeySequence::Open);
+    m_ui->actionDownloadFromURL->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O));
+    m_ui->actionExit->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Q));
+    m_ui->actionCreateTorrent->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_N));
+    m_ui->actionOptions->setShortcut(QKeySequence(Qt::ALT | Qt::Key_O));
+    m_ui->actionStart->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_S));
+    m_ui->actionStop->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_P));
+    m_ui->actionDelete->setShortcut(QKeySequence::Delete);
+    m_ui->actionDelete->setShortcutContext(Qt::WidgetShortcut);
+    m_ui->actionIncreaseQueuePos->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Plus));
+    m_ui->actionDecreaseQueuePos->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Minus));
+    m_ui->actionTopQueuePos->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Plus));
+    m_ui->actionBottomQueuePos->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Minus));
+    m_ui->actionPauseSession->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_P));
+    m_ui->actionResumeSession->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
+    m_ui->actionDocumentation->setShortcut(QKeySequence::HelpContents);
+    const auto bindPause = [this](QAction *action, bool paused) {
+        connect(action, &QAction::triggered, this, [this, paused] {
+            const auto server = activeConnection();
+            if (!server || !server->connected || !server->session) return;
+            const auto state = server->pane->serverState().value("session_state");
+            if (!state.isBool() || state.toBool() == paused) return;
+            server->session->setSessionPaused(paused);
+        });
+    };
+    bindPause(m_ui->actionPauseSession, true);
+    bindPause(m_ui->actionResumeSession, false);
     // The original native tray actions are scoped to the currently selected
     // connected server. They are not local torrent-engine actions.
     connect(m_ui->actionUseAlternativeSpeedLimits, &QAction::triggered, this,
@@ -731,16 +766,26 @@ void MainWindow::setupActions()
     m_ui->menuFile->addAction(m_ui->actionExit);
 
     m_ui->menuEdit->clear();
-    m_ui->menuEdit->addActions({
-        m_ui->actionStart, m_ui->actionStop, m_ui->actionDelete,
-        m_ui->actionTopQueuePos, m_ui->actionIncreaseQueuePos,
-        m_ui->actionDecreaseQueuePos, m_ui->actionBottomQueuePos
-    });
+    m_ui->menuEdit->addActions({m_ui->actionStart, m_ui->actionStop});
+    m_ui->menuEdit->addSeparator();
+    m_ui->menuEdit->addAction(m_ui->actionDelete);
+    m_ui->menuEdit->addSeparator();
+    m_ui->menuEdit->addActions({m_ui->actionTopQueuePos, m_ui->actionIncreaseQueuePos,
+        m_ui->actionDecreaseQueuePos, m_ui->actionBottomQueuePos});
+    m_ui->menuEdit->addSeparator();
+    m_ui->menuEdit->addActions({m_ui->actionPauseSession, m_ui->actionResumeSession});
 
     m_ui->menuView->clear();
     m_ui->menuView->addAction(m_ui->actionTopToolBar);
     m_ui->menuView->addAction(m_ui->actionShowStatusbar);
     m_ui->menuView->addAction(m_ui->actionShowFiltersSidebar);
+    m_ui->menuView->addAction(m_ui->actionSpeedInTitleBar);
+    m_ui->actionSpeedInTitleBar->setChecked(m_settings->value("Layout/SpeedInTitleBar", false).toBool());
+    connect(m_ui->actionSpeedInTitleBar, &QAction::toggled, this, [this](bool enabled) {
+        m_settings->setValue("Layout/SpeedInTitleBar", enabled);
+        refreshWindowTitle();
+    });
+    m_ui->menuView->addSeparator();
     m_rssAction = m_ui->menuView->addAction(tr("RSS Reader"));
     m_rssAction->setObjectName(QStringLiteral("actionRemoteRSS"));
     m_rssAction->setCheckable(true);
@@ -785,16 +830,16 @@ void MainWindow::setupActions()
     m_increaseFontAction = fontMenu->addAction(tr("Increase Font Size"));
     m_increaseFontAction->setObjectName(QStringLiteral("fontSizeIncrease"));
     m_increaseFontAction->setShortcuts({
-        QKeySequence(Qt::CTRL | Qt::Key_Plus),
-        QKeySequence(Qt::CTRL | Qt::Key_Equal)
+        QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_Plus),
+        QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_Equal)
     });
     m_decreaseFontAction = fontMenu->addAction(tr("Decrease Font Size"));
     m_decreaseFontAction->setObjectName(QStringLiteral("fontSizeDecrease"));
-    m_decreaseFontAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Minus));
+    m_decreaseFontAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_Minus));
     fontMenu->addSeparator();
     m_resetFontAction = fontMenu->addAction(tr("Reset Font Size"));
     m_resetFontAction->setObjectName(QStringLiteral("fontSizeReset"));
-    m_resetFontAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_0));
+    m_resetFontAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_0));
 
     connect(m_increaseFontAction, &QAction::triggered, this,
             [this]() { applyFontPointSize(m_fontPointSize + 1); });
@@ -828,6 +873,11 @@ void MainWindow::setupActions()
     });
 
     m_ui->menuHelp->clear();
+    m_ui->menuHelp->addAction(m_ui->actionDocumentation);
+    connect(m_ui->actionDocumentation, &QAction::triggered, this, [] {
+        QDesktopServices::openUrl(QUrl(QStringLiteral("https://github.com/username227/qBittorrent-remote#readme")));
+    });
+    m_ui->menuHelp->addSeparator();
     m_ui->menuHelp->addAction(m_ui->actionAbout);
 
     m_ui->actionTopToolBar->setChecked(true);
@@ -860,10 +910,22 @@ void MainWindow::setupActions()
     connect(m_ui->actionAbout, &QAction::triggered, this, [this]()
     {
         QMessageBox dialog(QMessageBox::Information, tr("About qBittorrent Remote"),
-            tr("A native Qt desktop client for remote qBittorrent servers.\n"
-               "Live torrent synchronization uses each connected server's Web API."),
-            QMessageBox::Ok, this);
+            QString(), QMessageBox::Ok, this);
         dialog.setObjectName(QStringLiteral("aboutDialog"));
+        dialog.setIconPixmap(upstreamIcon("qbittorrent-tray").pixmap(64, 64));
+        dialog.setTextFormat(Qt::RichText);
+        dialog.setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::LinksAccessibleByMouse | Qt::LinksAccessibleByKeyboard);
+        dialog.setText(tr("<h2>qBittorrent Remote</h2><p>Version %1</p>"
+                          "<p>A native Qt desktop client for remote qBittorrent servers.</p>"
+                          "<p>Built with Qt %2 (runtime %3).</p>"
+                          "<p>Licensed under GPL-3.0-or-later. Based on the upstream "
+                          "qBittorrent interface; original copyright and license terms are retained.</p>"
+                          "<p><a href='https://github.com/username227/qBittorrent-remote'>Project repository</a>"
+                          " · <a href='https://github.com/username227/qBittorrent-remote/blob/master/LICENSE'>License</a>"
+                          "<br><a href='https://www.qbittorrent.org/'>Upstream qBittorrent</a>"
+                          " · <a href='https://wiki.qbittorrent.org/'>Upstream documentation</a></p>")
+            .arg(QStringLiteral(QBT_REMOTE_DISPLAY_VERSION), QStringLiteral(QT_VERSION_STR),
+                 QString::fromLatin1(qVersion())));
         trackDialogGeometry(dialog, QStringLiteral("About"));
         dialog.exec();
     });
@@ -1603,6 +1665,15 @@ void MainWindow::updateTorrentActionState()
     m_ui->actionDownloadFromURL->setEnabled(ready);
     m_ui->actionCreateTorrent->setEnabled(ready);
     m_ui->actionStatistics->setEnabled(ready);
+    const auto sessionState = ready ? server->pane->serverState().value("session_state") : QJsonValue();
+    const bool sessionSupported = ready && sessionState.isBool();
+    const bool paused = sessionSupported && sessionState.toBool();
+    // Preserve the native menu location even when this server cannot
+    // provide session control. Unknown state is not a running session.
+    m_ui->actionPauseSession->setVisible(!paused);
+    m_ui->actionPauseSession->setEnabled(sessionSupported && !paused);
+    m_ui->actionResumeSession->setVisible(paused);
+    m_ui->actionResumeSession->setEnabled(sessionSupported && paused);
     m_ui->actionOpenDestinationFolder->setEnabled(selected);
     for (QAction *action : {
         m_ui->actionDelete, m_ui->actionStart, m_ui->actionStop,
@@ -2010,6 +2081,28 @@ void MainWindow::updateTransferRates(const ServerPane *pane)
         pane ? pane->downloadRateText() : QStringLiteral("—")));
     m_uploadRateLabel->setText(tr("U: %1").arg(
         pane ? pane->uploadRateText() : QStringLiteral("—")));
+    refreshWindowTitle();
+}
+
+void MainWindow::refreshWindowTitle()
+{
+    QString title = tr("qBittorrent Remote");
+    const auto server = activeConnection();
+    if (server)
+    {
+        title += QStringLiteral(" — ") + server->profile.name;
+        if (!server->session)
+            title += tr(" (Disconnected)");
+        else if (server->connected)
+        {
+            if (server->pane->serverState().value("session_state").toBool())
+                title = tr("[PAUSED] %1").arg(title);
+            else if (m_ui->actionSpeedInTitleBar->isChecked())
+                title = tr("[D: %1, U: %2] %3").arg(server->pane->downloadRateText(),
+                    server->pane->uploadRateText(), title);
+        }
+    }
+    setWindowTitle(title);
 }
 
 void MainWindow::updateServerFreeSpace()
@@ -2068,12 +2161,10 @@ void MainWindow::updateActiveUi()
 
     if (!connection)
     {
-        setWindowTitle(tr("qBittorrent Remote"));
         m_ui->statusBar->showMessage(tr("Not connected to a server"));
     }
     else
     {
-        setWindowTitle(tr("qBittorrent Remote — %1").arg(connection->profile.name));
         if (ready)
             m_ui->statusBar->showMessage(
                 tr("Connected to %1 — qBittorrent %2 (Web API %3).")
@@ -2083,7 +2174,6 @@ void MainWindow::updateActiveUi()
                 tr("Connecting to %1...").arg(connection->profile.name));
         else
         {
-            setWindowTitle(tr("qBittorrent Remote — %1 (Disconnected)").arg(connection->profile.name));
             m_ui->statusBar->showMessage(disconnectedStatus(*connection));
         }
     }

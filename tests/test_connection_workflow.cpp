@@ -1,3 +1,4 @@
+#include "RemoteBuildVersion.h"
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/MainWindow.h"
 #include "gui/RemoteBanListDialog.h"
@@ -274,6 +275,16 @@ public:
                                     {QStringLiteral("full_update"), rid == 0},
                                     {QStringLiteral("torrents"), QJsonObject()},
                                     {QStringLiteral("server_state"), m_statusRates}
+                                }).toJson(QJsonDocument::Compact);
+                            }
+                            else if (m_sessionPauseDemo)
+                            {
+                                response = QJsonDocument(QJsonObject{
+                                    {"rid", rid + 1}, {"full_update", rid == 0},
+                                    {"torrents", QJsonObject()},
+                                    {"server_state", QJsonObject{{"session_state", m_sessionPaused},
+                                        {"dl_info_speed", m_sessionPaused ? 0 : 2048},
+                                        {"up_info_speed", m_sessionPaused ? 0 : 1024}}}
                                 }).toJson(QJsonDocument::Compact);
                             }
                             else if (m_trayDemo)
@@ -601,6 +612,13 @@ public:
                                     m_traySpeedLimits.insert(it.key(), it.value());
                                 response = "Ok.";
                             }
+                        }
+                        else if (m_sessionPauseDemo && hasCookie
+                                 && (path == "/api/v2/transfer/pauseSession" || path == "/api/v2/transfer/resumeSession"))
+                        {
+                            m_commands.append({path, body});
+                            m_sessionPaused = path == "/api/v2/transfer/pauseSession";
+                            code = 204;
                         }
                         else if (m_trayDemo && hasCookie
                                  && path.startsWith("/api/v2/transfer/"))
@@ -984,6 +1002,9 @@ public:
     void rejectPreferenceWrites(bool reject) { m_rejectPreferences = reject; }
     void ignorePreferenceWrites(bool ignore) { m_ignorePreferences = ignore; }
     bool trayAlternative() const { return m_trayAltMode; }
+    void enableSessionPauseDemo() { m_sessionPauseDemo = true; }
+    void setSessionPaused(bool paused) { m_sessionPaused = paused; }
+    bool sessionPaused() const { return m_sessionPaused; }
     void setTrayConnectionStatus(const QString &status) { m_trayConnectionStatus = status; }
     QJsonObject trayLimits() const { return m_traySpeedLimits; }
     void enableModernResponses()
@@ -1135,6 +1156,8 @@ private:
     QJsonObject m_statusRates;
     bool m_trayDemo = false;
     bool m_trayAltMode = false;
+    bool m_sessionPauseDemo = false;
+    bool m_sessionPaused = false;
     QString m_trayConnectionStatus = QStringLiteral("connected");
     QJsonObject m_traySpeedLimits;
     bool m_rssDemo = false;
@@ -2100,10 +2123,10 @@ private slots:
             initialSize = window.fontPointSize();
             QVERIFY(initialSize > 0);
             QCOMPARE(QApplication::font(), original);
-            QVERIFY(increase->shortcuts().contains(QKeySequence(Qt::CTRL | Qt::Key_Plus)));
-            QVERIFY(increase->shortcuts().contains(QKeySequence(Qt::CTRL | Qt::Key_Equal)));
-            QCOMPARE(decrease->shortcut(), QKeySequence(Qt::CTRL | Qt::Key_Minus));
-            QCOMPARE(reset->shortcut(), QKeySequence(Qt::CTRL | Qt::Key_0));
+            QVERIFY(increase->shortcuts().contains(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_Plus)));
+            QVERIFY(increase->shortcuts().contains(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_Equal)));
+            QCOMPARE(decrease->shortcut(), QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_Minus));
+            QCOMPARE(reset->shortcut(), QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_0));
 
             QVERIFY(!decrease->isEnabled());
             QVERIFY(!reset->isEnabled());
@@ -8709,6 +8732,84 @@ private slots:
         QTRY_COMPARE(tabs->count(), 1);
         QCOMPARE(tabs->tabText(0), QStringLiteral("Red seedbox"));
         QVERIFY(!tabs->widget(0)->isEnabled());
+    }
+
+    void nativeMenuActionsFollowServerSessionState()
+    {
+        DemoQbittorrentServer legacy(true), modern(true);
+        modern.setReportedVersions("v5.3.1", "2.16.2");
+        modern.enableSessionPauseDemo();
+        QVERIFY(legacy.start() && modern.start());
+        QTemporaryDir tmp;
+        QVERIFY(tmp.isValid());
+        QSettings settings(tmp.filePath("menu-parity.ini"), QSettings::IniFormat);
+        settings.setValue("Preferences/Advanced/RefreshInterval", 100);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        auto *pause = window.findChild<QAction *>("actionPauseSession");
+        auto *resume = window.findChild<QAction *>("actionResumeSession");
+        auto *speed = window.findChild<QAction *>("actionSpeedInTitleBar");
+        auto *docs = window.findChild<QAction *>("actionDocumentation");
+        auto *about = window.findChild<QAction *>("actionAbout");
+        QVERIFY(pause && resume && speed && docs && about);
+        QVERIFY(pause->isVisible() && !pause->isEnabled() && !resume->isVisible());
+        QCOMPARE(docs->shortcut(), QKeySequence(QKeySequence::HelpContents));
+        QCOMPARE(window.findChild<QAction *>("actionCreateTorrent")->shortcut(),
+                 QKeySequence(Qt::CTRL | Qt::Key_N));
+        QCOMPARE(window.findChild<QAction *>("actionIncreaseQueuePos")->shortcut(),
+                 QKeySequence(Qt::CTRL | Qt::Key_Plus));
+        QVERIFY(!window.findChild<QMenu *>("menuHelp")->actions().contains(
+            window.findChild<QAction *>("actionDonateMoney")));
+        openConnectDialog(window, legacy.url());
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains("Connected to"), 6000);
+        QVERIFY(pause->isVisible() && !pause->isEnabled() && !resume->isVisible());
+        openConnectDialog(window, modern.url(), false, true, true, "Modern");
+        QTRY_VERIFY_WITH_TIMEOUT(pause->isVisible() && pause->isEnabled(), 6000);
+        QVERIFY(!resume->isVisible());
+        speed->setChecked(true);
+        QVERIFY(window.windowTitle().contains("D:") && window.windowTitle().contains("Modern"));
+        QCOMPARE(settings.value("Layout/SpeedInTitleBar").toBool(), true);
+        const int before = modern.syncRequests();
+        pause->trigger();
+        QTRY_VERIFY_WITH_TIMEOUT(modern.sessionPaused() && resume->isVisible(), 6000);
+        QVERIFY(window.windowTitle().contains("[PAUSED]"));
+        QTRY_VERIFY_WITH_TIMEOUT(modern.syncRequests() > before, 6000);
+        QCOMPARE(modern.commandsFor("/api/v2/transfer/pauseSession"), 1);
+        QCOMPARE(legacy.commandsFor("/api/v2/transfer/pauseSession"), 0);
+        QVERIFY(window.statusBar()->currentMessage().contains("Connected to Modern"));
+        auto *tabs = window.findChild<QTabWidget *>("serverTabs");
+        QVERIFY(tabs);
+        tabs->setCurrentIndex(0);
+        QVERIFY(pause->isVisible() && !pause->isEnabled() && !resume->isVisible());
+        QVERIFY(!window.windowTitle().contains("[PAUSED]"));
+        tabs->setCurrentIndex(1);
+        QVERIFY(resume->isEnabled() && resume->isVisible());
+        resume->trigger();
+        QTRY_VERIFY_WITH_TIMEOUT(!modern.sessionPaused() && pause->isVisible(), 6000);
+        QCOMPARE(modern.commandsFor("/api/v2/transfer/resumeSession"), 1);
+        QCOMPARE(legacy.commandsFor("/api/v2/transfer/resumeSession"), 0);
+        QCOMPARE(modern.commandsFor("/api/v2/torrents/stop"), 0);
+        QCOMPARE(modern.commandsFor("/api/v2/torrents/start"), 0);
+        modern.setSessionPaused(true);
+        QTRY_VERIFY_WITH_TIMEOUT(resume->isVisible(), 6000);
+        modern.setSessionPaused(false);
+        QTRY_VERIFY_WITH_TIMEOUT(pause->isVisible(), 6000);
+        speed->setChecked(false);
+        QVERIFY(!window.windowTitle().contains("D:"));
+        bool aboutChecked = false;
+        QTimer::singleShot(0, &window, [&] {
+            auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+            QVERIFY(box);
+            const auto guard = qScopeGuard([box] { box->accept(); });
+            QCOMPARE(box->objectName(), QStringLiteral("aboutDialog"));
+            QVERIFY(box->text().contains(QStringLiteral(QBT_REMOTE_DISPLAY_VERSION))
+                    && box->text().contains("GPL-3.0-or-later"));
+            QVERIFY(box->text().contains("Qt") && box->text().contains("qBittorrent-remote"));
+            aboutChecked = true;
+        });
+        about->trigger();
+        QVERIFY(aboutChecked);
     }
 
     void nativeStatisticsTracksIndependentServerSnapshots()
