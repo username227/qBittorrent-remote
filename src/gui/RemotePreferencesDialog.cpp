@@ -29,6 +29,7 @@
 #include <QHeaderView>
 #include <QEvent>
 #include <QResizeEvent>
+#include <QWheelEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -124,6 +125,25 @@ private:
     const QString m_name;
     const QString m_url;
     QPointer<QWidget> m_editor;
+};
+
+// Scrolling the Advanced table must never stage changes to an engine
+// preference, even when a numeric editor or combo currently has focus.
+// Ignoring the wheel event lets the containing scroll area handle it.
+class AdvancedSpinBox final : public QSpinBox
+{
+public:
+    using QSpinBox::QSpinBox;
+protected:
+    void wheelEvent(QWheelEvent *event) override { event->ignore(); }
+};
+
+class AdvancedComboBox final : public QComboBox
+{
+public:
+    using QComboBox::QComboBox;
+protected:
+    void wheelEvent(QWheelEvent *event) override { event->ignore(); }
 };
 
 class AdvancedSettingsTable final : public QTableWidget
@@ -2444,6 +2464,9 @@ void RemotePreferencesDialog::refreshRemoteControls()
             else if (auto *line = qobject_cast<QLineEdit *>(field.widget))
                 line->clear();
         }
+        if (field.widget->property("advancedRemote").toBool())
+            if (auto *line = qobject_cast<QLineEdit *>(field.widget))
+                line->setPlaceholderText(supported ? QString() : tr("Unavailable"));
         field.widget->setEnabled(supported && (!field.dependency || field.dependency()));
         field.widget->setToolTip(supported && m_advancedCapabilityKeys.contains(field.key) && !advancedCapabilityAvailable(field.key)
             ? tr("Not supported or not verified for the connected server's build.")
@@ -2829,7 +2852,7 @@ void RemotePreferencesDialog::buildAdvancedPage()
         return editor;
     };
     const auto spin = [table](int min, int max, const QString &suffix, const QString &special) {
-        auto *editor = new QSpinBox(table);
+        auto *editor = new AdvancedSpinBox(table);
         editor->setRange(min, max);
         editor->setSuffix(suffix);
         editor->setProperty("advancedNativeSpecialValueText", special);
@@ -2838,7 +2861,7 @@ void RemotePreferencesDialog::buildAdvancedPage()
         return editor;
     };
     const auto combo = [table](const QStringList &options) {
-        auto *editor = new QComboBox(table);
+        auto *editor = new AdvancedComboBox(table);
         editor->addItems(options);
         editor->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
         editor->setMinimumContentsLength(10);
@@ -3206,7 +3229,7 @@ void RemotePreferencesDialog::bindAdvancedNetworkControls()
             [](const QJsonValue &v) { return v.isString(); }, std::move(dependency),
             tr("Network binding on the selected server. Changes may interrupt torrent connectivity.")});
     };
-    bind("current_network_interface", iface, [this] { return m_advancedInterfacesReady && m_advancedAddressesReady; });
+    bind("current_network_interface", iface, [this] { return m_advancedInterfacesReady; });
     bind("current_interface_address", address, [this] { return m_advancedAddressesReady && m_advancedInterfacesReady; });
     connect(iface, &QComboBox::currentIndexChanged, this, [this] {
         if (m_loadingRemotePreferences) return;
@@ -3253,8 +3276,16 @@ void RemotePreferencesDialog::readAdvancedNetworkAddresses()
     auto *iface = findChild<QComboBox *>("advanced_NETWORK_IFACE");
     auto *combo = findChild<QComboBox *>("advanced_NETWORK_IFACE_ADDRESS");
     const QString selected = iface->currentData().toString();
-    const bool changed = selected != m_advancedAddressInterface && m_advancedAddressesReady;
+    const bool changed = m_advancedAddressGeneration > 0 && selected != m_advancedAddressInterface;
     const QString prior = changed ? QString() : combo->currentData().toString();
+    m_advancedAddressInterface = selected;
+    if (changed)
+    {
+        const QSignalBlocker blocker(combo);
+        combo->clear();
+        combo->addItem(tr("All addresses"), QString());
+        combo->setCurrentIndex(0);
+    }
     m_advancedAddressesReady = false;
     const quint64 generation = ++m_advancedAddressGeneration;
     refreshRemoteControls();
@@ -3282,10 +3313,10 @@ void RemotePreferencesDialog::readAdvancedNetworkAddresses()
         dialog->remoteFieldChanged();
     }, [dialog, generation](const QString &) {
         if (!dialog || dialog->m_advancedAddressGeneration != generation) return;
-        // Permit changing the interface again after a failed address fetch.
+        // Keep interface selection available after a failed address fetch.
+        // Validation prevents an unverified binding from being applied.
         dialog->m_advancedAddressesReady = false;
         dialog->refreshRemoteControls();
-        dialog->findChild<QComboBox *>("advanced_NETWORK_IFACE")->setEnabled(dialog->m_advancedInterfacesReady);
         dialog->updateButtons();
     });
 }

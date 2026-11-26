@@ -90,6 +90,7 @@
 #include <QTcpSocket>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <QWheelEvent>
 #include <QUrlQuery>
 #include <QtTest/QtTest>
 
@@ -4978,7 +4979,7 @@ private slots:
             {"disk_cache_ttl", 60}, {"enable_coalesce_read_write", false},
             {"memory_working_set_limit", 256}, {"mark_of_the_web", false},
             {"announce_ip", ""}, {"announce_port", 0}, {"start_paused", false},
-            {"shutdown_timeout", -1}, {"python_executable_path", "/usr/bin/python3"}
+            {"shutdown_timeout", -1}, {"python_executable_path", ""}
         };
         legacy.setServerPreferences(values);
         modern.setServerPreferences(values);
@@ -5031,6 +5032,26 @@ private slots:
                 QCOMPARE(motw->isEnabled(), newer);
                 QCOMPARE(cache->isEnabled(), !newer);
                 QCOMPARE(write->count(), newer ? 3 : 2);
+                auto *python = dlg->findChild<QLineEdit *>("advanced_PYTHON_EXECUTABLE_PATH");
+                QVERIFY(python && python->isEnabled());
+                QVERIFY(python->text().isEmpty() && python->placeholderText().isEmpty());
+                QVERIFY(!apply->isEnabled());
+                // Wheel events over real enabled editors, including focused
+                // editors, must not change values or stage remote writes.
+                const auto wheel = [](QWidget *editor) {
+                    editor->setFocus();
+                    const QPoint local = editor->rect().center();
+                    QWheelEvent event(QPointF(local), QPointF(editor->mapToGlobal(local)),
+                        QPoint(), QPoint(0, 120), Qt::NoButton, Qt::NoModifier,
+                        Qt::NoScrollPhase, false);
+                    QApplication::sendEvent(editor, &event);
+                };
+                const int memoryBefore = mem->value();
+                const int storageBefore = storage->currentIndex();
+                wheel(mem);
+                wheel(storage);
+                QCOMPARE(mem->value(), memoryBefore);
+                QCOMPARE(storage->currentIndex(), storageBefore);
                 QVERIFY(!apply->isEnabled());
                 iface->setCurrentIndex(iface->findData(QStringLiteral("vpn&1")));
                 QTRY_VERIFY_WITH_TIMEOUT(addr->isEnabled() && addr->findData(QStringLiteral("10.2.0.3")) >= 0, 6000);
