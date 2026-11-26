@@ -139,6 +139,8 @@ add_library(qbittorrent_remote_gui STATIC
     src/gui/trackerentriesdialog.ui
     src/gui/RemoteFileSystemPathComboEdit.cpp
     src/gui/RemoteFileSystemPathComboEdit.h
+    src/gui/RemoteFileDialog.cpp
+    src/gui/RemoteFileDialog.h
     src/gui/RemoteTorrentContentWidget.cpp
     src/gui/RemoteTorrentContentWidget.h
     src/gui/addnewtorrentdialog.ui
@@ -304,7 +306,8 @@ if(BUILD_TESTING)
         upstreamTorrentStateColorsSurviveStalledAndQueuedStates
     )
 
-    add_remote_workflow_group(remote_torrent_addition_workflow 75
+    add_remote_workflow_group(remote_torrent_addition_workflow 90
+        remoteBrowserNavigatesAuthenticatedServerPaths
         torrentFileUploadPreservesBinaryMetadata
         userDropsTorrentFilesAndMagnetIntoNativeTransferView
         externalFileOpenReusesExistingWindowAndWaitsForAuthentication

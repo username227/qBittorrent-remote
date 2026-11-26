@@ -5,6 +5,7 @@
 #include "api/RemoteSession.h"
 #include "api/ServerProfile.h"
 #include "api/TorrentMetadataReader.h"
+#include "gui/RemoteFileSystemPathComboEdit.h"
 
 #include <QByteArray>
 #include <QDialog>
@@ -70,9 +71,10 @@ private:
     void refreshDefaultControls();
     void setupSource(QString initialLinks);
     void displayMetadata();
-    void browseMappedPath(RemoteFileSystemPathComboEdit *target);
+    void configurePathBrowsing();
+    void browseMappedPath(RemoteFileSystemPathComboEdit *target, RemoteFileSystemPathComboEdit::BrowseMode mode);
     bool validateServerPath(RemoteFileSystemPathComboEdit *combo, QString *resolved, QString *error) const;
-    QString resolveServerPath(const QString &text) const;
+    QString resolveServerPath(const RemoteFileSystemPathComboEdit *combo) const;
     QString savedPathKey() const;
     QString pathHistoryKey(bool incomplete) const;
     void populatePathChoices();

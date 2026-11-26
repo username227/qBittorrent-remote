@@ -118,6 +118,9 @@ public:
     void requestBuildInfo(PreferencesResult received, PreferencesError failed);
     using ArrayResult = std::function<void(const QJsonArray &)>;
     void requestLog(bool peers, int lastKnownId, ArrayResult received, PreferencesError failed);
+    void requestDirectoryContent(const QString &path, bool directories, ArrayResult received, PreferencesError failed);
+    bool supportsPathFreeSpace() const noexcept { return m_connected && m_pathFreeSpace; }
+    void requestPathFreeSpace(const QString &path, std::function<void(qint64)> received, PreferencesError failed);
     void requestCookies(ArrayResult received, PreferencesError failed);
     void setCookies(const QJsonArray &cookies, std::function<void()> accepted, PreferencesError failed);
     void requestNetworkInterfaces(ArrayResult received, PreferencesError failed);
@@ -243,6 +246,7 @@ private:
     CertificateConfirmation m_confirmation;
     bool m_connected = false;
     bool m_trackerTierEditing = false;
+    bool m_pathFreeSpace = false;
     qint64 m_syncRid = 0;
     QTimer m_syncTimer;
 };
