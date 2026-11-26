@@ -24,6 +24,7 @@ public:
         Mode mode, QWidget *parent = nullptr);
     QString selectedPath() const { return m_selected; }
     static bool isAbsoluteServerPath(const QString &path);
+    static QString parentDirectory(const QString &path);
 private:
     void navigate(const QString &path);
     void readEntries(const QString &path, bool directories, quint64 generation);

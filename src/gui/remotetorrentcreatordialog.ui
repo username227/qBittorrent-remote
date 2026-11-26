@@ -96,14 +96,14 @@
              </widget>
             </item>
             <item>
-             <widget class="QPushButton" name="addFileButton">
+             <widget class="RemoteFilesystemBrowseButton" name="addFileButton">
               <property name="text">
                <string>Select file</string>
               </property>
              </widget>
             </item>
             <item>
-             <widget class="QPushButton" name="addFolderButton">
+             <widget class="RemoteFilesystemBrowseButton" name="addFolderButton">
               <property name="text">
                <string>Select folder</string>
               </property>
@@ -458,6 +458,13 @@
    </item>
   </layout>
  </widget>
+ <customwidgets>
+  <customwidget>
+   <class>RemoteFilesystemBrowseButton</class>
+   <extends>QToolButton</extends>
+   <header>gui/RemoteFileSystemPathComboEdit.h</header>
+  </customwidget>
+ </customwidgets>
  <resources/>
  <connections/>
 </ui>

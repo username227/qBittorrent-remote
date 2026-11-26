@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/RemoteTorrentCreatorDialog.h"
+#include "gui/RemoteFileSystemPathComboEdit.h"
 #include "api/TorrentMetadataReader.h"
 #include "ui_remotetorrentcreatordialog.h"
 
@@ -79,6 +80,10 @@ RemoteTorrentCreatorDialog::RemoteTorrentCreatorDialog(QSettings &settings,
     }
     connect(m_ui->seedServerCombo, &QComboBox::currentIndexChanged, this, [this](int) { updateSeedTarget(true); });
     connect(m_ui->checkStartSeeding, &QCheckBox::toggled, this, [this](bool) { updateSeedTarget(); });
+    connect(m_ui->textInputPath, &QLineEdit::textEdited, this, [this] {
+        m_ui->textInputPath->setProperty("explicitRemotePath", QVariant());
+        updateSeedTarget();
+    });
     connect(m_ui->textInputPath, &QLineEdit::textChanged, this, [this] { updateSeedTarget(); });
     connect(m_ui->seedTargetPath, &QLineEdit::textEdited, this, [this] { m_seedPathEdited = true; });
     updateSeedTarget(true);
@@ -120,8 +125,7 @@ RemoteTorrentCreatorDialog::RemoteTorrentCreatorDialog(QSettings &settings,
     m_status->setTextFormat(Qt::PlainText);
     m_ui->verticalLayout->insertWidget(2, m_status);
     connect(m_browseOutput, &QPushButton::clicked, this, &RemoteTorrentCreatorDialog::chooseOutput);
-    connect(m_ui->addFileButton, &QPushButton::clicked, this, [this] { browseSource(false); });
-    connect(m_ui->addFolderButton, &QPushButton::clicked, this, [this] { browseSource(true); });
+    configurePathBrowsing();
     connect(m_ui->buttonBox, &QDialogButtonBox::accepted, this, &RemoteTorrentCreatorDialog::createOrRetry);
     connect(m_ui->buttonBox, &QDialogButtonBox::rejected, this, &RemoteTorrentCreatorDialog::reject);
     m_poll.setSingleShot(true);
@@ -225,12 +229,10 @@ void RemoteTorrentCreatorDialog::updateSeedTarget(bool resetPath)
     m_ui->seedServerCombo->setEnabled(enabled);
     const bool other = enabled && index > 0 && index < m_seedTargets.size();
     m_ui->seedTargetRow->setVisible(other);
+    for (auto *button : m_ui->seedTargetRow->findChildren<RemoteFilesystemBrowseButton *>()) button->refresh();
     if (resetPath) m_seedPathEdited = false;
     if (!other || m_seedPathEdited) return;
-    QString source = m_ui->textInputPath->text().trimmed();
-    const QString mapped = Remote::PathMappingStore::toRemote(source, m_mappings);
-    if (!mapped.isEmpty()) source = mapped;
-    source = serverPath(source);
+    const QString source = serverPath(resolvedSource());
     QString destination;
     if (absoluteServerPath(source))
     {
@@ -317,17 +319,58 @@ bool RemoteTorrentCreatorDialog::selectMappedSource(const QString &local)
         m_status->setText(tr("The selected local path is not mapped to this server. Configure Remote Paths or type the server path."));
         return false;
     }
+    m_ui->textInputPath->setProperty("explicitRemotePath", remote);
     m_ui->textInputPath->setText(remote);
     return true;
 }
 
-void RemoteTorrentCreatorDialog::browseSource(bool directory)
+QString RemoteTorrentCreatorDialog::resolvedSource() const
 {
-    if (m_state != State::Ready) return;
-    const QString root = m_mappings.isEmpty() ? QString() : m_mappings.first().localRoot;
-    const QString local = directory ? QFileDialog::getExistingDirectory(this, tr("Select mapped folder"), root)
-        : QFileDialog::getOpenFileName(this, tr("Select mapped file"), root);
-    if (!local.isEmpty()) selectMappedSource(local);
+    const QString source = m_ui->textInputPath->text().trimmed();
+    if (m_ui->textInputPath->property("explicitRemotePath").toString() == source) return source;
+    const QString mapped = Remote::PathMappingStore::toRemote(source, m_mappings);
+    return mapped.isEmpty() ? source : mapped;
+}
+
+void RemoteTorrentCreatorDialog::configurePathBrowsing()
+{
+    using Button = RemoteFilesystemBrowseButton;
+    const auto refreshAll = [this] { for (auto *button : findChildren<Button *>()) button->refresh(); };
+    for (auto *button : {m_ui->addFileButton, m_ui->addFolderButton})
+    {
+        const bool directory = button == m_ui->addFolderButton;
+        button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        button->configurePath(m_settings, [this, directory] {
+            const auto &profile = m_seedTargets.first().profile;
+            return Button::PathContext{profile.id, profile.name, m_session.data(), m_mappings, resolvedSource(), directory, {}};
+        }, [this](const QString &path) {
+            if (m_state != State::Ready) return;
+            m_ui->textInputPath->setProperty("explicitRemotePath", path);
+            m_ui->textInputPath->setText(path);
+        });
+        connect(button, &Button::preferenceChanged, this, refreshAll);
+    }
+    for (const bool directory : {false, true})
+    {
+        auto *button = new Button(m_ui->seedTargetRow);
+        button->setObjectName(directory ? QStringLiteral("seedBrowseFolder") : QStringLiteral("seedBrowseFile"));
+        button->setText(directory ? tr("Folder") : tr("File"));
+        button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        m_ui->seedTargetLayout->addWidget(button);
+        button->configurePath(m_settings, [this, directory] {
+            const int index = m_ui->seedServerCombo->currentIndex();
+            if (index <= 0 || index >= m_seedTargets.size()) return Button::PathContext{};
+            const auto &target = m_seedTargets.at(index);
+            return Button::PathContext{target.profile.id, target.profile.name, target.session.data(),
+                Remote::PathMappingStore(m_settings).mappings(target.profile.id), m_ui->seedTargetPath->text(), directory, {}};
+        }, [this](const QString &path) {
+            if (m_state != State::Ready) return;
+            m_seedPathEdited = true;
+            m_ui->seedTargetPath->setText(path);
+        });
+        connect(button, &Button::preferenceChanged, this, refreshAll);
+    }
+    refreshAll();
 }
 
 void RemoteTorrentCreatorDialog::dragEnterEvent(QDragEnterEvent *event)
@@ -400,10 +443,7 @@ void RemoteTorrentCreatorDialog::createOrRetry()
     if (m_state == State::Finished) { retrieve(); return; }
     if (m_state == State::Uncertain && !m_taskId.isEmpty()) { poll(); return; }
     if (m_state != State::Ready || !m_session || !m_session->isConnected()) return;
-    QString source = m_ui->textInputPath->text().trimmed();
-    // Typed input is a server path; local mapped paths are translated.
-    const QString mapped = Remote::PathMappingStore::toRemote(source, m_mappings);
-    if (!mapped.isEmpty()) source = mapped;
+    const QString source = resolvedSource();
     const bool absolute = source.startsWith(QLatin1Char('/'))
         || (source.size() >= 3 && source.at(0).isLetter() && source.at(1) == QLatin1Char(':')
             && (source.at(2) == QLatin1Char('/') || source.at(2) == QLatin1Char('\\')));

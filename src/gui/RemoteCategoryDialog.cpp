@@ -6,8 +6,6 @@
 #include "ui_remotetorrentcategorydialog.h"
 
 #include <QDialogButtonBox>
-#include <QDir>
-#include <QFileDialog>
 #include <QHash>
 #include <QLineEdit>
 #include <QMessageBox>
@@ -28,7 +26,6 @@ RemoteCategoryDialog::RemoteCategoryDialog(const QString &name, bool edit,
     for (auto *field : {m_ui->comboSavePath, m_ui->comboDownloadPath})
     {
         field->setInsertPolicy(QComboBox::NoInsert);
-        connect(field, &RemoteFileSystemPathComboEdit::browseRequested, this, [this, field]() { browse(field); });
         field->lineEdit()->setToolTip(tr("Path on the remote server. Empty uses the inherited default; relative paths are resolved by qBittorrent."));
     }
     m_ui->comboSavePath->setEditText(definition.value(QStringLiteral("savePath")).toString());
@@ -151,21 +148,9 @@ void RemoteCategoryDialog::accept()
     QDialog::accept();
 }
 
-void RemoteCategoryDialog::browse(RemoteFileSystemPathComboEdit *field)
+void RemoteCategoryDialog::configurePathBrowsing(QSettings &settings, const QString &profileId,
+    const QString &serverName, Remote::RemoteSession *session)
 {
-    if (m_mappings.isEmpty())
-    {
-        QMessageBox::information(this, tr("No path mappings"), tr("Configure a mapped NAS folder or type a server path."));
-        return;
-    }
-    QString initial = Remote::PathMappingStore::toLocal(field->currentText(), m_mappings);
-    if (initial.isEmpty() || !QDir(initial).exists())
-        initial = m_mappings.first().localRoot;
-    const auto local = QFileDialog::getExistingDirectory(this, tr("Choose mapped local NAS directory"), initial);
-    if (local.isEmpty()) return;
-    const auto remote = Remote::PathMappingStore::toRemote(local, m_mappings);
-    if (remote.isEmpty())
-        QMessageBox::warning(this, tr("Unmapped directory"), tr("The selected folder is not mapped to this remote server."));
-    else
-        field->setEditText(remote);
+    for (auto *field : {m_ui->comboSavePath, m_ui->comboDownloadPath})
+        field->configureDirectoryBrowse(settings, profileId, serverName, session, m_mappings);
 }

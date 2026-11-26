@@ -39,7 +39,8 @@ private:
     void updateSeedTarget(bool resetPath = false);
     void seedOnTarget(const QString &filename, const QByteArray &bytes, const QString &torrentName);
     void finishCrossSeed(const QString &message);
-    void browseSource(bool directory);
+    QString resolvedSource() const;
+    void configurePathBrowsing();
     bool selectMappedSource(const QString &local);
     void chooseOutput();
     void createOrRetry();
