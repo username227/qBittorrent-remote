@@ -538,6 +538,33 @@ void RemoteSession::requestPreferences(PreferencesResult received, PreferencesEr
     pumpOperations();
 }
 
+void RemoteSession::rotateWebUIAPIKey(PreferencesResult received, PreferencesError rejected)
+{
+    if (!m_connected || !m_address)
+    {
+        if (rejected) rejected(tr("The selected server is not connected."));
+        return;
+    }
+    QueuedOperation request;
+    request.endpoint = QStringLiteral("api/v2/app/rotateAPIKey");
+    request.description = tr("Rotate server API key");
+    request.contentType = QByteArrayLiteral("application/x-www-form-urlencoded");
+    request.jsonObjectRequest = true;
+    request.jsonObjectPost = true;
+    request.reportOperation = false;
+    request.onJsonObject = std::move(received);
+    request.onRejected = std::move(rejected);
+    m_operations.enqueue(std::move(request));
+    pumpOperations();
+}
+
+void RemoteSession::deleteWebUIAPIKey(std::function<void()> accepted, PreferencesError rejected)
+{
+    queueOperation(QStringLiteral("api/v2/app/deleteAPIKey"), {},
+        QByteArrayLiteral("application/x-www-form-urlencoded"),
+        tr("Delete server API key"), true, std::move(accepted), std::move(rejected), false);
+}
+
 void RemoteSession::requestBuildInfo(PreferencesResult received, PreferencesError rejected)
 {
     if (!m_connected || !m_address)
@@ -649,11 +676,11 @@ void RemoteSession::pumpOperations()
     const QueuedOperation operation = m_operations.dequeue();
     QNetworkRequest request = requestFor(operation.endpoint);
     if (!operation.detailsRequest && !operation.exportRequest
-        && !operation.jsonObjectRequest)
+        && (!operation.jsonObjectRequest || operation.jsonObjectPost))
         request.setHeader(QNetworkRequest::ContentTypeHeader,
                           QString::fromLatin1(operation.contentType));
     QNetworkReply *reply = (operation.detailsRequest || operation.exportRequest
-                            || operation.jsonObjectRequest)
+                            || (operation.jsonObjectRequest && !operation.jsonObjectPost))
         ? m_network.get(request) : m_network.post(request, operation.body);
     armReply(reply);
     connect(reply, &QNetworkReply::finished, this, [this, reply, operation]() {
@@ -679,7 +706,9 @@ void RemoteSession::pumpOperations()
                         ? tr("Invalid build information returned by the server.")
                         : operation.endpoint.startsWith(QLatin1String("api/v2/rss/"))
                             ? tr("Invalid RSS data returned by the server.")
-                            : tr("Invalid preferences returned by the server.");
+                            : operation.jsonObjectPost
+                                ? tr("Invalid API key response returned by the server.")
+                                : tr("Invalid preferences returned by the server.");
                     if (operation.onRejected)
                         operation.onRejected(reason);
                     else if (operation.reportOperation)
