@@ -61,6 +61,7 @@
 #include <QHBoxLayout>
 #include <QHostAddress>
 #include <QClipboard>
+#include <QDesktopServices>
 #include <QInputDialog>
 #include <QTimer>
 
@@ -709,9 +710,7 @@ void RemotePreferencesDialog::bindWebUIControls()
     m_ui->checkWebUI->setCheckable(false);
     m_ui->checkWebUI->setEnabled(true);
     m_ui->labelWebUIError->setWordWrap(true);
-    const auto locked = [] { return false; };
     const auto direct = [this] { return m_webUIDirect; };
-    const auto connectionTip = tr("Current server value. Editing requires the connection transition workflow.");
     const auto directTip = tr("Changing this server setting requires a fresh connection and verification before updating the saved profile.");
     bindRemoteControl("web_ui_address", m_ui->textWebUIAddress, direct, directTip);
     if (auto *editor = m_ui->spinWebUIPort->findChild<QLineEdit *>()) editor->setEnabled(true);
@@ -727,8 +726,14 @@ void RemotePreferencesDialog::bindWebUIControls()
     // The API key is a secret and its rotation/deletion uses separate actions.
     // Show only a masked existing key, never store it in QSettings.
     m_ui->textWebUIAPIKey->setEchoMode(QLineEdit::Password);
-    bindRemoteControl("web_ui_api_key", m_ui->textWebUIAPIKey, locked,
-        tr("Existing server API key (masked). Key management is not yet enabled."));
+    bindRemoteControl("web_ui_api_key", m_ui->textWebUIAPIKey, {},
+        tr("Server API key (masked). Use Copy to retrieve it. Key changes take effect immediately."));
+    connect(m_ui->btnWebUIAPIKeyCopy, &QPushButton::clicked, this, [this] {
+        if (!m_remoteBusy && remoteFieldAvailable("web_ui_api_key") && !m_ui->textWebUIAPIKey->text().isEmpty())
+            QApplication::clipboard()->setText(m_ui->textWebUIAPIKey->text());
+    });
+    connect(m_ui->btnWebUIAPIKeyRotate, &QPushButton::clicked, this, [this] { changeWebUIAPIKey(false); });
+    connect(m_ui->btnWebUIAPIKeyDelete, &QPushButton::clicked, this, [this] { changeWebUIAPIKey(true); });
 
     bindRemoteControl("web_ui_upnp", m_ui->checkWebUIUPnP, {},
         tr("Forward the WebUI port on the server's router. This may expose the WebUI beyond the local network."));
@@ -822,20 +827,39 @@ void RemotePreferencesDialog::bindWebUIControls()
             && m_ui->groupEnableReverseProxySupport->isChecked();
     }, tr("Trusted reverse-proxy IP addresses or CIDR subnets, separated by semicolons. Only trust proxies you control."));
 
-    // Dynamic DNS can change the hostname through which the client connects.
-    // Expose its current server configuration, but defer writes for now.
-    bindRemoteControl("dyndns_enabled", m_ui->checkDynDNS, locked, connectionTip);
-    bindRemoteControl("dyndns_service", m_ui->comboDNSService, locked, connectionTip);
-    bindRemoteControl("dyndns_domain", m_ui->domainNameTxt, locked, connectionTip);
-    bindRemoteControl("dyndns_username", m_ui->DNSUsernameTxt, locked, connectionTip);
+    const auto dnsEnabled = [this] {
+        return remoteFieldAvailable("dyndns_enabled") && m_ui->checkDynDNS->isChecked();
+    };
+    bindRemoteControl("dyndns_enabled", m_ui->checkDynDNS, {},
+        tr("The selected server updates its public DNS record, not the desktop client."));
+    bindRemoteControl("dyndns_service", m_ui->comboDNSService, dnsEnabled);
+    bindRemoteControl("dyndns_domain", m_ui->domainNameTxt, dnsEnabled);
+    bindRemoteControl("dyndns_username", m_ui->DNSUsernameTxt, dnsEnabled);
     m_ui->DNSPasswordTxt->setEchoMode(QLineEdit::Password);
-    bindRemoteControl("dyndns_password", m_ui->DNSPasswordTxt, locked, connectionTip);
+    bindRemoteControl("dyndns_password", m_ui->DNSPasswordTxt, dnsEnabled,
+        tr("Dynamic DNS provider credential stored on the server only."));
+    connect(m_ui->registerDNSBtn, &QPushButton::clicked, this, [this] {
+        if (!m_ui->registerDNSBtn->isEnabled() || m_remoteBusy) return;
+        const int service = m_ui->comboDNSService->currentIndex();
+        if (service == 0 || service == 1)
+            QDesktopServices::openUrl(QUrl(service == 0
+                ? QStringLiteral("https://account.dyn.com/entrance/")
+                : QStringLiteral("https://www.noip.com/remote-access")));
+    });
 }
 
 void RemotePreferencesDialog::refreshWebUIControls()
 {
     // A missing 5.3-only key is not an empty key on an older daemon.
-    m_ui->groupWebUIAPIKey->setVisible(remoteFieldAvailable("web_ui_api_key"));
+    const bool apiAvailable = remoteFieldAvailable("web_ui_api_key");
+    const bool hasKey = apiAvailable && !m_ui->textWebUIAPIKey->text().isEmpty();
+    m_ui->groupWebUIAPIKey->setVisible(apiAvailable);
+    m_ui->textWebUIAPIKey->setEnabled(hasKey);
+    m_ui->btnWebUIAPIKeyCopy->setEnabled(hasKey && !m_remoteBusy);
+    m_ui->btnWebUIAPIKeyRotate->setEnabled(apiAvailable && !m_remoteBusy);
+    m_ui->btnWebUIAPIKeyRotate->setToolTip(hasKey ? tr("Rotate API key") : tr("Generate API key"));
+    m_ui->btnWebUIAPIKeyDelete->setEnabled(hasKey && !m_remoteBusy);
+    m_ui->registerDNSBtn->setEnabled(m_ui->comboDNSService->isEnabled());
     m_ui->labelWebUISessionsCountLimit->setVisible(remoteFieldAvailable("web_ui_sessions_count_limit"));
     m_ui->spinBoxWebUISessionsCountLimit->setVisible(remoteFieldAvailable("web_ui_sessions_count_limit"));
     m_ui->lblBanDuration->setEnabled(m_ui->spinBanDuration->isEnabled());
@@ -845,8 +869,108 @@ void RemotePreferencesDialog::refreshWebUIControls()
     m_ui->labelWebUIError->setText(tr("Connection changes are available for direct server connections only. For a proxy or a different externally mapped port, use independent server access."));
 }
 
+void RemotePreferencesDialog::changeWebUIAPIKey(bool remove)
+{
+    if (m_remoteBusy || !m_remoteSession || !m_remoteSession->isConnected()
+        || !remoteFieldAvailable("web_ui_api_key")) return;
+    const QString previous = m_ui->textWebUIAPIKey->text();
+    if (remove && previous.isEmpty()) return;
+    const QString title = remove ? tr("Delete API key")
+        : previous.isEmpty() ? tr("Generate API key") : tr("Rotate API key");
+    const QString message = remove
+        ? tr("Delete the selected server's API key? It will immediately stop working.")
+        : previous.isEmpty()
+            ? tr("Generate an API key for the selected server?")
+            : tr("Rotate the selected server's API key? The existing key will immediately stop working.");
+    if (QMessageBox::question(this, title, message + tr("\n\nThis action takes effect immediately; Cancel in Preferences cannot undo it."),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
+        return;
+    if (m_remoteBusy || !m_remoteSession || !m_remoteSession->isConnected()
+        || !remoteFieldAvailable("web_ui_api_key")) return;
+    setRemoteBusy(true);
+    const QPointer<RemotePreferencesDialog> dialog(this);
+    // On ambiguous failure do not allow further mutations or copying a stale
+    // key until a fresh authoritative Preferences read.
+    const auto finish = [dialog](const QJsonValue &value, const QString &warning) {
+        if (!dialog || !dialog->m_remoteBusy) return;
+        for (auto &field : dialog->m_remoteFields)
+            if (field.key == QLatin1String("web_ui_api_key"))
+            {
+                field.baseline = value.isString() ? value : QJsonValue(QJsonValue::Undefined);
+                const QSignalBlocker blocker(field.widget);
+                field.write(value.isString() ? value : QJsonValue(QString()));
+                break;
+            }
+        dialog->setRemoteBusy(false);
+        dialog->refreshRemoteControls();
+        dialog->updateButtons();
+        if (!warning.isEmpty())
+            QMessageBox::warning(dialog.data(), dialog->tr("Cannot confirm API key change"), warning);
+    };
+    m_remoteSession->requestPreferences([dialog, previous, remove, finish](const QJsonObject &values) {
+        if (!dialog || !dialog->m_remoteBusy || !dialog->m_remoteSession || !dialog->m_remoteSession->isConnected()) return;
+        const auto current = values.value("web_ui_api_key");
+        if (!current.isString() || current.toString() != previous)
+        {
+            finish(current, dialog->tr("The server API key changed since Preferences was opened. No mutation was sent. Review the current value before trying again."));
+            return;
+        }
+        const auto failed = [dialog, finish](const QString &) {
+            if (dialog && dialog->m_remoteBusy)
+                finish(QJsonValue(), dialog->tr("The API key operation could not be confirmed. Reopen Preferences to read the current key before trying again."));
+        };
+        const auto verify = [dialog, previous, remove, finish, failed](const QString &expected) {
+            if (!dialog || !dialog->m_remoteBusy || !dialog->m_remoteSession || !dialog->m_remoteSession->isConnected()) return;
+            if (!remove && (expected.isEmpty() || expected == previous))
+            {
+                failed(QString());
+                return;
+            }
+            dialog->m_remoteSession->requestPreferences([dialog, expected, finish](const QJsonObject &updated) {
+                if (!dialog || !dialog->m_remoteBusy) return;
+                const auto key = updated.value("web_ui_api_key");
+                if (!key.isString() || key.toString() != expected)
+                    finish(key, dialog->tr("The server did not confirm the requested API key. Review the current state before retrying."));
+                else
+                    finish(key, QString());
+            }, failed);
+        };
+        if (remove)
+            dialog->m_remoteSession->deleteWebUIAPIKey([verify] { verify(QString()); }, failed);
+        else
+            dialog->m_remoteSession->rotateWebUIAPIKey([verify](const QJsonObject &result) {
+                verify(result.value("apiKey").toString());
+            }, failed);
+    }, [dialog, finish](const QString &) {
+        if (dialog && dialog->m_remoteBusy)
+            finish(QJsonValue(), dialog->tr("Could not check the server's current API key. No mutation was sent. Reopen Preferences to retry."));
+    });
+}
+
 bool RemotePreferencesDialog::validateWebUIChanges(const QJsonObject &changes)
 {
+    bool dnsChange = false;
+    for (auto it = changes.constBegin(); it != changes.constEnd(); ++it)
+        dnsChange |= it.key().startsWith(QLatin1String("dyndns_"));
+    if (dnsChange && m_ui->checkDynDNS->isChecked())
+    {
+        // Use the same validation as the upstream 5.1.4/5.3.0 DNS updater.
+        const QRegularExpression domain(QStringLiteral("^(?:(?!\\d|-)[a-zA-Z0-9\\-]{1,63}\\.)+[a-zA-Z]{2,}$"));
+        if (!remoteFieldAvailable("dyndns_enabled") || !remoteFieldAvailable("dyndns_service")
+            || !remoteFieldAvailable("dyndns_domain") || !remoteFieldAvailable("dyndns_username")
+            || !remoteFieldAvailable("dyndns_password")
+            || !domain.match(m_ui->domainNameTxt->text()).hasMatch()
+            || m_ui->DNSUsernameTxt->text().size() < 4 || m_ui->DNSPasswordTxt->text().size() < 4)
+        {
+            QMessageBox::warning(this, tr("Invalid Dynamic DNS settings"),
+                tr("Select a supported provider and enter a valid domain name, username and password (at least four characters each for the credentials)."));
+            return false;
+        }
+    }
+    if (dnsChange && QMessageBox::question(this, tr("Change Dynamic DNS settings"),
+            tr("The selected server will manage these DNS settings. Updating its DNS record may affect access by hostname. The client does not change its saved server address or contact the DNS provider. Apply these changes?"),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
+        return false;
     const auto enabled = [&changes](const char *key) { return changes.value(QLatin1String(key)).toBool(); };
     if ((enabled("alternative_webui_enabled") || changes.contains("alternative_webui_path"))
         && m_ui->groupAltWebUI->isChecked()
@@ -2317,11 +2441,7 @@ QJsonObject RemotePreferencesDialog::remoteChanges() const
     {
         if (field.baseline.isUndefined())
             continue;
-        static const QSet<QString> webUIReadOnly{
-            "web_ui_api_key",
-            "dyndns_enabled", "dyndns_service", "dyndns_domain", "dyndns_username", "dyndns_password"
-        };
-        if (webUIReadOnly.contains(field.key)) continue;
+        if (field.key == QLatin1String("web_ui_api_key")) continue;
         if (!m_webUIDirect && (field.key == QLatin1String("web_ui_address")
             || field.key == QLatin1String("web_ui_port") || field.key == QLatin1String("use_https")
             || field.key == QLatin1String("web_ui_https_cert_path") || field.key == QLatin1String("web_ui_https_key_path")
@@ -2403,6 +2523,7 @@ void RemotePreferencesDialog::setRemoteBusy(bool busy)
     m_ui->tabSelection->setEnabled(!busy);
     m_ui->buttonBox->setEnabled(!busy);
     refreshWatchedFolderButtons();
+    refreshWebUIControls();
     updateButtons();
 }
 

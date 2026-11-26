@@ -332,6 +332,8 @@ if(BUILD_TESTING)
         directWebUIConnectionTransition)
     add_remote_workflow_group(remote_webui_security_workflow 75
         webUISecurityPolicyTransitions)
+    add_remote_workflow_group(remote_webui_dyndns_api_key_workflow 75
+        webUIDynamicDNSAndAPIKeyManagement)
     add_remote_workflow_group(remote_rss_preferences_workflow 60
         rssPreferencesFollowSelectedServer
         rssReaderAndRulesFollowSelectedServer

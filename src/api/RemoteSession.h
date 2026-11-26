@@ -111,6 +111,8 @@ public:
     using PreferencesResult = std::function<void(const QJsonObject &)>;
     using PreferencesError = std::function<void(const QString &)>;
     void requestPreferences(PreferencesResult received = {}, PreferencesError failed = {});
+    void rotateWebUIAPIKey(PreferencesResult received, PreferencesError failed);
+    void deleteWebUIAPIKey(std::function<void()> accepted, PreferencesError failed);
     void requestBuildInfo(PreferencesResult received, PreferencesError failed);
     // RSS stays on the authenticated server. Only these fixed RSS endpoints
     // are permitted; values are encoded once as form/query parameters.
@@ -201,6 +203,7 @@ private:
         bool detailsRequest = false;
         bool exportRequest = false;
         bool jsonObjectRequest = false;
+        bool jsonObjectPost = false;
         QString exportHash;
         QString detailHash;
         int detailTab = -1;

@@ -68,6 +68,7 @@ private:
     void bindRSSControls();
     void bindWebUIControls();
     void refreshWebUIControls();
+    void changeWebUIAPIKey(bool remove);
     bool validateWebUIChanges(const QJsonObject &changes);
     void applyWebUITransition(const QJsonObject &changes);
     void probeWebUITransition();

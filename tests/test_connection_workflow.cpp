@@ -24,6 +24,7 @@
 #include <iterator>
 #include <QAction>
 #include <QApplication>
+#include <QClipboard>
 #include <QDesktopServices>
 #include <QDir>
 #include <QEvent>
@@ -478,6 +479,27 @@ public:
                                         }
                                 }
                                 response = "Ok.";
+                            }
+                        }
+                        else if (m_preferencesDemo && hasCookie && fields.value(0) == "POST"
+                                 && (path == "/api/v2/app/rotateAPIKey" || path == "/api/v2/app/deleteAPIKey"))
+                        {
+                            m_commands.append({path, body});
+                            if (!m_preferences.value("web_ui_api_key").isString() || m_rejectPreferences)
+                            {
+                                code = 400;
+                                response = "Rejected";
+                            }
+                            else if (path == "/api/v2/app/rotateAPIKey")
+                            {
+                                const QString key = QStringLiteral("test-key-%1").arg(commandsFor(path));
+                                if (!m_ignorePreferences) m_preferences.insert("web_ui_api_key", key);
+                                response = QJsonDocument(QJsonObject{{"apiKey", key}}).toJson(QJsonDocument::Compact);
+                            }
+                            else
+                            {
+                                if (!m_ignorePreferences) m_preferences.insert("web_ui_api_key", QString());
+                                code = 204;
                             }
                         }
                         else if (m_preferencesDemo && hasCookie && fields.value(0) == "POST"
@@ -4924,6 +4946,146 @@ private slots:
         QCOMPARE(retained.username, saved.first().username);
         QCOMPARE(server.commandsFor("/api/v2/app/setPreferences"), 2);
         QCOMPARE(Remote::PathMappingStore(settings).mappings(originalId), mappings);
+    }
+
+    void webUIDynamicDNSAndAPIKeyManagement()
+    {
+        DemoQbittorrentServer legacy(true), modern(true);
+        modern.enableModernResponses();
+        QVERIFY(legacy.start() && modern.start());
+        const QJsonObject initial{
+            {"dyndns_enabled", false}, {"dyndns_service", 0}, {"dyndns_domain", "old.example.test"},
+            {"dyndns_username", "old-user"}, {"dyndns_password", "old-password"}
+        };
+        QJsonObject other = initial;
+        other.insert("web_ui_api_key", QString());
+        legacy.setServerPreferences(initial);
+        modern.setServerPreferences(other);
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath("profiles.ini"), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, legacy.url());
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains("v5.1.4"), 6000);
+        openConnectDialog(window, modern.url(), false, true, true, "Modern");
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains("v5.3.0"), 6000);
+        auto *tabs = window.findChild<QTabWidget *>("serverTabs");
+        auto *prefs = window.findChild<QAction *>("actionOptions");
+        QVERIFY(tabs && prefs);
+        const auto exercise = [&](bool modernServer, bool applyDNS) {
+            tabs->setCurrentIndex(modernServer ? 1 : 0);
+            bool finished = false;
+            QTimer::singleShot(0, &window, [&] {
+                auto *dlg = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget());
+                QVERIFY(dlg);
+                const auto cleanup = qScopeGuard([dlg] { if (dlg->isVisible()) dlg->reject(); });
+                auto *nav = dlg->findChild<QListWidget *>("preferencesSections");
+                auto *dns = dlg->findChild<QGroupBox *>("checkDynDNS");
+                auto *service = dlg->findChild<QComboBox *>("comboDNSService");
+                auto *domain = dlg->findChild<QLineEdit *>("domainNameTxt");
+                auto *user = dlg->findChild<QLineEdit *>("DNSUsernameTxt");
+                auto *password = dlg->findChild<QLineEdit *>("DNSPasswordTxt");
+                auto *registration = dlg->findChild<QPushButton *>("registerDNSBtn");
+                auto *group = dlg->findChild<QGroupBox *>("groupWebUIAPIKey");
+                auto *key = dlg->findChild<QLineEdit *>("textWebUIAPIKey");
+                auto *copy = dlg->findChild<QPushButton *>("btnWebUIAPIKeyCopy");
+                auto *rotate = dlg->findChild<QPushButton *>("btnWebUIAPIKeyRotate");
+                auto *remove = dlg->findChild<QPushButton *>("btnWebUIAPIKeyDelete");
+                auto *apply = dlg->findChild<QPushButton *>("preferencesApply");
+                QVERIFY(nav && dns && service && domain && user && password && registration && group && key && copy && rotate && remove && apply);
+                nav->setCurrentRow(8);
+                QTRY_VERIFY_WITH_TIMEOUT(dns->isEnabled(), 6000);
+                QCOMPARE(group->isVisible(), modernServer);
+                QVERIFY(!dns->isChecked() && !domain->isEnabled() && !registration->isEnabled());
+                QCOMPARE(password->echoMode(), QLineEdit::Password);
+                dns->setChecked(true);
+                QVERIFY(domain->isEnabled() && registration->isEnabled() && password->isEnabled());
+                service->setCurrentIndex(1);
+                domain->setText("new.example.test");
+                user->setText("new-user");
+                password->setText("dns+&%password");
+                QVERIFY(apply->isEnabled());
+                bool allow = true;
+                QString expectedTitle, unexpected;
+                QTimer modalDriver;
+                modalDriver.setInterval(20);
+                connect(&modalDriver, &QTimer::timeout, dlg, [&] {
+                    if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget()))
+                    {
+                        if (box->windowTitle() == expectedTitle && box->button(QMessageBox::Yes))
+                            box->button(allow ? QMessageBox::Yes : QMessageBox::No)->click();
+                        else if (box->windowTitle() == expectedTitle)
+                            box->accept();
+                        else
+                        {
+                            unexpected = box->windowTitle();
+                            box->reject();
+                        }
+                    }
+                });
+                modalDriver.start();
+                const auto stop = qScopeGuard([&] { modalDriver.stop(); });
+                if (modernServer)
+                {
+                    QVERIFY(key->text().isEmpty() && !copy->isEnabled() && !remove->isEnabled() && rotate->isEnabled());
+                    expectedTitle = "Generate API key";
+                    allow = false;
+                    rotate->click();
+                    QCOMPARE(modern.commandsFor("/api/v2/app/rotateAPIKey"), 0);
+                    allow = true;
+                    rotate->click();
+                    QTRY_COMPARE_WITH_TIMEOUT(key->text(), QStringLiteral("test-key-1"), 6000);
+                    QTRY_VERIFY(nav->isEnabled());
+                    QVERIFY(copy->isEnabled() && remove->isEnabled() && key->isReadOnly());
+                    QCOMPARE(key->echoMode(), QLineEdit::Password);
+                    copy->click();
+                    QCOMPARE(QApplication::clipboard()->text(), QStringLiteral("test-key-1"));
+                    QApplication::clipboard()->clear();
+                    QVERIFY(apply->isEnabled()); // staged DNS edits survive immediate key action
+                    expectedTitle = "Rotate API key";
+                    rotate->click();
+                    QTRY_COMPARE_WITH_TIMEOUT(key->text(), QStringLiteral("test-key-2"), 6000);
+                    QTRY_VERIFY(nav->isEnabled());
+                    expectedTitle = "Delete API key";
+                    remove->click();
+                    QTRY_VERIFY_WITH_TIMEOUT(key->text().isEmpty() && nav->isEnabled(), 6000);
+                    QVERIFY(!copy->isEnabled() && !remove->isEnabled() && rotate->isEnabled());
+                    QCOMPARE(modern.commandsFor("/api/v2/app/rotateAPIKey"), 2);
+                    QCOMPARE(modern.commandsFor("/api/v2/app/deleteAPIKey"), 1);
+                    QCOMPARE(modern.commandsFor("/api/v2/app/setPreferences"), 0);
+                    QCOMPARE(domain->text(), QStringLiteral("new.example.test"));
+                }
+                if (applyDNS)
+                {
+                    expectedTitle = "Change Dynamic DNS settings";
+                    apply->click();
+                    QTRY_VERIFY_WITH_TIMEOUT(nav->isEnabled() && !apply->isEnabled(), 6000);
+                }
+                QVERIFY2(unexpected.isEmpty(), qPrintable(unexpected));
+                finished = true;
+            });
+            prefs->trigger();
+            QVERIFY(finished);
+        };
+        exercise(false, false);
+        QCOMPARE(legacy.serverPreferences(), initial);
+        QCOMPARE(legacy.commandsFor("/api/v2/app/setPreferences"), 0);
+        exercise(true, true);
+        const QJsonObject delta{{"dyndns_enabled", true}, {"dyndns_service", 1}, {"dyndns_domain", "new.example.test"},
+            {"dyndns_username", "new-user"}, {"dyndns_password", "dns+&%password"}};
+        const QUrlQuery form(QString::fromUtf8(modern.lastCommandBody("/api/v2/app/setPreferences")));
+        QCOMPARE(QJsonDocument::fromJson(form.queryItemValue("json", QUrl::FullyDecoded).toUtf8()).object(), delta);
+        for (auto it = delta.constBegin(); it != delta.constEnd(); ++it) other.insert(it.key(), it.value());
+        QCOMPARE(modern.serverPreferences(), other);
+        QCOMPARE(legacy.serverPreferences(), initial);
+        QCOMPARE(legacy.commandsFor("/api/v2/app/rotateAPIKey"), 0);
+        settings.sync();
+        QFile file(settings.fileName());
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const auto persisted = file.readAll();
+        QVERIFY(!persisted.contains("dns+&%password") && !persisted.contains("test-key-"));
     }
 
     void webUISecurityPolicyTransitions()
