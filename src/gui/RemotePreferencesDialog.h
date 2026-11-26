@@ -173,6 +173,9 @@ private:
     bool m_webUIDirect = false;
     bool m_webUITransitionInProgress = false;
     bool m_webUIProbeStarted = false;
+    bool m_webUIPasswordChanged = false;
+    bool m_webUIBypassPossible = false;
+    bool m_webUIWriteAcknowledged = false;
     QPointer<Remote::RemoteSession> m_webUIProbe;
     bool m_additionDirty = false;
     QStandardItemModel *m_watchedFoldersModel = nullptr;

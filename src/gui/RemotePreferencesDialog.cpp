@@ -714,7 +714,7 @@ void RemotePreferencesDialog::bindWebUIControls()
     bindRemoteControl("web_ui_https_cert_path", m_ui->textWebUIHttpsCert, tls, directTip);
     bindRemoteControl("web_ui_https_key_path", m_ui->textWebUIHttpsKey, tls, directTip);
     bindRemoteControl("web_ui_username", m_ui->textWebUIUsername, direct, directTip);
-    m_ui->textWebUIPassword->setToolTip(tr("Enter a new password only when changing it. The current password is never returned by the server. Password changes require authentication bypass to be disabled."));
+    m_ui->textWebUIPassword->setToolTip(tr("Enter a new password only when changing it. The current password is never returned by the server. If authentication is bypassed, a fresh connection may not independently verify the new password."));
     m_ui->textWebUIPassword->clear();
     connect(m_ui->textWebUIPassword, &QLineEdit::textChanged, this, [this] { remoteFieldChanged(); });
     // The API key is a secret and its rotation/deletion uses separate actions.
@@ -785,10 +785,12 @@ void RemotePreferencesDialog::bindWebUIControls()
     bindSpin("web_ui_session_timeout", m_ui->spinSessionTimeout);
     bindSpin("web_ui_sessions_count_limit", m_ui->spinBoxWebUISessionsCountLimit);
 
-    bindRemoteControl("alternative_webui_enabled", m_ui->groupAltWebUI);
+    const auto alternateTip = tr("Changes the connected server's native browser WebUI, not qBittorrent Remote.");
+    bindRemoteControl("alternative_webui_enabled", m_ui->groupAltWebUI, {}, alternateTip);
     bindRemoteControl("alternative_webui_path", m_ui->textWebUIRootFolder, [this] {
         return remoteFieldAvailable("alternative_webui_enabled") && m_ui->groupAltWebUI->isChecked();
-    }, tr("Directory on the connected server, not the desktop."));
+    }, tr("Directory on the connected server, not the desktop. Changes its native browser WebUI, not qBittorrent Remote."));
+    m_ui->lblAltWebUIList->setToolTip(alternateTip);
     bindRemoteControl("web_ui_clickjacking_protection_enabled", m_ui->checkClickjacking);
     bindRemoteControl("web_ui_csrf_protection_enabled", m_ui->checkCSRFProtection);
     // These settings can reject the currently used HTTP connection or change
@@ -819,9 +821,7 @@ void RemotePreferencesDialog::refreshWebUIControls()
     m_ui->labelWebUISessionsCountLimit->setVisible(remoteFieldAvailable("web_ui_sessions_count_limit"));
     m_ui->spinBoxWebUISessionsCountLimit->setVisible(remoteFieldAvailable("web_ui_sessions_count_limit"));
     m_ui->lblBanDuration->setEnabled(m_ui->spinBanDuration->isEnabled());
-    const bool canChangePassword = m_remotePreferencesLoaded && m_webUIDirect
-        && m_webUIBaseline.value("bypass_local_auth") == QJsonValue(false)
-        && m_webUIBaseline.value("bypass_auth_subnet_whitelist_enabled") == QJsonValue(false);
+    const bool canChangePassword = m_remotePreferencesLoaded && m_webUIDirect;
     m_ui->textWebUIPassword->setEnabled(canChangePassword);
     m_ui->labelWebUIError->setVisible(m_remotePreferencesLoaded && !m_webUIDirect);
     m_ui->labelWebUIError->setText(tr("Connection changes are available for direct server connections only. For a proxy or a different externally mapped port, use independent server access."));
@@ -2344,9 +2344,7 @@ QJsonObject RemotePreferencesDialog::remoteChanges() const
     for (const auto keys : seedingLimits)
         if (changes.contains(QLatin1String(keys.value)))
             changes.insert(QLatin1String(keys.enabled), changes.value(QLatin1String(keys.value)).toDouble() >= 0);
-    if (m_webUIDirect && m_webUIBaseline.value("bypass_local_auth") == QJsonValue(false)
-        && m_webUIBaseline.value("bypass_auth_subnet_whitelist_enabled") == QJsonValue(false)
-        && !m_ui->textWebUIPassword->text().isEmpty())
+    if (m_webUIDirect && !m_ui->textWebUIPassword->text().isEmpty())
         changes.insert("web_ui_password", m_ui->textWebUIPassword->text());
     return changes;
 }
@@ -2979,17 +2977,21 @@ void RemotePreferencesDialog::applyWebUITransition(const QJsonObject &changes)
             .arg(candidate.toString(), https ? QString() : tr("\n\nHTTP transmits login credentials without TLS protection.")),
         QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
         return;
-    bool entered = false;
-    const QString password = QInputDialog::getText(this, tr("Verify server login"),
-        changePassword ? tr("Confirm the new password:") : tr("Enter the password for the new connection (blank only if authentication is bypassed):"),
-        QLineEdit::Password, QString(), &entered);
-    if (!entered) return;
-    if ((changePassword && password != newPassword)
-        || (password.isEmpty() && m_webUIBaseline.value("bypass_local_auth") == QJsonValue(false)
-                               && m_webUIBaseline.value("bypass_auth_subnet_whitelist_enabled") == QJsonValue(false)))
+    const bool bypassPossible = m_webUIBaseline.value("bypass_local_auth").toBool()
+        || m_webUIBaseline.value("bypass_auth_subnet_whitelist_enabled").toBool();
+    QString password = newPassword;
+    if (!changePassword)
     {
-        QMessageBox::warning(this, tr("Password required"), tr("The password confirmation is missing or does not match."));
-        return;
+        bool entered = false;
+        password = QInputDialog::getText(this, tr("Verify server login"),
+            tr("Enter the password for the new connection (blank only if authentication is bypassed):"),
+            QLineEdit::Password, QString(), &entered);
+        if (!entered) return;
+        if (password.isEmpty() && !bypassPossible)
+        {
+            QMessageBox::warning(this, tr("Password required"), tr("Enter the password for the new connection."));
+            return;
+        }
     }
     if (!m_remoteSession || !m_remoteSession->isConnected() || !m_remotePreferencesLoaded) return;
     m_webUICandidate = m_webUIProfile;
@@ -2999,6 +3001,9 @@ void RemotePreferencesDialog::applyWebUITransition(const QJsonObject &changes)
     for (auto it = changes.constBegin(); it != changes.constEnd(); ++it)
         if (it.key() != QLatin1String("web_ui_password")) m_webUIExpected.insert(it.key(), it.value());
     m_webUIPassword = password;
+    m_webUIPasswordChanged = changePassword;
+    m_webUIBypassPossible = bypassPossible;
+    m_webUIWriteAcknowledged = false;
     setRemoteBusy(true);
     const QPointer<RemotePreferencesDialog> dialog(this);
     // Check the original endpoint/credentials/security baseline before the
@@ -3023,8 +3028,10 @@ void RemotePreferencesDialog::applyWebUITransition(const QJsonObject &changes)
         };
         // A listener restart may drop the HTTP response after the server has
         // applied the settings. Never blindly retry; probe exactly once.
-        dialog->m_remoteSession->setPreferences(changes, attempt,
-            [attempt](const QString &) { attempt(); });
+        dialog->m_remoteSession->setPreferences(changes, [dialog, attempt] {
+            if (dialog) dialog->m_webUIWriteAcknowledged = true;
+            attempt();
+        }, [attempt](const QString &) { attempt(); });
     }, [dialog](const QString &reason) {
         if (dialog && dialog->m_remoteBusy) dialog->webUITransitionFailed(reason);
     });
@@ -3064,8 +3071,20 @@ void RemotePreferencesDialog::probeWebUITransition()
                     dialog->webUITransitionFailed(dialog->tr("The new endpoint did not confirm the requested server settings."));
                     return;
                 }
-            // The password is write-only. A new cookie jar with bypass
-            // disabled must authenticate successfully before it is accepted.
+            // The password is write-only. Both upstream server generations
+            // can establish a bypass session before evaluating login credentials.
+            // If bypass may apply, require an acknowledged write as well as
+            // endpoint/readback verification, and do not claim password proof.
+            if (dialog->m_webUIPasswordChanged && dialog->m_webUIBypassPossible)
+            {
+                if (!dialog->m_webUIWriteAcknowledged)
+                {
+                    dialog->webUITransitionFailed(dialog->tr("Authentication bypass may have accepted the new connection without checking the password, and the server did not acknowledge the write."));
+                    return;
+                }
+                QMessageBox::information(dialog.data(), dialog->tr("Password verification limited"),
+                    dialog->tr("The server accepted the password change and the connection was re-established. Authentication bypass is enabled, so the new password could not be independently verified. Test the password from a client that requires authentication if needed."));
+            }
             dialog->m_ui->textWebUIPassword->clear();
             emit dialog->webUITransitionVerified(dialog->m_webUICandidate.url,
                 dialog->m_webUICandidate.username, dialog->m_webUIPassword, dialog->m_webUIFingerprint);

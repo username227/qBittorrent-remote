@@ -139,12 +139,17 @@ public:
                         if (path == "/api/v2/auth/login")
                         {
                             const QUrlQuery data(QString::fromUtf8(body));
-                            const bool good = m_acceptPassword
+                            // Upstream creates a bypass session before loginAction,
+                            // which then succeeds even with incorrect credentials.
+                            const bool bypass = m_webUITransitionDemo
+                                && (m_preferences.value("bypass_local_auth").toBool()
+                                    || m_preferences.value("bypass_auth_subnet_whitelist_enabled").toBool());
+                            const bool good = bypass || (m_acceptPassword
                                 && data.queryItemValue(QStringLiteral("username"), QUrl::FullyDecoded) == m_loginUsername
                                 && (data.queryItemValue(QStringLiteral("password"), QUrl::FullyDecoded)
                                         == m_loginPassword
                                     || (m_acceptBlank && data.queryItemValue(
-                                        QStringLiteral("password"), QUrl::FullyDecoded).isEmpty()));
+                                        QStringLiteral("password"), QUrl::FullyDecoded).isEmpty())));
                             if (m_modernResponses)
                                 code = good ? 204 : 401;
                             else
@@ -4735,18 +4740,32 @@ private slots:
         QCOMPARE(legacy.commandsFor("/api/v2/rss/addFeed"), 1);
     }
 
+    void directWebUIConnectionTransition_data()
+    {
+        QTest::addColumn<bool>("modern");
+        QTest::addColumn<bool>("bypassLocal");
+        QTest::addColumn<bool>("bypassSubnet");
+        QTest::newRow("modern-authenticated") << true << false << false;
+        QTest::newRow("legacy-local-bypass") << false << true << false;
+        QTest::newRow("modern-subnet-bypass") << true << false << true;
+    }
+
     void directWebUIConnectionTransition()
     {
+        QFETCH(bool, modern);
+        QFETCH(bool, bypassLocal);
+        QFETCH(bool, bypassSubnet);
         DemoQbittorrentServer server(true);
-        server.enableModernResponses();
+        if (modern) server.enableModernResponses();
+        const QString version = modern ? QStringLiteral("v5.3.0") : QStringLiteral("v5.1.4");
         server.enableWebUITransitionDemo();
         QVERIFY(server.start());
         const QString oldUrl = server.url();
         server.setServerPreferences({
             {"web_ui_address", "*"}, {"web_ui_port", QUrl(oldUrl).port()},
             {"use_https", false}, {"web_ui_https_cert_path", ""}, {"web_ui_https_key_path", ""},
-            {"web_ui_username", "demo"}, {"bypass_local_auth", false},
-            {"bypass_auth_subnet_whitelist_enabled", false}, {"web_ui_reverse_proxy_enabled", false}
+            {"web_ui_username", "demo"}, {"bypass_local_auth", bypassLocal},
+            {"bypass_auth_subnet_whitelist_enabled", bypassSubnet}, {"web_ui_reverse_proxy_enabled", false}
         });
         QTemporaryDir temp;
         QVERIFY(temp.isValid());
@@ -4755,7 +4774,7 @@ private slots:
         MainWindow window(nullptr, &settings, &vault);
         window.show();
         openConnectDialog(window, oldUrl, true);
-        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains("v5.3.0"), 6000);
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(version), 6000);
         const auto original = Remote::ProfileStore(settings).profiles().first();
         const QString originalId = original.id;
         const QList<Remote::PathMapping> mappings{{temp.path(), QStringLiteral("/share/downloads")}};
@@ -4768,7 +4787,7 @@ private slots:
         QVERIFY(prefs);
         const QString newPassword = QStringLiteral("changed+&%password");
         bool confirmed = false, passwordEntered = false, edited = false;
-        bool expectFailure = false, failureReported = false;
+        bool expectFailure = false, failureReported = false, verificationLimited = false;
         QString unexpected;
         QTimer modalDriver;
         modalDriver.setInterval(20);
@@ -4779,6 +4798,11 @@ private slots:
                 {
                     confirmed = true;
                     box->button(QMessageBox::Yes)->click();
+                }
+                else if (box->windowTitle() == QStringLiteral("Password verification limited"))
+                {
+                    verificationLimited = true;
+                    box->accept();
                 }
                 else if (expectFailure && box->windowTitle() == QStringLiteral("Cannot verify connection change"))
                 {
@@ -4836,8 +4860,9 @@ private slots:
         watchdog.stop();
         modalDriver.stop();
         QVERIFY2(unexpected.isEmpty(), qPrintable(unexpected));
-        QVERIFY(edited && confirmed && passwordEntered);
-        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains("v5.3.0"), 12000);
+        QVERIFY(edited && confirmed && !passwordEntered);
+        QCOMPARE(verificationLimited, bypassLocal || bypassSubnet);
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(version), 12000);
         const auto saved = Remote::ProfileStore(settings).profiles();
         QCOMPARE(saved.size(), 1);
         QCOMPARE(saved.first().id, originalId);
@@ -4850,6 +4875,8 @@ private slots:
         QCOMPARE(server.serverPreferences().value("web_ui_port").toInt(), newPort);
         QCOMPARE(server.serverPreferences().value("web_ui_username").toString(), QStringLiteral("new-user"));
         QVERIFY(!server.serverPreferences().contains("web_ui_password"));
+        QCOMPARE(server.serverPreferences().value("bypass_local_auth").toBool(), bypassLocal);
+        QCOMPARE(server.serverPreferences().value("bypass_auth_subnet_whitelist_enabled").toBool(), bypassSubnet);
         settings.sync();
         QFile file(settings.fileName());
         QVERIFY(file.open(QIODevice::ReadOnly));
@@ -4880,6 +4907,7 @@ private slots:
         modalDriver.stop();
         QVERIFY2(unexpected.isEmpty(), qPrintable(unexpected));
         QVERIFY(failureReported);
+        QVERIFY(passwordEntered);
         const auto retained = Remote::ProfileStore(settings).profiles().first();
         QCOMPARE(retained.url, saved.first().url);
         QCOMPARE(retained.username, saved.first().username);
@@ -4957,6 +4985,18 @@ private slots:
                 QVERIFY(password->text().isEmpty());
                 QCOMPARE(sessions->isVisible(), modernServer);
                 QCOMPARE(key->isVisible(), modernServer);
+                auto *alternative = dlg->findChild<QGroupBox *>("groupAltWebUI");
+                auto *alternativePath = dlg->findChild<QLineEdit *>("textWebUIRootFolder");
+                auto *alternativeLink = dlg->findChild<QLabel *>("lblAltWebUIList");
+                QVERIFY(alternative && alternativePath && alternativeLink);
+                QVERIFY(!alternative->isChecked() && !alternativePath->isEnabled());
+                QVERIFY(alternativeLink->isEnabled() && alternativeLink->openExternalLinks());
+                QVERIFY(alternativeLink->toolTip().contains("qBittorrent Remote"));
+                QVERIFY(alternative->toolTip().contains("qBittorrent Remote"));
+                alternative->setChecked(true);
+                QVERIFY(alternativePath->isEnabled() && alternativeLink->isEnabled());
+                alternative->setChecked(false);
+                QVERIFY(!alternativePath->isEnabled() && alternativeLink->isEnabled());
                 if (modernServer)
                 {
                     QCOMPARE(sessions->value(), 10);
