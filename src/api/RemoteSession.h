@@ -173,6 +173,8 @@ signals:
     void disconnected();
     void mainDataUpdated(const QJsonObject &data);
     void preferencesReceived(const QJsonObject &preferences);
+    // Narrow observation from successful reads, including scoped dialog reads.
+    void dhtPreferenceObserved(const QJsonValue &enabled);
     void preferencesFailed(const QString &reason);
     void operationSucceeded(const QString &description);
     void operationFailed(const QString &description, const QString &reason);

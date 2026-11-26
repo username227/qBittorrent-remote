@@ -580,6 +580,7 @@ void RemotePreferencesDialog::loadLocalBehaviorControls()
     unlock(m_ui->actionTorrentDlOnDblClBox);
     unlock(m_ui->actionTorrentFnOnDblClBox);
     unlock(m_ui->checkBoxFreeDiskSpaceStatusBar);
+    unlock(m_ui->checkBoxExternalIPStatusBar, tr("Show the last external IPv4/IPv6 addresses reported by the selected server. No external lookup is performed."));
     unlock(m_ui->checkBoxHideZeroStatusFilters);
     unlock(m_ui->windowStateComboBox);
     if (DesktopAutostart::available())
@@ -679,6 +680,8 @@ void RemotePreferencesDialog::loadLocalBehaviorControls()
         QStringLiteral("folder"));
     m_ui->checkBoxHideZeroStatusFilters->setChecked(m_settings.value(
         QStringLiteral("Preferences/Behavior/HideZeroStatusFilters"), false).toBool());
+    m_ui->checkBoxExternalIPStatusBar->setChecked(m_settings.value(
+        QStringLiteral("Preferences/Behavior/ShowExternalIP"), false).toBool());
     m_ui->checkBoxFreeDiskSpaceStatusBar->setChecked(m_settings.value(
         QStringLiteral("Preferences/Behavior/ShowServerFreeSpace"), false).toBool());
     m_ui->checkBoxFreeDiskSpaceStatusBar->setToolTip(tr(
@@ -721,6 +724,7 @@ void RemotePreferencesDialog::loadLocalBehaviorControls()
                 this, [dirty](int) { dirty(); });
     connect(m_ui->checkBoxFreeDiskSpaceStatusBar, &QCheckBox::toggled,
             this, dirty);
+    connect(m_ui->checkBoxExternalIPStatusBar, &QCheckBox::toggled, this, dirty);
     connect(m_ui->checkBoxHideZeroStatusFilters, &QCheckBox::toggled,
             this, dirty);
 }
@@ -4159,6 +4163,8 @@ bool RemotePreferencesDialog::applyLocalChanges()
             m_ui->actionTorrentDlOnDblClBox->currentData().toString());
         m_settings.setValue(QStringLiteral("Preferences/Behavior/DoubleClickCompleted"),
             m_ui->actionTorrentFnOnDblClBox->currentData().toString());
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/ShowExternalIP"),
+            m_ui->checkBoxExternalIPStatusBar->isChecked());
         m_settings.setValue(QStringLiteral("Preferences/Behavior/ShowServerFreeSpace"),
             m_ui->checkBoxFreeDiskSpaceStatusBar->isChecked());
         m_settings.setValue(QStringLiteral("Preferences/Behavior/HideZeroStatusFilters"),
