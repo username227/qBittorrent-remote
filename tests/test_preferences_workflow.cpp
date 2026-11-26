@@ -428,9 +428,19 @@ private slots:
         QTRY_COMPARE(table->horizontalHeader()->offset(), scroll->maximum());
         QVERIFY(table->visualItemRect(table->item(0, 1)).right() <= table->viewport()->rect().right());
         QCOMPARE(dialog.width(), width);
+        const int longColumnWidth = table->columnWidth(1);
         selector->setCurrentIndex(selector->findData(second.id));
+        QTRY_COMPARE(table->item(0, 1)->text(), QStringLiteral("/share/Public"));
+        QTRY_VERIFY(table->columnWidth(1) < longColumnWidth);
+        // Fonts, theme metrics and temporary directory lengths differ by
+        // platform. Give the short mappings sufficient actual viewport space,
+        // rather than assuming they fit a particular dialog width.
+        QTRY_VERIFY(table->horizontalHeader()->length() < longColumnWidth);
+        const int extraWidth = qMax(0, table->horizontalHeader()->length() - table->viewport()->width());
+        dialog.resize(dialog.width() + extraWidth + 40, dialog.height());
         QTRY_COMPARE(scroll->maximum(), 0);
         QTRY_VERIFY(!scroll->isVisible());
+        dialog.resize(width, dialog.height());
         selector->setCurrentIndex(selector->findData(first.id));
         QTRY_VERIFY(scroll->isVisible() && scroll->maximum() > 0);
         QCOMPARE(table->item(0, 1)->text(), remote);
