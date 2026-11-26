@@ -2833,6 +2833,8 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
     connect(connection->pane, &ServerPane::addPeersRequested, session, &Remote::RemoteSession::addTorrentPeers);
     connect(connection->pane, &ServerPane::banPeersRequested, session, &Remote::RemoteSession::banTorrentPeers);
     connect(session, &Remote::RemoteSession::torrentPeerActionFinished, connection->pane, &ServerPane::finishPeerAction);
+    connect(connection->pane, &ServerPane::webSeedActionRequested, session, &Remote::RemoteSession::changeWebSeeds);
+    connect(session, &Remote::RemoteSession::webSeedActionFinished, connection->pane, &ServerPane::finishWebSeedAction);
     connect(connection->pane, &ServerPane::commentEditRequested,
             session, &Remote::RemoteSession::setTorrentComment);
     connect(session, &Remote::RemoteSession::torrentCommentEditFinished,

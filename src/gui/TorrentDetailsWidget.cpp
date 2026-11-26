@@ -708,7 +708,41 @@ TorrentDetailsWidget::TorrentDetailsWidget(QWidget *parent)
     });
     m_ui->vBoxLayoutPeerPage->addWidget(m_peers);
 
-    m_ui->listWebSeeds->setObjectName(QStringLiteral("torrentWebSeeds"));
+    auto *sources = m_ui->listWebSeeds;
+    sources->setObjectName(QStringLiteral("torrentWebSeeds"));
+    sources->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    sources->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(sources, &QWidget::customContextMenuRequested, this, [this, sources](const QPoint &pos) {
+        QMenu menu(this);
+        const auto selected = selectedWebSeeds();
+        auto *add = menu.addAction(QIcon(QStringLiteral(":/icons/list-add.svg")), tr("Add web seed..."));
+        add->setObjectName(QStringLiteral("addWebSeed"));
+        add->setEnabled(canEditWebSeeds());
+        connect(add, &QAction::triggered, this, &TorrentDetailsWidget::addWebSeed);
+        auto *remove = menu.addAction(QIcon(QStringLiteral(":/icons/list-remove.svg")), tr("Remove web seed"));
+        remove->setObjectName(QStringLiteral("removeWebSeeds"));
+        remove->setEnabled(canEditWebSeeds() && !selected.isEmpty());
+        connect(remove, &QAction::triggered, this, &TorrentDetailsWidget::removeWebSeeds);
+        menu.addSeparator();
+        auto *copy = menu.addAction(QIcon(QStringLiteral(":/icons/edit-copy.svg")), tr("Copy web seed URL"));
+        copy->setObjectName(QStringLiteral("copyWebSeeds"));
+        copy->setEnabled(!selected.isEmpty());
+        connect(copy, &QAction::triggered, this, &TorrentDetailsWidget::copyWebSeeds);
+        auto *edit = menu.addAction(QIcon(QStringLiteral(":/icons/edit-rename.svg")), tr("Edit web seed URL..."));
+        edit->setObjectName(QStringLiteral("editWebSeed"));
+        edit->setEnabled(canEditWebSeeds() && selected.size() == 1);
+        connect(edit, &QAction::triggered, this, &TorrentDetailsWidget::editWebSeed);
+        menu.exec(sources->viewport()->mapToGlobal(pos));
+    });
+    const auto shortcut = [this, sources](const QKeySequence &key, auto slot) {
+        auto *action = new QShortcut(key, sources);
+        action->setContext(Qt::WidgetShortcut);
+        connect(action, &QShortcut::activated, this, slot);
+    };
+    shortcut(QKeySequence(Qt::Key_F2), &TorrentDetailsWidget::editWebSeed);
+    shortcut(QKeySequence::Delete, &TorrentDetailsWidget::removeWebSeeds);
+    shortcut(QKeySequence::Copy, &TorrentDetailsWidget::copyWebSeeds);
+    connect(sources, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem *) { editWebSeed(); });
 
     auto *tree = m_ui->filesList;
     tree->setObjectName(QStringLiteral("torrentContent"));
@@ -874,7 +908,11 @@ void TorrentDetailsWidget::showTab(int tab)
         return;
     if (m_currentTab != tab && tab == 1)
         m_trackerTiersKnown = false;
-    if (m_currentTab != tab) m_peerPrivacy = QJsonValue();
+    if (m_currentTab != tab)
+    {
+        m_peerPrivacy = QJsonValue();
+        m_webSeedsKnown = false;
+    }
     m_currentTab = tab;
     m_ui->stackedProperties->setCurrentIndex(tab);
     updateCommentEditor();
@@ -928,6 +966,7 @@ void TorrentDetailsWidget::resetPages()
     m_peerPrivacy = QJsonValue();
     m_peerRecords = {};
     m_peers->setRowCount(0);
+    m_webSeedsKnown = false;
     m_ui->listWebSeeds->clear();
     m_ui->filesList->clear();
     m_error->hide();
@@ -1420,17 +1459,105 @@ void TorrentDetailsWidget::displayPeers(const QJsonObject &reply)
     m_peers->setUpdatesEnabled(true);
 }
 
+QStringList TorrentDetailsWidget::selectedWebSeeds() const
+{
+    QStringList urls;
+    for (const auto *item : m_ui->listWebSeeds->selectedItems())
+        urls.append(item->text());
+    return urls;
+}
+
+bool TorrentDetailsWidget::canEditWebSeeds() const
+{
+    return m_currentTab == 3 && !m_hash.isEmpty() && m_webSeedsKnown && m_pendingWebSeedHash.isEmpty();
+}
+
+void TorrentDetailsWidget::addWebSeed()
+{
+    if (!canEditWebSeeds()) return;
+    const QString hash = m_hash;
+    bool ok = false;
+    const auto url = QInputDialog::getText(this, tr("Add web seed"), tr("Add web seed:"),
+        QLineEdit::Normal, QStringLiteral("http://www."), &ok).trimmed();
+    if (!ok || hash != m_hash || !canEditWebSeeds()) return;
+    if (!Remote::validWebSeedUrl(url))
+    {
+        QMessageBox::warning(this, tr("Add web seed"), tr("Enter a valid HTTP, HTTPS or FTP URL."));
+        return;
+    }
+    for (int row = 0; row < m_ui->listWebSeeds->count(); ++row)
+        if (QUrl(m_ui->listWebSeeds->item(row)->text()) == QUrl(url))
+        {
+            QMessageBox::warning(this, tr("Add web seed"), tr("This web seed is already in the list."));
+            return;
+        }
+    m_pendingWebSeedHash = hash;
+    emit webSeedActionRequested(hash, Remote::WebSeedAction::Add, {url}, {});
+}
+
+void TorrentDetailsWidget::editWebSeed()
+{
+    const auto selected = selectedWebSeeds();
+    if (!canEditWebSeeds() || selected.size() != 1) return;
+    const QString hash = m_hash;
+    const QString old = selected.first();
+    bool ok = false;
+    const QString replacement = QInputDialog::getText(this, tr("Web seed editing"),
+        tr("Web seed URL:"), QLineEdit::Normal, old, &ok).trimmed();
+    if (!ok || hash != m_hash || !canEditWebSeeds() || QUrl(old) == QUrl(replacement)) return;
+    if (m_ui->listWebSeeds->findItems(old, Qt::MatchExactly).isEmpty()) return;
+    if (!Remote::validWebSeedUrl(replacement))
+    {
+        QMessageBox::warning(this, tr("Web seed editing"), tr("Enter a valid HTTP, HTTPS or FTP URL."));
+        return;
+    }
+    for (int row = 0; row < m_ui->listWebSeeds->count(); ++row)
+        if (QUrl(m_ui->listWebSeeds->item(row)->text()) == QUrl(replacement))
+        {
+            QMessageBox::warning(this, tr("Web seed editing"), tr("This web seed is already in the list."));
+            return;
+        }
+    m_pendingWebSeedHash = hash;
+    emit webSeedActionRequested(hash, Remote::WebSeedAction::Edit, {old}, replacement);
+}
+
+void TorrentDetailsWidget::removeWebSeeds()
+{
+    const auto urls = selectedWebSeeds();
+    if (!canEditWebSeeds() || urls.isEmpty()) return;
+    m_pendingWebSeedHash = m_hash;
+    emit webSeedActionRequested(m_hash, Remote::WebSeedAction::Remove, urls, {});
+}
+
+void TorrentDetailsWidget::copyWebSeeds()
+{
+    const auto urls = selectedWebSeeds();
+    if (!urls.isEmpty()) QApplication::clipboard()->setText(urls.join(QLatin1Char('\n')));
+}
+
+void TorrentDetailsWidget::finishWebSeedAction(const QString &hash)
+{
+    if (m_pendingWebSeedHash != hash) return;
+    m_pendingWebSeedHash.clear();
+    if (m_hash == hash) m_webSeedsKnown = false;
+}
+
 void TorrentDetailsWidget::displayWebSeeds(const QJsonArray &sources)
 {
-    m_ui->listWebSeeds->clear();
+    auto *list = m_ui->listWebSeeds;
+    QStringList incoming;
     for (const QJsonValue &entry : sources)
     {
         const QString address = entry.isObject()
-            ? entry.toObject().value(QStringLiteral("url")).toString()
-            : entry.toString();
-        if (!address.isEmpty())
-            m_ui->listWebSeeds->addItem(address);
+            ? entry.toObject().value(QStringLiteral("url")).toString() : entry.toString();
+        if (!address.isEmpty() && !incoming.contains(address)) incoming.append(address);
     }
+    // Keep existing items, selection and scroll position across polling.
+    for (int row = list->count() - 1; row >= 0; --row)
+        if (!incoming.contains(list->item(row)->text())) delete list->takeItem(row);
+    for (const auto &url : incoming)
+        if (list->findItems(url, Qt::MatchExactly).isEmpty()) list->addItem(url);
+    m_webSeedsKnown = true;
 }
 
 void TorrentDetailsWidget::setContentPathMappings(
@@ -1839,6 +1966,7 @@ void TorrentDetailsWidget::displayError(const QString &hash, int tab, const QStr
         m_trackerTiersKnown = false;
         updateTrackerTierButtons();
     }
+    if (tab == 3) m_webSeedsKnown = false;
     if (tab == 2)
     {
         m_peerRecords = {};

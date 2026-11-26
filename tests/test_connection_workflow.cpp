@@ -470,9 +470,45 @@ public:
                                     response = R"({"rid":1,"full_update":true,"peers":{"192.0.2.1:61413":{"client":"qBittorrent","country_code":"US","progress":0.75,"dl_speed":1024,"up_speed":2048,"flags":"D","connection":"TCP","ip":"192.0.2.1","port":61413,"downloaded":1048576,"uploaded":1024,"relevance":0.25,"files":"data/file.bin"}}})";
                             }
                             else if (path.startsWith("/api/v2/torrents/webseeds?"))
-                                response = R"([{"url":"https://mirror.example/file.iso"}])";
+                            {
+                                const auto hash = QUrlQuery(QString::fromLatin1(
+                                    path.mid(path.indexOf('?') + 1))).queryItemValue(QStringLiteral("hash"));
+                                QJsonArray seeds;
+                                for (const auto &url : m_webSeeds.value(hash, {QStringLiteral("https://mirror.example/file.iso")}))
+                                    seeds.append(QJsonObject{{"url", url}});
+                                response = QJsonDocument(seeds).toJson(QJsonDocument::Compact);
+                            }
                             else
                                 response = R"([{"index":0,"name":"data/file-one.bin","size":512,"progress":1,"priority":1},{"index":1,"name":"data/file-two.bin","size":512,"progress":0.5,"priority":6}])";
+                        }
+                        else if ((path == "/api/v2/torrents/addWebSeeds" || path == "/api/v2/torrents/editWebSeed"
+                                  || path == "/api/v2/torrents/removeWebSeeds") && hasCookie && fields.value(0) == "POST")
+                        {
+                            m_commands.append({path, body});
+                            const QUrlQuery form(QString::fromUtf8(body));
+                            const auto hash = form.queryItemValue(QStringLiteral("hash"), QUrl::FullyDecoded);
+                            auto seeds = m_webSeeds.value(hash, {QStringLiteral("https://mirror.example/file.iso")});
+                            const auto decode = [](const QString &value) { return QUrl::fromPercentEncoding(value.toLatin1()); };
+                            bool valid = !hash.isEmpty() && !m_rejectCommands;
+                            if (path == "/api/v2/torrents/editWebSeed")
+                            {
+                                const auto old = decode(form.queryItemValue(QStringLiteral("origUrl"), QUrl::FullyDecoded));
+                                const auto replacement = decode(form.queryItemValue(QStringLiteral("newUrl"), QUrl::FullyDecoded));
+                                valid = valid && seeds.contains(old) && Remote::validWebSeedUrl(replacement);
+                                if (valid) seeds[seeds.indexOf(old)] = replacement;
+                            }
+                            else
+                            {
+                                for (const auto &encoded : form.queryItemValue(QStringLiteral("urls"), QUrl::FullyDecoded).split(QLatin1Char('|')))
+                                {
+                                    const auto url = decode(encoded);
+                                    valid = valid && Remote::validWebSeedUrl(url);
+                                    if (path == "/api/v2/torrents/addWebSeeds" && !seeds.contains(url)) seeds.append(url);
+                                    else if (path == "/api/v2/torrents/removeWebSeeds") seeds.removeAll(url);
+                                }
+                            }
+                            if (valid) { m_webSeeds.insert(hash, seeds); code = 204; }
+                            else { code = 400; response = "Invalid web seed"; }
                         }
                         else if ((path == "/api/v2/torrents/addPeers" || path == "/api/v2/transfer/banPeers")
                                  && hasCookie && fields.value(0) == "POST")
@@ -1337,6 +1373,7 @@ private:
     QHash<QString, int> m_peerConnections;
     QList<QByteArray> m_detailRequests;
     QHash<QString, QString> m_torrentComments;
+    QHash<QString, QStringList> m_webSeeds;
     bool m_keepDemoTorrents = false;
     bool m_rejectCommands = false;
     int m_syncRequests = 0;
@@ -8829,6 +8866,97 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(label->text().isEmpty(), 6000);
         QVERIFY(modern.lastCommandBody(endpoint).endsWith("&comment="));
         QCOMPARE(legacy.commandsFor(endpoint), 0);
+    }
+
+    void webSeedsUseNativeActionsAndServerReadback()
+    {
+        DemoQbittorrentServer server(true);
+        server.enableNativePresentationDemo();
+        server.enableDetailsDemo();
+        QVERIFY(server.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("profiles.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        QTRY_VERIFY(window.isVisible());
+        openConnectDialog(window, server.url());
+        auto *table = window.findChild<QTableView *>("torrentList");
+        auto *tabs = window.findChild<PropTabBar *>();
+        auto *sources = window.findChild<QListWidget *>("torrentWebSeeds");
+        QVERIFY(table && tabs && sources);
+        QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 2, 6000);
+        int row = -1;
+        for (int i = 0; i < table->model()->rowCount(); ++i)
+            if (table->model()->index(i, 0).data().toString() == QStringLiteral("Complete seed")) row = i;
+        QVERIFY(row >= 0);
+        table->selectRow(row);
+        tabs->setCurrentIndex(3);
+        QTRY_COMPARE_WITH_TIMEOUT(sources->count(), 1, 6000);
+
+        // Exercise actual popup actions and the nested native input dialog.
+        const auto menuAction = [&](const QString &name, const QString &value, bool accept, bool inputExpected) {
+            bool invoked = false, opened = false, timedOut = false;
+            QTimer watchdog;
+            watchdog.setSingleShot(true);
+            connect(&watchdog, &QTimer::timeout, &window, [&]() {
+                timedOut = true;
+                if (auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget())) dialog->reject();
+                if (auto *popup = QApplication::activePopupWidget()) popup->close();
+            });
+            watchdog.start(6000);
+            QTimer::singleShot(0, &window, [&]() {
+                auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+                if (!menu) return;
+                for (auto *action : menu->actions())
+                {
+                    if (action->objectName() != name || !action->isEnabled()) continue;
+                    invoked = true;
+                    if (inputExpected)
+                        QTimer::singleShot(0, &window, [&]() {
+                            auto *dialog = qobject_cast<QInputDialog *>(QApplication::activeModalWidget());
+                            if (!dialog) return;
+                            opened = true;
+                            dialog->setTextValue(value);
+                            if (accept) dialog->accept(); else dialog->reject();
+                        });
+                    action->trigger();
+                    break;
+                }
+                menu->close();
+            });
+            QVERIFY(QMetaObject::invokeMethod(sources, "customContextMenuRequested", Qt::DirectConnection,
+                Q_ARG(QPoint, QPoint(10, 10))));
+            QVERIFY(invoked && !timedOut && (!inputExpected || opened));
+        };
+        const QByteArray add = "/api/v2/torrents/addWebSeeds";
+        const QByteArray edit = "/api/v2/torrents/editWebSeed";
+        const QByteArray remove = "/api/v2/torrents/removeWebSeeds";
+        const QString url = QStringLiteral("https://mirror.example/a%20b?x=a%7Cb&y=+");
+        const QString replacement = QStringLiteral("https://other.example/new%2Ffile?x=%25");
+        menuAction(QStringLiteral("addWebSeed"), url, false, true);
+        QCOMPARE(server.commandsFor(add), 0);
+        menuAction(QStringLiteral("addWebSeed"), url, true, true);
+        QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor(add), 1, 6000);
+        QTRY_COMPARE_WITH_TIMEOUT(sources->count(), 2, 6000);
+        QVERIFY(server.lastCommandBody(add).contains("%252520"));
+        QCOMPARE(QUrlQuery(QString::fromUtf8(server.lastCommandBody(add))).queryItemValue("hash"),
+            QStringLiteral("0000000000000000000000000000000000000001"));
+        auto matches = sources->findItems(url, Qt::MatchExactly);
+        QCOMPARE(matches.size(), 1);
+        sources->clearSelection();
+        matches.first()->setSelected(true);
+        menuAction(QStringLiteral("copyWebSeeds"), {}, false, false);
+        QCOMPARE(QApplication::clipboard()->text(), url);
+        menuAction(QStringLiteral("editWebSeed"), replacement, true, true);
+        QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor(edit), 1, 6000);
+        QTRY_COMPARE_WITH_TIMEOUT(sources->findItems(replacement, Qt::MatchExactly).size(), 1, 6000);
+        QVERIFY(sources->findItems(url, Qt::MatchExactly).isEmpty());
+        sources->selectAll();
+        menuAction(QStringLiteral("removeWebSeeds"), {}, true, false);
+        QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor(remove), 1, 6000);
+        QTRY_COMPARE_WITH_TIMEOUT(sources->count(), 0, 6000);
     }
 
     void nativeTorrentDetailsUseSelectedRemoteServerAndFilePriorityApis()

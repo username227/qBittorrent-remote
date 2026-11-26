@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
+#include "api/WebSeedUrl.h"
 
 #include "api/ServerAddress.h"
 #include "api/ServerProfile.h"
@@ -96,6 +97,7 @@ public:
     void setTorrentComment(const QString &hash, const QString &comment);
     void addTorrentPeers(const QString &hash, const QStringList &peers);
     void banTorrentPeers(const QString &hash, const QStringList &peers);
+    void changeWebSeeds(const QString &hash, WebSeedAction action, const QStringList &urls, const QString &replacement);
     void setTorrentLocation(const QStringList &hashes, const QString &remotePath);
     void setTorrentCategory(const QStringList &hashes, const QString &category);
     void createAndAssignTorrentCategory(const QStringList &hashes, const QString &category);
@@ -188,6 +190,7 @@ signals:
     void trackerTierEditFinished(const QString &hash);
     void torrentCommentEditFinished(const QString &hash);
     void torrentPeerActionFinished(const QString &hash, const QString &message);
+    void webSeedActionFinished(const QString &hash);
     // Identifies the exact edit for bulk progress and rejected requests.
     void torrentTrackerEditFinished(const QString &hash, const QString &oldUrl,
                                     bool success, const QString &reason);

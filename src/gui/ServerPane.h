@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
+#include "api/WebSeedUrl.h"
 
 #include "api/PathMappingStore.h"
 #include <QJsonObject>
@@ -83,6 +84,7 @@ public:
     void setCommentEditingSupported(bool supported);
     void finishCommentEdit(const QString &hash);
     void finishPeerAction(const QString &hash, const QString &message);
+    void finishWebSeedAction(const QString &hash);
     void refreshFontMetrics();
     void saveLayout(QSettings &settings, const QString &profileId) const;
     void restoreLayout(QSettings &settings, const QString &profileId);
@@ -109,6 +111,8 @@ signals:
     void commentEditRequested(const QString &hash, const QString &comment);
     void addPeersRequested(const QString &hash, const QStringList &peers);
     void banPeersRequested(const QString &hash, const QStringList &peers);
+    void webSeedActionRequested(const QString &hash, Remote::WebSeedAction action,
+                                const QStringList &urls, const QString &replacement);
 
 private:
     void showTorrentContextMenu(const QPoint &position);

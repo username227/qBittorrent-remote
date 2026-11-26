@@ -438,6 +438,7 @@ ServerPane::ServerPane(QWidget *parent) : QWidget(parent)
             this, &ServerPane::trackerTiersRequested);
     connect(m_details, &TorrentDetailsWidget::addPeersRequested, this, &ServerPane::addPeersRequested);
     connect(m_details, &TorrentDetailsWidget::banPeersRequested, this, &ServerPane::banPeersRequested);
+    connect(m_details, &TorrentDetailsWidget::webSeedActionRequested, this, &ServerPane::webSeedActionRequested);
     connect(m_details, &TorrentDetailsWidget::commentEditRequested,
             this, &ServerPane::commentEditRequested);
     m_detailTabs->setCurrentIndex(0);
@@ -1250,6 +1251,12 @@ void ServerPane::requestSelectedDetails()
 void ServerPane::setCommentEditingSupported(bool supported)
 {
     m_details->setCommentEditingSupported(supported);
+}
+
+void ServerPane::finishWebSeedAction(const QString &hash)
+{
+    m_details->finishWebSeedAction(hash);
+    requestSelectedDetails();
 }
 
 void ServerPane::finishPeerAction(const QString &hash, const QString &message)
