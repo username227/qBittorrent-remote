@@ -524,6 +524,7 @@ void MainWindow::showEmptyPane()
     if (!m_emptyPane && m_views && m_connections.isEmpty())
     {
         m_emptyPane = new ServerPane(m_views);
+        m_emptyPane->setSpeedGraphsEnabled(m_settings->value(QStringLiteral("Preferences/Advanced/EnableSpeedGraphs"), true).toBool());
         m_emptyPane->setContentDragEnabled(m_settings->value(
             QStringLiteral("Preferences/Behavior/TorrentContentDragEnabled"), true).toBool());
         m_views->addTab(m_emptyPane, upstreamIcon("folder-remote"), tr("Transfers"));
@@ -1633,6 +1634,13 @@ void MainWindow::updateTorrentCount()
 void MainWindow::applyLocalBehaviorPreferences()
 {
     updateTraySettings();
+    const int refreshInterval = m_settings->value(QStringLiteral("Preferences/Advanced/RefreshInterval"), 2000).toInt();
+    const bool speedGraphs = m_settings->value(QStringLiteral("Preferences/Advanced/EnableSpeedGraphs"), true).toBool();
+    const bool menuIcons = m_settings->value(QStringLiteral("Preferences/Advanced/EnableMenuIcons"), true).toBool();
+    QCoreApplication::setAttribute(Qt::AA_DontShowIconsInMenus, !menuIcons);
+    for (auto *menu : findChildren<QMenu *>()) menu->updateGeometry();
+    if (m_completionNotifier)
+        m_completionNotifier->setTimeout(m_settings->value(QStringLiteral("Preferences/Advanced/NotificationTimeout"), -1).toInt());
     const bool contentDrag = m_settings->value(
         QStringLiteral("Preferences/Behavior/TorrentContentDragEnabled"), true).toBool();
     const bool stateColors = m_settings->value(
@@ -1652,7 +1660,7 @@ void MainWindow::applyLocalBehaviorPreferences()
         QStringLiteral("Preferences/Behavior/HideZeroStatusFilters"), false).toBool();
     const bool rssImages = m_settings->value(QStringLiteral("Preferences/RSS/LoadExternalImages"), false).toBool();
     const auto apply = [alternating, hideZero, mode, hideZeroStatus,
-                        stateColors, progressColor, separateTracker, contentDrag, rssImages](ServerPane *pane) {
+                        stateColors, progressColor, separateTracker, contentDrag, rssImages, speedGraphs](ServerPane *pane) {
         if (!pane)
             return;
         pane->table()->setAlternatingRowColors(alternating);
@@ -1662,11 +1670,15 @@ void MainWindow::applyLocalBehaviorPreferences()
         pane->setProgressFollowsStateColors(progressColor);
         pane->setContentDragEnabled(contentDrag);
         pane->setRssLoadExternalImages(rssImages);
+        pane->setSpeedGraphsEnabled(speedGraphs);
         pane->setSeparateTrackerStatusFilter(separateTracker);
     };
     apply(m_emptyPane);
     for (const auto &connection : m_connections)
+    {
         apply(connection->pane);
+        if (connection->session) connection->session->setRefreshInterval(refreshInterval);
+    }
     updateServerFreeSpace();
 }
 
@@ -2198,7 +2210,8 @@ void MainWindow::observeTorrentCompletions(SessionContext &connection,
     }
     if (!completed.isEmpty())
         m_completionNotifier->deliver(connection.profile.name, completed,
-            m_settings->value(QStringLiteral("Preferences/Behavior/NotifyTorrentCompletion"), true).toBool(),
+            m_settings->value(QStringLiteral("Preferences/Advanced/DisplayNotifications"), true).toBool()
+                && m_settings->value(QStringLiteral("Preferences/Behavior/NotifyTorrentCompletion"), true).toBool(),
             m_settings->value(QStringLiteral("Preferences/Behavior/SoundTorrentCompletion"), false).toBool());
 }
 
@@ -2268,6 +2281,7 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
     auto connection = std::make_shared<SessionContext>();
     connection->profile = profile;
     connection->pane = new ServerPane(m_views);
+    connection->pane->setSpeedGraphsEnabled(m_settings->value(QStringLiteral("Preferences/Advanced/EnableSpeedGraphs"), true).toBool());
     connection->pane->setRssLoadExternalImages(m_settings->value(QStringLiteral("Preferences/RSS/LoadExternalImages"), false).toBool());
     connection->pane->setContentDragEnabled(m_settings->value(
         QStringLiteral("Preferences/Behavior/TorrentContentDragEnabled"), true).toBool());
@@ -2291,6 +2305,7 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
         QStringLiteral("Preferences/Behavior/SeparateTrackerStatus"), false).toBool());
     connection->session = new Remote::RemoteSession(this);
     auto *session = connection->session;
+    session->setRefreshInterval(m_settings->value(QStringLiteral("Preferences/Advanced/RefreshInterval"), 2000).toInt());
     m_connections.append(connection);
     connect(connection->pane, &ServerPane::sectionChanged, this, [this, connection]() {
         if (activeConnection() == connection) updateActiveUi();
@@ -3099,7 +3114,23 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
         [this, connection](const QJsonObject &payload) {
             if (!containsConnection(connection))
                 return;
+            // Initial and replacement snapshots establish a baseline only.
+            QStringList added;
+            const auto *model = connection->pane->model();
+            if (model->hasFullSync() && !payload.value("full_update").toBool()
+                && m_settings->value(QStringLiteral("Preferences/Advanced/DisplayNotifications"), true).toBool()
+                && m_settings->value(QStringLiteral("Preferences/Advanced/NotifyTorrentAdded"), false).toBool())
+            {
+                const auto patches = payload.value("torrents").toObject();
+                for (auto it = patches.constBegin(); it != patches.constEnd(); ++it)
+                    if (!model->torrents().contains(it.key()))
+                    {
+                        const QString name = it.value().toObject().value("name").toString();
+                        added.append(name.isEmpty() ? it.key() : name);
+                    }
+            }
             connection->pane->applySync(payload);
+            if (!added.isEmpty()) m_completionNotifier->deliverAdded(connection->profile.name, added);
             observeTorrentCompletions(*connection, payload);
             // No extra polling and no deletion from another server's data.
             // A partially accepted batch is retained in full if not confirmed.

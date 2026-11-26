@@ -18,6 +18,7 @@
 class QAction;
 class QComboBox;
 class QCheckBox;
+class QSpinBox;
 class QLineEdit;
 class QLabel;
 class QDialogButtonBox;
@@ -185,6 +186,8 @@ private:
     QSet<QString> m_advancedAddressValues;
     QHash<QString, QCheckBox *> m_advancedLocalChecks;
     QHash<QString, bool> m_advancedLocalBaseline;
+    QHash<QString, QSpinBox *> m_advancedLocalNumbers;
+    QHash<QString, int> m_advancedLocalNumberBaseline;
     bool m_behaviorDirty = false;
     bool m_rssImageBaseline = false;
     QString m_webUISubnets;

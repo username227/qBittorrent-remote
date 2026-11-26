@@ -290,6 +290,17 @@ private slots:
             QStringLiteral("advancedSettingsTable"));
         QVERIFY(advanced);
         QCOMPARE(advanced->rowCount(), 92);
+        int hiddenRows = 0;
+        for (int row = 0; row < advanced->rowCount(); ++row)
+        {
+            const auto *editor = advanced->cellWidget(row, 1);
+            QVERIFY(editor);
+            const bool unsupported = editor->objectName() == QLatin1String("advanced_OS_MEMORY_PRIORITY")
+                || editor->objectName() == QLatin1String("advanced_DOWNLOAD_TRACKER_FAVICON");
+            QCOMPARE(advanced->isRowHidden(row), unsupported);
+            if (advanced->isRowHidden(row)) ++hiddenRows;
+        }
+        QCOMPARE(hiddenRows, 2);
         QVERIFY(!advanced->horizontalHeader()->highlightSections());
         QCOMPARE(advanced->item(0, 0)->text(), QStringLiteral("qBittorrent Section"));
         QCOMPARE(advanced->item(35, 0)->text(), QStringLiteral("libtorrent Section"));

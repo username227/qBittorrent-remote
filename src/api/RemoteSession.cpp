@@ -824,6 +824,12 @@ void RemoteSession::pumpOperations()
     });
 }
 
+void RemoteSession::setRefreshInterval(int milliseconds)
+{
+    const int interval = qBound(30, milliseconds, 99999);
+    if (m_syncTimer.interval() != interval) m_syncTimer.setInterval(interval);
+}
+
 void RemoteSession::requestTorrentDetails(const QString &hash, int tab)
 {
     static const QRegularExpression validHash(

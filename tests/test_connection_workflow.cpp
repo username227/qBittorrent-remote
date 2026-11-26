@@ -4980,10 +4980,13 @@ private slots:
             {"memory_working_set_limit", 256}, {"mark_of_the_web", false},
             {"announce_ip", ""}, {"announce_port", 0}, {"start_paused", false},
             {"shutdown_timeout", -1}, {"python_executable_path", ""},
+            {"resolve_peer_countries", false},
             {"listen_port", 6881}, {"proxy_type", "None"}
         };
         legacy.setServerPreferences(values);
-        modern.setServerPreferences(values);
+        QJsonObject modernValues = values;
+        modernValues.insert("resolve_peer_host_names", false);
+        modern.setServerPreferences(modernValues);
         const QJsonArray ifaces{QJsonObject{{"name", "NAS interface"}, {"value", "nas0"}},
             QJsonObject{{"name", "VPN tunnel"}, {"value", "vpn&1"}}};
         const QHash<QString, QJsonArray> addresses{{"nas0", QJsonArray{"10.1.0.2"}},
@@ -5025,6 +5028,37 @@ private slots:
                 QVERIFY(nav && apply && iface && addr && storage && disk && write && cache && mem && hash && motw);
                 nav->setCurrentRow(9);
                 QTRY_VERIFY_WITH_TIMEOUT(iface->isEnabled() && addr->isEnabled(), 6000);
+                auto *refresh = dlg->findChild<QSpinBox *>("advanced_LIST_REFRESH");
+                auto *graphs = dlg->findChild<QCheckBox *>("advanced_ENABLE_SPEED_WIDGET");
+                auto *notifications = dlg->findChild<QCheckBox *>("advanced_PROGRAM_NOTIFICATIONS");
+                auto *added = dlg->findChild<QCheckBox *>("advanced_TORRENT_ADDED_NOTIFICATIONS");
+                auto *timeout = dlg->findChild<QSpinBox *>("advanced_NOTIFICATION_TIMEOUT");
+                auto *menuIcons = dlg->findChild<QCheckBox *>("advanced_ENABLE_ICONS_IN_MENUS");
+                auto *history = dlg->findChild<QSpinBox *>("advanced_SAVE_PATH_HISTORY_LENGTH");
+                auto *attached = dlg->findChild<QCheckBox *>("advanced_USE_ATTACHED_ADD_NEW_TORRENT_DIALOG");
+                QVERIFY(refresh && graphs && notifications && added && timeout && menuIcons && history && attached);
+                QVERIFY(refresh->isEnabled() && graphs->isEnabled() && notifications->isEnabled() && added->isEnabled()
+                    && timeout->isEnabled() && menuIcons->isEnabled() && history->isEnabled() && attached->isEnabled());
+                QCOMPARE(refresh->value(), 2000);
+                QVERIFY(graphs->isChecked() && notifications->isChecked() && attached->isChecked() && menuIcons->isChecked());
+                QVERIFY(!added->isChecked());
+                refresh->setValue(500);
+                graphs->setChecked(false);
+                notifications->setChecked(false);
+                added->setChecked(true);
+                timeout->setValue(3000);
+                menuIcons->setChecked(false);
+                history->setValue(2);
+                attached->setChecked(false);
+                QVERIFY(apply->isEnabled());
+                refresh->setValue(2000);
+                graphs->setChecked(true);
+                notifications->setChecked(true);
+                added->setChecked(false);
+                timeout->setValue(-1);
+                menuIcons->setChecked(true);
+                history->setValue(8);
+                attached->setChecked(true);
                 QCOMPARE(iface->currentData().toString(), QStringLiteral("nas0"));
                 QCOMPARE(addr->currentData().toString(), QStringLiteral("10.1.0.2"));
                 QCOMPARE(mem->maximum(), newer ? 1024 : 128);
@@ -5079,8 +5113,21 @@ private slots:
                 QCOMPARE(addr->findData(QStringLiteral("10.1.0.2")), -1);
                 addr->setCurrentIndex(addr->findData(QStringLiteral("10.2.0.3")));
                 storage->setCurrentIndex(1);
-                if (newer) disk->setCurrentIndex(4);
+                auto *countries = dlg->findChild<QCheckBox *>("advanced_RESOLVE_COUNTRIES");
+                auto *hosts = dlg->findChild<QCheckBox *>("advanced_RESOLVE_HOSTS");
+                QVERIFY(countries && hosts && countries->isEnabled());
+                QCOMPARE(hosts->isEnabled(), newer);
+                countries->setChecked(true);
+                if (newer) { disk->setCurrentIndex(4); hosts->setChecked(true); }
                 else cache->setValue(768);
+                refresh->setValue(500);
+                graphs->setChecked(false);
+                notifications->setChecked(false);
+                added->setChecked(true);
+                timeout->setValue(3000);
+                menuIcons->setChecked(false);
+                history->setValue(2);
+                attached->setChecked(false);
                 QVERIFY(apply->isEnabled());
                 if (newer)
                 {
@@ -5103,8 +5150,22 @@ private slots:
         }
         QCOMPARE(legacy.serverPreferences(), values);
         QCOMPARE(legacy.commandsFor("/api/v2/app/setPreferences"), 0);
+        QCOMPARE(settings.value("Preferences/Advanced/RefreshInterval").toInt(), 500);
+        QVERIFY(!settings.value("Preferences/Advanced/EnableSpeedGraphs").toBool());
+        QVERIFY(!settings.value("Preferences/Advanced/DisplayNotifications").toBool());
+        QVERIFY(settings.value("Preferences/Advanced/NotifyTorrentAdded").toBool());
+        QCOMPARE(settings.value("Preferences/Advanced/NotificationTimeout").toInt(), 3000);
+        QCOMPARE(settings.value("Preferences/Advanced/SavePathHistoryLength").toInt(), 2);
+        QVERIFY(!settings.value("Preferences/Advanced/AttachAddTorrentDialog").toBool());
+        QVERIFY(QCoreApplication::testAttribute(Qt::AA_DontShowIconsInMenus));
+        auto *speedButton = tabs->currentWidget()->findChild<QPushButton *>("remoteSpeedTabButton");
+        QVERIFY(speedButton && speedButton->isHidden());
+        const int before = modern.syncRequests();
+        QTRY_VERIFY_WITH_TIMEOUT(modern.syncRequests() >= before + 2, 2500);
+        QCoreApplication::setAttribute(Qt::AA_DontShowIconsInMenus, false);
         const QJsonObject delta{{"current_network_interface", "vpn&1"}, {"current_interface_address", "10.2.0.3"},
-            {"resume_data_storage_type", "SQLite"}, {"disk_io_type", 4}};
+            {"resume_data_storage_type", "SQLite"}, {"disk_io_type", 4},
+            {"resolve_peer_countries", true}, {"resolve_peer_host_names", true}};
         const QUrlQuery form(QString::fromUtf8(modern.lastCommandBody("/api/v2/app/setPreferences")));
         QCOMPARE(QJsonDocument::fromJson(form.queryItemValue("json", QUrl::FullyDecoded).toUtf8()).object(), delta);
         QCOMPARE(modern.commandsFor("/api/v2/app/setPreferences"), 1);

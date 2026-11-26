@@ -380,6 +380,12 @@ void ServerPane::setRssAvailable(Remote::RemoteSession *session, bool visible)
     m_sectionTabs->tabBar()->setVisible(visible && m_rssWidget);
 }
 
+void ServerPane::setSpeedGraphsEnabled(bool enabled)
+{
+    m_speedGraphsEnabled = enabled;
+    m_detailTabs->setSpeedTabVisible(enabled);
+}
+
 void ServerPane::setRssLoadExternalImages(bool enabled)
 {
     m_rssLoadExternalImages = enabled;
@@ -452,9 +458,10 @@ void ServerPane::applySync(const QJsonObject &payload)
     m_sidebar->setGroupActionsEnabled(m_hasFullSync);
     m_sidebar->updateCounts(m_model->torrents(), m_categories, m_tags, m_trackers);
     static_cast<TorrentFilterProxyModel *>(m_proxy)->refresh();
-    m_details->appendRates(
-        m_serverState.value(QStringLiteral("dl_info_speed")).toDouble(),
-        m_serverState.value(QStringLiteral("up_info_speed")).toDouble());
+    if (m_speedGraphsEnabled)
+        m_details->appendRates(
+            m_serverState.value(QStringLiteral("dl_info_speed")).toDouble(),
+            m_serverState.value(QStringLiteral("up_info_speed")).toDouble());
     if (!m_selectedHash.isEmpty())
     {
         if (m_model->torrents().contains(m_selectedHash))

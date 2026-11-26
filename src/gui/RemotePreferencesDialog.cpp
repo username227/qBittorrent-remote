@@ -2866,6 +2866,20 @@ void RemotePreferencesDialog::buildAdvancedPage()
         return editor;
     };
 
+    const auto localNumber = [this, table](const char *name, int fallback, int minimum, int maximum,
+                                         const QString &suffix) {
+        auto *editor = new QSpinBox(table);
+        editor->setRange(minimum, maximum);
+        editor->setSuffix(suffix);
+        const QString key = QStringLiteral("Preferences/Advanced/") + QString::fromLatin1(name);
+        editor->setValue(m_settings.value(key, fallback).toInt());
+        editor->setProperty("advancedLocal", true);
+        m_advancedLocalNumbers.insert(key, editor);
+        m_advancedLocalNumberBaseline.insert(key, editor->value());
+        connect(editor, &QSpinBox::valueChanged, this, [this] { updateButtons(); });
+        return editor;
+    };
+
     section(tr("qBittorrent Section"), "https://github.com/qbittorrent/qBittorrent/wiki/Explanation-of-Options-in-qBittorrent#Advanced");
     row("RESUME_DATA_STORAGE", tr("Resume data storage type (requires restart)"), combo({tr("Fastresume files"), tr("SQLite database (experimental)")}));
     row("TORRENT_CONTENT_REMOVE_OPTION", tr("Torrent content removing mode"), combo({tr("Delete files permanently"), tr("Move files to trash (if possible)")}));
@@ -2879,20 +2893,20 @@ void RemotePreferencesDialog::buildAdvancedPage()
     row("CONFIRM_RECHECK_TORRENT", tr("Confirm torrent recheck"), localCheck("ConfirmTorrentRecheck", false));
     row("RECHECK_COMPLETED", tr("Recheck torrents on completion"), check());
     row("APP_INSTANCE_NAME", tr("Customize application instance name"), line());
-    row("LIST_REFRESH", tr("Refresh interval"), spin(30, 99999, tr(" ms"), tr("")));
+    row("LIST_REFRESH", tr("Refresh interval"), localNumber("RefreshInterval", 2000, 30, 99999, tr(" ms")));
     row("RESOLVE_HOSTS", tr("Resolve peer host names"), check());
     row("RESOLVE_COUNTRIES", tr("Resolve peer countries"), check());
-    row("PROGRAM_NOTIFICATIONS", tr("Display notifications"), check());
-    row("TORRENT_ADDED_NOTIFICATIONS", tr("Display notifications for added torrents"), check());
-    row("NOTIFICATION_TIMEOUT", tr("Notification timeout [0: infinite, -1: system default]"), spin(-1, std::numeric_limits<int>::max(), tr(" ms"), tr("")));
+    row("PROGRAM_NOTIFICATIONS", tr("Display notifications"), localCheck("DisplayNotifications", true));
+    row("TORRENT_ADDED_NOTIFICATIONS", tr("Display notifications for added torrents"), localCheck("NotifyTorrentAdded", false));
+    row("NOTIFICATION_TIMEOUT", tr("Notification timeout [0: infinite, -1: system default]"), localNumber("NotificationTimeout", -1, -1, std::numeric_limits<int>::max(), tr(" ms")));
     row("CONFIRM_REMOVE_ALL_TAGS", tr("Confirm removal of all tags"), localCheck("ConfirmRemoveAllTags", true));
     row("CONFIRM_REMOVE_TRACKER_FROM_ALL_TORRENTS", tr("Confirm removal of tracker from all torrents"), localCheck("ConfirmRemoveTrackerFromAllTorrents", true));
     row("REANNOUNCE_WHEN_ADDRESS_CHANGED", tr("Reannounce to all trackers when IP or port changed"), check());
     row("DOWNLOAD_TRACKER_FAVICON", tr("Download tracker's favicon"), check());
-    row("SAVE_PATH_HISTORY_LENGTH", tr("Save path history length"), spin(0, 99, tr(""), tr("")));
-    row("ENABLE_SPEED_WIDGET", tr("Enable speed graphs"), check());
-    row("ENABLE_ICONS_IN_MENUS", tr("Enable icons in menus"), check());
-    row("USE_ATTACHED_ADD_NEW_TORRENT_DIALOG", tr("Attach \"Add new torrent\" dialog to main window"), check());
+    row("SAVE_PATH_HISTORY_LENGTH", tr("Save path history length"), localNumber("SavePathHistoryLength", 8, 0, 99, QString()));
+    row("ENABLE_SPEED_WIDGET", tr("Enable speed graphs"), localCheck("EnableSpeedGraphs", true));
+    row("ENABLE_ICONS_IN_MENUS", tr("Enable icons in menus"), localCheck("EnableMenuIcons", true));
+    row("USE_ATTACHED_ADD_NEW_TORRENT_DIALOG", tr("Attach \"Add new torrent\" dialog to main window"), localCheck("AttachAddTorrentDialog", true));
     row("TRACKER_STATUS", tr("Enable embedded tracker"), check());
     row("TRACKER_PORT", tr("Embedded tracker port"), spin(1, 65535, tr(""), tr("")));
     row("TRACKER_PORT_FORWARDING", tr("Enable port forwarding for embedded tracker"), check());
@@ -2959,6 +2973,19 @@ void RemotePreferencesDialog::buildAdvancedPage()
     row("I2P_INBOUND_LENGTH_VARIANCE", tr("I2P inbound length variance"), spin(-7, 7, tr(""), tr("")), "https://www.libtorrent.org/reference-Settings.html#i2p_inbound_length_variance");
     row("I2P_OUTBOUND_LENGTH_VARIANCE", tr("I2P outbound length variance"), spin(-7, 7, tr(""), tr("")), "https://www.libtorrent.org/reference-Settings.html#i2p_outbound_length_variance");
 
+    // Keep the upstream row definitions for a future supported implementation,
+    // but never present permanently nonfunctional controls as preferences.
+    for (const char *id : {"advanced_OS_MEMORY_PRIORITY", "advanced_DOWNLOAD_TRACKER_FAVICON"})
+    {
+        auto *editor = table->findChild<QWidget *>(QString::fromLatin1(id));
+        for (int row = 0; editor && row < table->rowCount(); ++row)
+            if (table->cellWidget(row, 1) == editor) table->setRowHidden(row, true);
+    }
+    auto *timeout = table->findChild<QSpinBox *>("advanced_NOTIFICATION_TIMEOUT");
+    timeout->setSpecialValueText(tr("-1 (system default)"));
+    timeout->setToolTip(tr("Local notification duration in milliseconds. The desktop notification service controls the final display duration."));
+    table->findChild<QSpinBox *>("advanced_LIST_REFRESH")->setToolTip(
+        tr("Local desktop polling interval for all connected servers. Short intervals increase server and network load."));
     m_ui->advPageLayout->addWidget(table, 1);
     table->scheduleRowHeights();
 }
@@ -2975,6 +3002,8 @@ void RemotePreferencesDialog::bindAdvancedRemoteControls()
         {"SAVE_STATISTICS_INTERVAL", "save_statistics_interval", 1},
         {"TORRENT_FILE_SIZE_LIMIT", "torrent_file_size_limit", 1048576},
         {"RECHECK_COMPLETED", "recheck_completed_torrents", 1},
+        {"RESOLVE_HOSTS", "resolve_peer_host_names", 1},
+        {"RESOLVE_COUNTRIES", "resolve_peer_countries", 1},
         {"REANNOUNCE_WHEN_ADDRESS_CHANGED", "reannounce_when_address_changed", 1},
         {"TRACKER_STATUS", "enable_embedded_tracker", 1},
         {"TRACKER_PORT", "embedded_tracker_port", 1},
@@ -3340,6 +3369,9 @@ bool RemotePreferencesDialog::hasAdvancedLocalChanges() const
 {
     for (auto it = m_advancedLocalChecks.constBegin(); it != m_advancedLocalChecks.constEnd(); ++it)
         if (it.value()->isChecked() != m_advancedLocalBaseline.value(it.key()))
+            return true;
+    for (auto it = m_advancedLocalNumbers.constBegin(); it != m_advancedLocalNumbers.constEnd(); ++it)
+        if (it.value()->value() != m_advancedLocalNumberBaseline.value(it.key()))
             return true;
     return false;
 }
@@ -4117,6 +4149,7 @@ bool RemotePreferencesDialog::applyLocalChanges()
         m_behaviorDirty = false;
         emit localBehaviorApplied();
     }
+    const bool advancedChanged = hasAdvancedLocalChanges();
     for (auto it = m_advancedLocalChecks.constBegin(); it != m_advancedLocalChecks.constEnd(); ++it)
     {
         const bool checked = it.value()->isChecked();
@@ -4126,6 +4159,27 @@ bool RemotePreferencesDialog::applyLocalChanges()
             m_advancedLocalBaseline.insert(it.key(), checked);
         }
     }
+    for (auto it = m_advancedLocalNumbers.constBegin(); it != m_advancedLocalNumbers.constEnd(); ++it)
+    {
+        const int value = it.value()->value();
+        if (value != m_advancedLocalNumberBaseline.value(it.key()))
+        {
+            m_settings.setValue(it.key(), value);
+            m_advancedLocalNumberBaseline.insert(it.key(), value);
+            if (it.key() == QLatin1String("Preferences/Advanced/SavePathHistoryLength"))
+            {
+                m_settings.beginGroup(QStringLiteral("AddTorrent/RemotePathHistory"));
+                for (const auto &key : m_settings.allKeys())
+                {
+                    const auto history = m_settings.value(key).toStringList().mid(0, value);
+                    if (history.isEmpty()) m_settings.remove(key);
+                    else m_settings.setValue(key, history);
+                }
+                m_settings.endGroup();
+            }
+        }
+    }
+    if (advancedChanged) emit localBehaviorApplied();
     if (m_ui->checkRSSLoadExternalImages->isChecked() != m_rssImageBaseline)
     {
         m_rssImageBaseline = m_ui->checkRSSLoadExternalImages->isChecked();

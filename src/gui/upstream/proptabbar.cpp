@@ -123,6 +123,7 @@ PropTabBar::PropTabBar(QWidget *parent)
             QIcon(QStringLiteral(":/icons/chart-line.svg")),
 #endif
             tr("Speed"), parent);
+    speedButton->setObjectName(QStringLiteral("remoteSpeedTabButton"));
     speedButton->setShortcut(Qt::ALT | Qt::Key_D);
     addWidget(speedButton);
     m_btnGroup->addButton(speedButton, SpeedTab);
@@ -136,8 +137,18 @@ int PropTabBar::currentIndex() const
     return m_currentIndex;
 }
 
+void PropTabBar::setSpeedTabVisible(bool visible)
+{
+    if (m_speedTabVisible == visible) return;
+    m_speedTabVisible = visible;
+    if (!visible && m_currentIndex == SpeedTab) setCurrentIndex(MainTab);
+    m_btnGroup->button(SpeedTab)->setVisible(visible);
+    m_btnGroup->button(SpeedTab)->setEnabled(visible);
+}
+
 void PropTabBar::setCurrentIndex(int index)
 {
+    if (index == SpeedTab && !m_speedTabVisible) return;
     if (index >= m_btnGroup->buttons().size())
         index = 0;
     // If asked to hide or if the currently selected tab is clicked

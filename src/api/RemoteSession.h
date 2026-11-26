@@ -151,6 +151,7 @@ public:
     void replaceTorrentTrackers(const QString &hash, const QString &previousEntries,
                                 const QString &replacementEntries, bool privateOrUnknown);
     void requestTorrentDetails(const QString &hash, int tab);
+    void setRefreshInterval(int milliseconds);
     void setFilePriority(const QString &hash, const QList<int> &fileIds, int priority);
 
 signals:

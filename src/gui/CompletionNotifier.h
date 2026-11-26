@@ -16,6 +16,8 @@ class CompletionNotifier final : public QObject
 public:
     explicit CompletionNotifier(QSystemTrayIcon *tray, QObject *parent = nullptr);
     void deliver(const QString &server, const QStringList &names, bool notify, bool sound);
+    void deliverAdded(const QString &server, const QStringList &names);
+    void setTimeout(int milliseconds) { m_timeoutMs = qMax(-1, milliseconds); }
 
 signals:
     // Delivery requests, not acknowledgement that the OS displayed or played them.
@@ -33,4 +35,5 @@ private:
     QTimer *m_hideTrayTimer = nullptr;
     QSoundEffect *m_sound = nullptr;
     bool m_soundPending = false;
+    int m_timeoutMs = -1;
 };
