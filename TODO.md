@@ -24,3 +24,14 @@ Port the existing upstream qBittorrent Search subsystem where practical, preserv
 ### Deferred PR
 
 Leave [PR #75](https://github.com/username227/qBittorrent-remote/pull/75) open and unmerged for now. Its server-backed Search preferences are not useful without a Search interface and would not govern a local Search implementation. Reassess that work when the complete subsystem is implemented; do not merge those controls on their own.
+
+## Deferred: interface localization
+
+Keep the application English-only during active development. Full localization is not a requirement for the initial release. Revisit once the interface is stable and community contributors are available; avoid committing the maintainer to maintaining every upstream language catalog.
+
+- [ ] Continue marking user-visible strings for translation with Qt's `tr()` and Designer translation support.
+- [ ] When revisiting localization, extract the current application strings with Qt Linguist, reuse verified upstream translations (including renamed contexts where meaning is unchanged), and identify modified or remote-specific strings requiring new translations.
+- [ ] Establish an incremental, community-supported translation workflow; accept languages with maintainable coverage and review rather than promising support for every upstream locale.
+- [ ] Verify translation loading, fallback, Apply/Cancel, restart behavior and packaging on supported platforms.
+
+[PR #98](https://github.com/username227/qBittorrent-remote/pull/98) is a deferred prototype, not intended for merge now. Do not introduce its partial German catalog, language selector or new build dependency into the initial release. Proceed with Phase 3 torrent properties parity.
