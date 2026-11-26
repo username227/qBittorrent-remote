@@ -88,10 +88,12 @@ public:
     void disconnectFromServer();
     bool isConnected() const noexcept;
     bool supportsTrackerTierEditing() const noexcept { return m_connected && m_trackerTierEditing; }
+    bool supportsCommentEditing() const noexcept { return m_connected && m_commentEditing; }
 
     void commandTorrents(TorrentCommand command, const QStringList &hashes,
                          bool deleteFiles = false);
     void renameTorrent(const QString &hash, const QString &name);
+    void setTorrentComment(const QString &hash, const QString &comment);
     void setTorrentLocation(const QStringList &hashes, const QString &remotePath);
     void setTorrentCategory(const QStringList &hashes, const QString &category);
     void createAndAssignTorrentCategory(const QStringList &hashes, const QString &category);
@@ -182,6 +184,7 @@ signals:
     void torrentDetailsReceived(const QString &hash, int tab, const QJsonValue &data);
     void torrentTrackersChanged(const QString &hash);
     void trackerTierEditFinished(const QString &hash);
+    void torrentCommentEditFinished(const QString &hash);
     // Identifies the exact edit for bulk progress and rejected requests.
     void torrentTrackerEditFinished(const QString &hash, const QString &oldUrl,
                                     bool success, const QString &reason);
@@ -252,6 +255,7 @@ private:
     bool m_trackerTierEditing = false;
     bool m_pathFreeSpace = false;
     bool m_pieceAvailability = false;
+    bool m_commentEditing = false;
     QString m_detailHash;
     int m_detailPage = -1;
     bool m_detailAvailability = false;

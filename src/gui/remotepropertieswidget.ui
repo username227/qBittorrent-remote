@@ -969,7 +969,7 @@
                 </property>
                </widget>
               </item>
-              <item row="6" column="1" colspan="5">
+              <item row="6" column="1" colspan="4">
                <widget class="QLabel" name="labelCommentVal">
                 <property name="sizePolicy">
                  <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
@@ -994,6 +994,16 @@
                 </property>
                 <property name="openLinks" stdset="0">
                  <bool>true</bool>
+                </property>
+               </widget>
+              </item>
+              <item row="6" column="5" alignment="Qt::AlignmentFlag::AlignTop|Qt::AlignmentFlag::AlignRight">
+               <widget class="QPushButton" name="editCommentButton">
+                <property name="enabled">
+                 <bool>false</bool>
+                </property>
+                <property name="text">
+                 <string>Edit...</string>
                 </property>
                </widget>
               </item>

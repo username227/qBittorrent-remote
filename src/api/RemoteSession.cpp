@@ -432,6 +432,8 @@ void RemoteSession::requestApiVersion(const QString &version)
             const auto qbtVersion = QVersionNumber::fromString(numeric);
             m_pieceAvailability = qbtVersion.segmentCount() >= 3
                 && qbtVersion >= QVersionNumber(5, 2, 0);
+            m_commentEditing = qbtVersion.segmentCount() >= 3
+                && qbtVersion >= QVersionNumber(5, 2, 0);
             m_connected = true;
             emit connected(version, apiVersion);
             // The first request uses rid=0 for the full server snapshot.
@@ -1587,6 +1589,27 @@ void RemoteSession::toggleTorrentMode(const QStringList &hashes, bool sequential
         form.toString(QUrl::FullyEncoded).toUtf8(),
         QByteArrayLiteral("application/x-www-form-urlencoded"),
         sequential ? tr("Download in sequential order") : tr("Download first and last pieces first"), true);
+}
+
+void RemoteSession::setTorrentComment(const QString &hash, const QString &comment)
+{
+    static const QRegularExpression validHash(
+        QStringLiteral("^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$"));
+    if (!supportsCommentEditing() || !validHash.match(hash).hasMatch())
+    {
+        emit torrentCommentEditFinished(hash);
+        emit operationFailed(tr("Edit torrent comment"),
+            tr("Comment editing is unavailable or the torrent selection is invalid."));
+        return;
+    }
+    // Explicit form encoding preserves literal plus, percent, Unicode and
+    // newlines. An empty comment is a valid request to clear the comment.
+    const QByteArray form = QByteArrayLiteral("hashes=") + hash.toLatin1()
+        + QByteArrayLiteral("&comment=") + QUrl::toPercentEncoding(comment.trimmed());
+    queueOperation(QStringLiteral("api/v2/torrents/setComment"), form,
+        QByteArrayLiteral("application/x-www-form-urlencoded"), tr("Edit torrent comment"), true,
+        [this, hash]() { emit torrentCommentEditFinished(hash); },
+        [this, hash](const QString &) { emit torrentCommentEditFinished(hash); });
 }
 
 void RemoteSession::renameTorrent(const QString &hash, const QString &name)

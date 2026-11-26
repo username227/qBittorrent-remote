@@ -421,7 +421,17 @@ public:
                             else if (path.startsWith("/api/v2/torrents/pieceAvailability?"))
                                 response = "[0,2,4,2]";
                             else if (path.startsWith("/api/v2/torrents/properties?"))
+                                {
                                 response = R"DEMO({"save_path":"/share/NAS/torrents","comment":"Get it at https://example.test/files?id=7&part=2 and <b>plain markup</b>; javascript:alert(1)","total_downloaded":1048576,"total_uploaded":2048,"total_size":1048576,"time_elapsed":3600,"eta":0,"share_ratio":1.25,"pieces_num":4,"piece_size":262144,"pieces_have":2,"availability":2.5,"seeds":2,"peers":1})DEMO";
+                                const auto hash = QUrlQuery(QString::fromLatin1(
+                                    path.mid(path.indexOf('?') + 1))).queryItemValue(QStringLiteral("hash"));
+                                if (m_torrentComments.contains(hash))
+                                {
+                                    auto properties = QJsonDocument::fromJson(response).object();
+                                    properties.insert(QStringLiteral("comment"), m_torrentComments.value(hash));
+                                    response = QJsonDocument(properties).toJson(QJsonDocument::Compact);
+                                }
+                            }
                             else if (path.startsWith("/api/v2/torrents/trackers?"))
                             {
                                 response = R"TRACK([
@@ -454,6 +464,24 @@ public:
                                 response = R"([{"url":"https://mirror.example/file.iso"}])";
                             else
                                 response = R"([{"index":0,"name":"data/file-one.bin","size":512,"progress":1,"priority":1},{"index":1,"name":"data/file-two.bin","size":512,"progress":0.5,"priority":6}])";
+                        }
+                        else if (path == "/api/v2/torrents/setComment" && hasCookie && fields.value(0) == "POST")
+                        {
+                            m_commands.append({path, body});
+                            const QUrlQuery form(QString::fromUtf8(body));
+                            const auto hash = form.queryItemValue(QStringLiteral("hashes"), QUrl::FullyDecoded);
+                            if (m_rejectCommands || !form.hasQueryItem(QStringLiteral("comment"))
+                                || hash.isEmpty() || hash.contains(QLatin1Char('|')))
+                            {
+                                code = 400;
+                                response = "Invalid comment";
+                            }
+                            else
+                            {
+                                m_torrentComments.insert(hash,
+                                    form.queryItemValue(QStringLiteral("comment"), QUrl::FullyDecoded).trimmed());
+                                code = 204;
+                            }
                         }
                         else if (path.startsWith("/api/v2/torrents/export?") && hasCookie)
                         {
@@ -1278,6 +1306,7 @@ private:
     QHash<QString, QJsonArray> m_trackerEntries;
     QHash<QString, int> m_peerConnections;
     QList<QByteArray> m_detailRequests;
+    QHash<QString, QString> m_torrentComments;
     bool m_keepDemoTorrents = false;
     bool m_rejectCommands = false;
     int m_syncRequests = 0;
@@ -8675,6 +8704,101 @@ private slots:
         QVERIFY(!root(album)->child(0)->isExpanded());
         QVERIFY(tree->selectedItems().isEmpty());
         QCOMPARE(server.commandsFor("/api/v2/torrents/filePrio"), 0);
+    }
+
+    void torrentCommentsUseSelectedServerAndRespectCapability()
+    {
+        DemoQbittorrentServer legacy(true);
+        DemoQbittorrentServer modern(true);
+        legacy.setReportedVersions(QStringLiteral("v5.1.4"), QStringLiteral("2.11.4"));
+        modern.enableModernResponses();
+        for (auto *server : {&legacy, &modern})
+        {
+            server->enableNativePresentationDemo();
+            server->enableDetailsDemo();
+            QVERIFY(server->start());
+        }
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath(QStringLiteral("profiles.ini")), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        QTRY_VERIFY(window.isVisible());
+        openConnectDialog(window, legacy.url());
+        auto *tabs = window.findChild<QTabWidget *>("serverTabs");
+        QVERIFY(tabs);
+        QTRY_COMPARE_WITH_TIMEOUT(tabs->count(), 1, 6000);
+        auto *legacyTable = tabs->widget(0)->findChild<QTableView *>("torrentList");
+        auto *legacyEdit = tabs->widget(0)->findChild<QPushButton *>("editCommentButton");
+        auto *legacyComment = tabs->widget(0)->findChild<QLabel *>("labelCommentVal");
+        QVERIFY(legacyTable && legacyEdit && legacyComment);
+        QTRY_COMPARE_WITH_TIMEOUT(legacyTable->model()->rowCount(), 2, 6000);
+        legacyTable->selectRow(0);
+        QTRY_VERIFY_WITH_TIMEOUT(legacyComment->text().contains("plain markup"), 6000);
+        QVERIFY(!legacyEdit->isEnabled());
+
+        openConnectDialog(window, modern.url(), false, true, true, QStringLiteral("Modern seedbox"));
+        QTRY_COMPARE_WITH_TIMEOUT(tabs->count(), 2, 6000);
+        auto *table = tabs->widget(1)->findChild<QTableView *>("torrentList");
+        auto *edit = tabs->widget(1)->findChild<QPushButton *>("editCommentButton");
+        auto *label = tabs->widget(1)->findChild<QLabel *>("labelCommentVal");
+        QVERIFY(table && edit && label);
+        QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 2, 6000);
+        QVERIFY(!edit->isEnabled());
+        int row = -1;
+        for (int i = 0; i < table->model()->rowCount(); ++i)
+            if (table->model()->index(i, 0).data().toString() == QStringLiteral("Complete seed"))
+                row = i;
+        QVERIFY(row >= 0);
+        table->selectRow(row);
+        QTRY_VERIFY_WITH_TIMEOUT(edit->isEnabled(), 6000);
+        const QString original = QStringLiteral("Get it at https://example.test/files?id=7&part=2 and <b>plain markup</b>; javascript:alert(1)");
+        const auto endpoint = QByteArrayLiteral("/api/v2/torrents/setComment");
+        edit->click();
+        auto *dialog = window.findChild<QDialog *>("remoteEditCommentDialog");
+        QVERIFY(dialog);
+        auto *editor = dialog->findChild<QPlainTextEdit *>("remoteCommentEditor");
+        auto *buttons = dialog->findChild<QDialogButtonBox *>();
+        QVERIFY(editor && buttons);
+        QCOMPARE(editor->toPlainText(), original);
+        editor->setPlainText(QStringLiteral("Discard this"));
+        buttons->button(QDialogButtonBox::Cancel)->click();
+        QTRY_VERIFY(!window.findChild<QDialog *>("remoteEditCommentDialog"));
+        QCOMPARE(modern.commandsFor(endpoint), 0);
+
+        edit->click();
+        dialog = window.findChild<QDialog *>("remoteEditCommentDialog");
+        QVERIFY(dialog);
+        editor = dialog->findChild<QPlainTextEdit *>("remoteCommentEditor");
+        buttons = dialog->findChild<QDialogButtonBox *>();
+        QVERIFY(editor && buttons);
+        const QString changed = QStringLiteral("New + 100% & <b>literal</b>\nSecond line");
+        editor->setPlainText(changed);
+        buttons->button(QDialogButtonBox::Ok)->click();
+        QTRY_COMPARE_WITH_TIMEOUT(modern.commandsFor(endpoint), 1, 6000);
+        const QUrlQuery form(QString::fromUtf8(modern.lastCommandBody(endpoint)));
+        QCOMPARE(form.queryItemValue(QStringLiteral("hashes")), QStringLiteral("0000000000000000000000000000000000000001"));
+        QCOMPARE(form.queryItemValue(QStringLiteral("comment"), QUrl::FullyDecoded), changed);
+        QVERIFY(modern.lastCommandBody(endpoint).contains("%2B"));
+        QTRY_VERIFY_WITH_TIMEOUT(label->text().contains("&lt;b&gt;literal&lt;/b&gt;<br/>Second line"), 6000);
+        QTRY_VERIFY_WITH_TIMEOUT(edit->isEnabled(), 6000);
+        QCOMPARE(legacy.commandsFor(endpoint), 0);
+        QVERIFY(legacyComment->text().contains("plain markup"));
+
+        edit->click();
+        dialog = window.findChild<QDialog *>("remoteEditCommentDialog");
+        QVERIFY(dialog);
+        editor = dialog->findChild<QPlainTextEdit *>("remoteCommentEditor");
+        buttons = dialog->findChild<QDialogButtonBox *>();
+        QVERIFY(editor && buttons);
+        QCOMPARE(editor->toPlainText(), changed);
+        editor->clear();
+        buttons->button(QDialogButtonBox::Ok)->click();
+        QTRY_COMPARE_WITH_TIMEOUT(modern.commandsFor(endpoint), 2, 6000);
+        QTRY_VERIFY_WITH_TIMEOUT(label->text().isEmpty(), 6000);
+        QVERIFY(modern.lastCommandBody(endpoint).endsWith("&comment="));
+        QCOMPARE(legacy.commandsFor(endpoint), 0);
     }
 
     void nativeTorrentDetailsUseSelectedRemoteServerAndFilePriorityApis()

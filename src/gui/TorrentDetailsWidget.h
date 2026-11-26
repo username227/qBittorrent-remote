@@ -37,13 +37,18 @@ public:
     void setContentDragEnabled(bool enabled);
     void setTrackerTierEditingSupported(bool supported);
     void finishTrackerTierEdit(const QString &hash);
+    void setCommentEditingSupported(bool supported);
+    void finishCommentEdit(const QString &hash);
 
 signals:
     void filePriorityRequested(const QString &hash, const QList<int> &ids, int priority);
     void trackerTiersRequested(const QString &hash, const QJsonObject &tiers);
+    void commentEditRequested(const QString &hash, const QString &comment);
 
 private:
     void displayGeneral(const QJsonObject &properties);
+    void updateCommentEditor();
+    void editComment();
     void displayTrackers(const QJsonArray &trackers);
     QJsonObject adjustedTrackerTiers(int delta) const;
     void updateTrackerTierButtons();
@@ -67,6 +72,9 @@ private:
     QString m_pendingTrackerTierHash;
     bool m_trackerTierSupported = false;
     bool m_trackerTiersKnown = false;
+    bool m_commentEditingSupported = false;
+    bool m_commentKnown = false;
+    QString m_pendingCommentHash;
     QJsonObject m_summary;
     QJsonObject m_lastGeneral;
     QString m_dateFormat;
