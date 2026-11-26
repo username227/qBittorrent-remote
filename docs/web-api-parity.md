@@ -44,6 +44,11 @@ not embed the Web UI's HTML/JavaScript or link the Web UI's server-side
 controller code into the native desktop application. The remote server's
 API responses are the source of truth.
 
+
+### Native Content tab mapped opening
+
+The native Content context menu now offers Open, Open containing folder and Copy local path for a single accessible mapped file or directory. Reuse the existing drag-and-drop path resolver, including canonical mount containment and server-specific mappings, and revalidate at activation. Unmapped, missing and multiple selections cannot launch local applications. The containing-folder action opens the directory through Qt desktop services; platform-specific file highlighting and specialized incomplete-file preview remain follow-ups. No torrent API mutation or local torrent engine. The existing authenticated mapped-content workflow exercises actual context menu actions, intercepted desktop URL requests, clipboard, folder selection, and unmapped/multiple selection restrictions.
+
 ## Phase 3 — General piece graphs
 
 The native General property layout draws authenticated `torrents/pieceStates` (0 missing, 1 requested/downloading, 2 complete) using palette-derived colors and weighted pixel coverage. When data is missing, the existing overall progress bar remains explicitly identified as the fallback. `torrents/pieceAvailability` is available in upstream 5.2.0/5.2.1 and 5.3.x but absent in 5.1.4; request only for eligible active incomplete downloads on supported versions. Its gradient is normalized to the maximum peer count as upstream does. The number beside the graph is the server's `properties.availability` distributed-copies value, not an arithmetic mean. Missing/malformed arrays clear the relevant graph, not unrelated properties. Existing 10-second selected-visible-detail refresh and authenticated queue are reused; selection/page generations discard obsolete responses including A→B→A. The native piece count/size/have label is restored when the API supplies all three values. Shift-hover file-to-piece mapping remains a follow-up; no additional files requests or local engine. Functional coverage exercises the actual General pane, completed and incomplete selections and graph rendering.

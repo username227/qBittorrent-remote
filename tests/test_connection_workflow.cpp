@@ -11177,7 +11177,55 @@ private slots:
             QCOMPARE(mime->urls(), (QList<QUrl>{
                 QUrl::fromLocalFile(QFileInfo(local.at(0)).canonicalFilePath())}));
         }
+        // Drive the actual native Content context menu and capture the
+        // desktop file-open request without starting external programs.
+        struct RestoreContentOpen {
+            ~RestoreContentOpen() { QDesktopServices::unsetUrlHandler(QStringLiteral("file")); }
+        } restoreHandler;
+        m_fileOpenRequests.clear();
+        QDesktopServices::setUrlHandler(QStringLiteral("file"), this, "recordFileOpenRequest");
+        const auto menuAction = [&](const QString &name, bool enabled, bool trigger = true) {
+            bool found = false, actualEnabled = false;
+            QTimer::singleShot(0, &window, [&]() {
+                auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+                if (!menu) return;
+                if (menu->objectName() == QLatin1String("torrentContentContextMenu"))
+                {
+                    for (auto *action : menu->actions())
+                    {
+                        if (action->objectName() != name) continue;
+                        found = true;
+                        actualEnabled = action->isEnabled();
+                        if (actualEnabled && trigger) action->trigger();
+                        break;
+                    }
+                }
+                menu->close();
+            });
+            QVERIFY(QMetaObject::invokeMethod(content, "customContextMenuRequested",
+                Qt::DirectConnection, Q_ARG(QPoint, QPoint(10, 10))));
+            QVERIFY(found);
+            QCOMPARE(actualEnabled, enabled);
+        };
+        const QString firstPath = QFileInfo(local.at(0)).canonicalFilePath();
+        const QString parentPath = QFileInfo(data).canonicalFilePath();
+        menuAction(QStringLiteral("contentOpenMappedItem"), true);
+        QCOMPARE(m_fileOpenRequests.size(), 1);
+        QCOMPARE(m_fileOpenRequests.last(), QUrl::fromLocalFile(firstPath));
+        menuAction(QStringLiteral("contentOpenMappedParent"), true);
+        QCOMPARE(m_fileOpenRequests.size(), 2);
+        QCOMPARE(m_fileOpenRequests.last(), QUrl::fromLocalFile(parentPath));
+        menuAction(QStringLiteral("contentCopyMappedPath"), true);
+        QCOMPARE(QApplication::clipboard()->text(), QDir::toNativeSeparators(firstPath));
+        content->clearSelection();
+        content->topLevelItem(0)->setSelected(true);
+        menuAction(QStringLiteral("contentOpenMappedItem"), true);
+        QCOMPARE(m_fileOpenRequests.size(), 3);
+        QCOMPARE(m_fileOpenRequests.last(), QUrl::fromLocalFile(parentPath));
+        content->clearSelection();
+        first->setSelected(true);
         second->setSelected(true);
+        menuAction(QStringLiteral("contentOpenMappedItem"), false);
         {
             std::unique_ptr<QMimeData> mime(content->mappedSelectionMimeData());
             QVERIFY(mime);
@@ -11186,11 +11234,20 @@ private slots:
         // No partial drag if one selected file vanished from the mount.
         QVERIFY(QFile::remove(local.at(1)));
         QVERIFY(content->mappedSelectionMimeData() == nullptr);
+        first->setSelected(false);
+        menuAction(QStringLiteral("contentOpenMappedItem"), false);
+        menuAction(QStringLiteral("contentCopyMappedPath"), false);
         second->setSelected(false);
+        first->setSelected(true);
         // An unmapped content selection offers no misleading local URI.
         content->setPathMappings({});
         QVERIFY(content->mappedSelectionMimeData() == nullptr);
+        menuAction(QStringLiteral("contentOpenMappedItem"), false);
+        menuAction(QStringLiteral("contentOpenMappedParent"), false);
+        menuAction(QStringLiteral("contentCopyMappedPath"), false);
+        QCOMPARE(m_fileOpenRequests.size(), 3);
         QCOMPARE(server.commandsFor("/api/v2/torrents/add"), 0);
+        QCOMPARE(server.commandsFor("/api/v2/torrents/setLocation"), 0);
     }
 
     void userCanSelectSevenTorrentFilesAndUploadOneAuthenticatedBatch()

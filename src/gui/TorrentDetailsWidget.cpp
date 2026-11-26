@@ -832,6 +832,10 @@ TorrentDetailsWidget::TorrentDetailsWidget(QWidget *parent)
         if (m_hash.isEmpty() || m_ui->filesList->selectedItems().isEmpty())
             return;
         QMenu menu(this);
+        menu.setObjectName(QStringLiteral("torrentContentContextMenu"));
+        menu.setToolTipsVisible(true);
+        m_ui->filesList->addMappedOpenActions(menu);
+        menu.addSeparator();
         QMenu *priorityMenu = menu.addMenu(tr("Priority"));
         for (const auto option : {
                  qMakePair(tr("Do not download"), 0),

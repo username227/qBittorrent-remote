@@ -1,6 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/MappedContentTreeWidget.h"
 #include <QDir>
+#include <QAction>
+#include <QApplication>
+#include <QClipboard>
+#include <QDesktopServices>
+#include <QIcon>
+#include <QMenu>
+#include <QMessageBox>
+#include <memory>
 #include <QDrag>
 #include <QFileInfo>
 #include <QMimeData>
@@ -114,6 +122,75 @@ QMimeData *MappedContentTreeWidget::mappedSelectionMimeData() const
     auto *mime = new QMimeData;
     mime->setUrls(urls); // Interoperable text/uri-list, not custom Qt MIME.
     return mime;
+}
+
+QString MappedContentTreeWidget::mappedSinglePath() const
+{
+    if (selectedItems().size() != 1) return {};
+    const std::unique_ptr<QMimeData> mime(mappedSelectionMimeData());
+    if (!mime || mime->urls().size() != 1) return {};
+    return mime->urls().first().toLocalFile();
+}
+
+QString MappedContentTreeWidget::mappedParentPath(const QString &path) const
+{
+    if (path.isEmpty()) return {};
+    const QFileInfo parent(QFileInfo(path).absolutePath());
+    if (!parent.isDir() || !parent.isReadable()) return {};
+    const QString canonical = parent.canonicalFilePath();
+    if (canonical.isEmpty()) return {};
+    // Do not expose a directory outside the configured mounts merely because
+    // the selected item itself is a mount root.
+    for (const auto &mapping : m_mappings)
+    {
+        const QString root = QFileInfo(mapping.localRoot).canonicalFilePath();
+        if (!root.isEmpty() && (canonical == root || canonical.startsWith(
+            root.endsWith(QLatin1Char('/')) ? root : root + QLatin1Char('/'))))
+            return canonical;
+    }
+    return {};
+}
+
+void MappedContentTreeWidget::openMappedPath(const QString &path)
+{
+    if (path.isEmpty() || !QDesktopServices::openUrl(QUrl::fromLocalFile(path)))
+        QMessageBox::information(this, tr("Cannot open content"),
+            tr("The mapped local file or folder could not be opened."));
+}
+
+void MappedContentTreeWidget::addMappedOpenActions(QMenu &menu)
+{
+    const QString path = mappedSinglePath();
+    const QString parent = mappedParentPath(path);
+    const QString unavailable = tr("Select one accessible file or folder using this server's local path mappings.");
+    const auto add = [&](const QString &name, const QString &label, const QString &icon,
+                         bool enabled, auto callback) {
+        auto *action = menu.addAction(QIcon(icon), label);
+        action->setObjectName(name);
+        action->setIconVisibleInMenu(true);
+        action->setEnabled(enabled);
+        if (!enabled) action->setToolTip(unavailable);
+        connect(action, &QAction::triggered, this, callback);
+    };
+    // Resolve again when triggered: polling, mapping changes, or removed
+    // files must not redirect a menu action to another selection.
+    add(QStringLiteral("contentOpenMappedItem"), tr("Open"),
+        QStringLiteral(":/icons/folder-documents.svg"), !path.isEmpty(),
+        [this, path]() {
+            if (!path.isEmpty() && mappedSinglePath() == path) openMappedPath(path);
+        });
+    add(QStringLiteral("contentOpenMappedParent"), tr("Open containing folder"),
+        QStringLiteral(":/icons/directory.svg"), !parent.isEmpty(),
+        [this, path, parent]() {
+            if (!parent.isEmpty() && mappedSinglePath() == path
+                && mappedParentPath(path) == parent) openMappedPath(parent);
+        });
+    add(QStringLiteral("contentCopyMappedPath"), tr("Copy local path"),
+        QStringLiteral(":/icons/edit-copy.svg"), !path.isEmpty(),
+        [this, path]() {
+            if (!path.isEmpty() && mappedSinglePath() == path)
+                QApplication::clipboard()->setText(QDir::toNativeSeparators(path));
+        });
 }
 
 void MappedContentTreeWidget::startDrag(Qt::DropActions)
