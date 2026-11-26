@@ -394,6 +394,48 @@ private slots:
         }
     }
 
+    void longMappingPathsCanBeScrolledWithoutWideningPreferences()
+    {
+        QTemporaryDir tmp;
+        QVERIFY(tmp.isValid());
+        QSettings settings(tmp.filePath("preferences.ini"), QSettings::IniFormat);
+        Remote::ProfileStore profiles(settings);
+        Remote::ServerProfile first{{}, "Long paths", "http://127.0.0.1:6363", "demo", false, false};
+        Remote::ServerProfile second{{}, "Short paths", "http://127.0.0.1:6364", "demo", false, false};
+        QVERIFY(profiles.save(first));
+        QVERIFY(profiles.save(second));
+        const QString local = QDir(tmp.path()).filePath("mount");
+        const QString remote = QStringLiteral("/share/") + QStringLiteral("long-directory/").repeated(20) + QStringLiteral("end-of-path");
+        Remote::PathMappingStore maps(settings);
+        QVERIFY(maps.replace(first.id, {{local, remote}}));
+        QVERIFY(maps.replace(second.id, {{local, QStringLiteral("/share/Public")}}));
+        RemotePreferencesDialog dialog(settings, first.id);
+        dialog.show();
+        auto *nav = dialog.findChild<QListWidget *>("preferencesSections");
+        auto *selector = dialog.findChild<QComboBox *>("remotePathsServer");
+        auto *table = dialog.findChild<QTableWidget *>("remotePathMappings");
+        QVERIFY(nav && selector && table);
+        nav->setCurrentRow(0);
+        dialog.resize(700, 600);
+        QTRY_VERIFY(table->isVisible());
+        auto *scroll = table->horizontalScrollBar();
+        QTRY_VERIFY(scroll->isVisible() && scroll->maximum() > 0);
+        QCOMPARE(table->item(0, 1)->text(), remote);
+        QCOMPARE(table->item(0, 1)->toolTip(), remote);
+        const int width = dialog.width();
+        QVERIFY(table->columnWidth(1) >= table->fontMetrics().horizontalAdvance(remote));
+        scroll->setValue(scroll->maximum());
+        QTRY_COMPARE(table->horizontalHeader()->offset(), scroll->maximum());
+        QVERIFY(table->visualItemRect(table->item(0, 1)).right() <= table->viewport()->rect().right());
+        QCOMPARE(dialog.width(), width);
+        selector->setCurrentIndex(selector->findData(second.id));
+        QTRY_COMPARE(scroll->maximum(), 0);
+        QTRY_VERIFY(!scroll->isVisible());
+        selector->setCurrentIndex(selector->findData(first.id));
+        QTRY_VERIFY(scroll->isVisible() && scroll->maximum() > 0);
+        QCOMPARE(table->item(0, 1)->text(), remote);
+    }
+
     void mappingEditorStagesByServerAndCancelDoesNotPersist()
     {
         QTemporaryDir tmp;

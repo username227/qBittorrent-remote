@@ -2601,8 +2601,16 @@ void RemotePreferencesDialog::buildRemotePathsPage(const QString &preferredProfi
     m_mappings->setObjectName(QStringLiteral("remotePathMappings"));
     m_mappings->setHorizontalHeaderLabels({tr("Local mounted directory"),
                                             tr("Remote server directory")});
-    m_mappings->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+    // Stretching both columns to the viewport elides long paths and leaves
+    // nothing to scroll. Size to the complete paths, without growing the dialog.
+    m_mappings->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    m_mappings->horizontalHeader()->setResizeContentsPrecision(-1);
     m_mappings->horizontalHeader()->setHighlightSections(false);
+    m_mappings->setWordWrap(false);
+    m_mappings->setTextElideMode(Qt::ElideNone);
+    m_mappings->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
+    m_mappings->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    m_mappings->setSizeAdjustPolicy(QAbstractScrollArea::AdjustIgnored);
     m_mappings->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_mappings->setSelectionMode(QAbstractItemView::SingleSelection);
     m_mappings->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -2714,9 +2722,12 @@ void RemotePreferencesDialog::displayMappings(
     {
         const int row = m_mappings->rowCount();
         m_mappings->insertRow(row);
-        m_mappings->setItem(row, 0, new QTableWidgetItem(
-            QDir::toNativeSeparators(entry.localRoot)));
-        m_mappings->setItem(row, 1, new QTableWidgetItem(entry.remoteRoot));
+        auto *local = new QTableWidgetItem(QDir::toNativeSeparators(entry.localRoot));
+        auto *remote = new QTableWidgetItem(entry.remoteRoot);
+        local->setToolTip(local->text());
+        remote->setToolTip(remote->text());
+        m_mappings->setItem(row, 0, local);
+        m_mappings->setItem(row, 1, remote);
     }
     m_mappings->clearSelection();
     updateButtons();
