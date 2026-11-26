@@ -4948,6 +4948,198 @@ private slots:
         QCOMPARE(Remote::PathMappingStore(settings).mappings(originalId), mappings);
     }
 
+    void advancedRemoteSettingsBulkWorkflow()
+    {
+        struct Case { const char *widget; const char *key; QJsonValue before; QJsonValue after; int scale; bool modern; };
+        const QList<Case> cases{
+            {"advanced_TORRENT_CONTENT_REMOVE_OPTION", "torrent_content_remove_option", QJsonValue("MoveToTrash"), QJsonValue("Delete"), 1, false},
+            {"advanced_SAVE_RESUME_DATA_INTERVAL", "save_resume_data_interval", QJsonValue(60), QJsonValue(45), 1, false},
+            {"advanced_SAVE_STATISTICS_INTERVAL", "save_statistics_interval", QJsonValue(15), QJsonValue(20), 1, false},
+            {"advanced_TORRENT_FILE_SIZE_LIMIT", "torrent_file_size_limit", QJsonValue(104857600), QJsonValue(115343360), 1048576, false},
+            {"advanced_RECHECK_COMPLETED", "recheck_completed_torrents", QJsonValue(false), QJsonValue(true), 1, false},
+            {"advanced_REANNOUNCE_WHEN_ADDRESS_CHANGED", "reannounce_when_address_changed", QJsonValue(false), QJsonValue(true), 1, false},
+            {"advanced_TRACKER_STATUS", "enable_embedded_tracker", QJsonValue(false), QJsonValue(true), 1, false},
+            {"advanced_TRACKER_PORT", "embedded_tracker_port", QJsonValue(9000), QJsonValue(9001), 1, false},
+            {"advanced_TRACKER_PORT_FORWARDING", "embedded_tracker_port_forwarding", QJsonValue(false), QJsonValue(true), 1, false},
+            {"advanced_IGNORE_SSL_ERRORS", "ignore_ssl_errors", QJsonValue(false), QJsonValue(true), 1, false},
+            {"advanced_BDECODE_DEPTH_LIMIT", "bdecode_depth_limit", QJsonValue(100), QJsonValue(110), 1, false},
+            {"advanced_BDECODE_TOKEN_LIMIT", "bdecode_token_limit", QJsonValue(1000000), QJsonValue(1100000), 1, false},
+            {"advanced_ASYNC_IO_THREADS", "async_io_threads", QJsonValue(4), QJsonValue(8), 1, false},
+            {"advanced_FILE_POOL_SIZE", "file_pool_size", QJsonValue(40), QJsonValue(50), 1, false},
+            {"advanced_DISK_QUEUE_SIZE", "disk_queue_size", QJsonValue(1048576), QJsonValue(2097152), 1024, false},
+            {"advanced_PIECE_EXTENT_AFFINITY", "enable_piece_extent_affinity", QJsonValue(false), QJsonValue(true), 1, false},
+            {"advanced_SUGGEST_MODE", "enable_upload_suggestions", QJsonValue(false), QJsonValue(true), 1, false},
+            {"advanced_SEND_BUF_WATERMARK", "send_buffer_watermark", QJsonValue(500), QJsonValue(600), 1, false},
+            {"advanced_SEND_BUF_LOW_WATERMARK", "send_buffer_low_watermark", QJsonValue(10), QJsonValue(20), 1, false},
+            {"advanced_SEND_BUF_WATERMARK_FACTOR", "send_buffer_watermark_factor", QJsonValue(50), QJsonValue(60), 1, false},
+            {"advanced_CONNECTION_SPEED", "connection_speed", QJsonValue(30), QJsonValue(40), 1, false},
+            {"advanced_SEEDING_OUTGOING_CONNECTIONS", "seeding_outgoing_connections", QJsonValue(true), QJsonValue(false), 1, true},
+            {"advanced_SOCKET_SEND_BUFFER_SIZE", "socket_send_buffer_size", QJsonValue(0), QJsonValue(65536), 1024, false},
+            {"advanced_SOCKET_RECEIVE_BUFFER_SIZE", "socket_receive_buffer_size", QJsonValue(0), QJsonValue(131072), 1024, false},
+            {"advanced_SOCKET_BACKLOG_SIZE", "socket_backlog_size", QJsonValue(30), QJsonValue(40), 1, false},
+            {"advanced_OUTGOING_PORT_MIN", "outgoing_ports_min", QJsonValue(0), QJsonValue(40000), 1, false},
+            {"advanced_OUTGOING_PORT_MAX", "outgoing_ports_max", QJsonValue(0), QJsonValue(41000), 1, false},
+            {"advanced_UPNP_LEASE_DURATION", "upnp_lease_duration", QJsonValue(0), QJsonValue(3600), 1, false},
+            {"advanced_PEER_DSCP", "peer_tos", QJsonValue(0), QJsonValue(32), 1, false},
+            {"advanced_UTP_MIX_MODE", "utp_tcp_mixed_mode", QJsonValue(0), QJsonValue(1), 1, false},
+            {"advanced_HOSTNAME_CACHE_TTL", "hostname_cache_ttl", QJsonValue(60), QJsonValue(120), 1, true},
+            {"advanced_IDN_SUPPORT", "idn_support_enabled", QJsonValue(true), QJsonValue(false), 1, false},
+            {"advanced_MULTI_CONNECTIONS_PER_IP", "enable_multi_connections_from_same_ip", QJsonValue(false), QJsonValue(true), 1, false},
+            {"advanced_MULTI_CONNECTIONS_PER_PEER_ID", "enable_multi_connections_from_same_peer_id", QJsonValue(false), QJsonValue(true), 1, true},
+            {"advanced_VALIDATE_HTTPS_TRACKER_CERTIFICATE", "validate_https_tracker_certificate", QJsonValue(true), QJsonValue(false), 1, false},
+            {"advanced_SSRF_MITIGATION", "ssrf_mitigation", QJsonValue(true), QJsonValue(false), 1, false},
+            {"advanced_BLOCK_PEERS_ON_PRIVILEGED_PORTS", "block_peers_on_privileged_ports", QJsonValue(true), QJsonValue(false), 1, false},
+            {"advanced_CHOKING_ALGORITHM", "upload_slots_behavior", QJsonValue(0), QJsonValue(1), 1, false},
+            {"advanced_SEED_CHOKING_ALGORITHM", "upload_choking_algorithm", QJsonValue(0), QJsonValue(2), 1, false},
+            {"advanced_ANNOUNCE_ALL_TRACKERS", "announce_to_all_trackers", QJsonValue(false), QJsonValue(true), 1, false},
+            {"advanced_ANNOUNCE_ALL_TIERS", "announce_to_all_tiers", QJsonValue(false), QJsonValue(true), 1, false},
+            {"advanced_MAX_CONCURRENT_HTTP_ANNOUNCES", "max_concurrent_http_announces", QJsonValue(50), QJsonValue(60), 1, false},
+            {"advanced_STOP_TRACKER_TIMEOUT", "stop_tracker_timeout", QJsonValue(5), QJsonValue(10), 1, false},
+            {"advanced_PEER_TURNOVER", "peer_turnover", QJsonValue(4), QJsonValue(5), 1, false},
+            {"advanced_PEER_TURNOVER_CUTOFF", "peer_turnover_cutoff", QJsonValue(90), QJsonValue(85), 1, false},
+            {"advanced_PEER_TURNOVER_INTERVAL", "peer_turnover_interval", QJsonValue(300), QJsonValue(360), 1, false},
+            {"advanced_REQUEST_QUEUE_SIZE", "request_queue_size", QJsonValue(500), QJsonValue(600), 1, false},
+            {"advanced_MAX_OUTSTANDING_BLOCK_REQUESTS", "max_outstanding_block_requests", QJsonValue(500), QJsonValue(600), 1, true},
+            {"advanced_DHT_BOOTSTRAP_NODES", "dht_bootstrap_nodes", QJsonValue("router.bittorrent.com:6881"), QJsonValue("router.utorrent.com:6881"), 1, false},
+            {"advanced_WEBTORRENT_STUN_SERVER", "webtorrent_stun_server", QJsonValue("stun.example.test:3478"), QJsonValue("stun2.example.test:3478"), 1, true}
+        };
+        DemoQbittorrentServer legacy(true), modern(true);
+        modern.enableModernResponses();
+        QVERIFY(legacy.start() && modern.start());
+        QJsonObject first, second;
+        for (const auto &c : cases)
+        {
+            if (!c.modern) first.insert(c.key, c.before);
+            second.insert(c.key, c.before);
+        }
+        // Deliberately malformed value cannot be represented by a KiB editor.
+        first.insert("disk_queue_size", 1025);
+        legacy.setServerPreferences(first);
+        modern.setServerPreferences(second);
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath("profiles.ini"), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, legacy.url());
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains("v5.1.4"), 6000);
+        openConnectDialog(window, modern.url(), false, true, true, "Modern");
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains("v5.3.0"), 6000);
+        auto *tabs = window.findChild<QTabWidget *>("serverTabs");
+        auto *prefs = window.findChild<QAction *>("actionOptions");
+        QVERIFY(tabs && prefs);
+        const auto exercise = [&](bool newer, bool save, bool ignored) {
+            tabs->setCurrentIndex(newer ? 1 : 0);
+            bool finished = false;
+            QTimer::singleShot(0, &window, [&] {
+                auto *dlg = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget());
+                QVERIFY(dlg);
+                const auto cleanup = qScopeGuard([dlg] { if (dlg->isVisible()) dlg->reject(); });
+                auto *nav = dlg->findChild<QListWidget *>("preferencesSections");
+                auto *apply = dlg->findChild<QPushButton *>("preferencesApply");
+                auto *flag = dlg->findChild<QCheckBox *>("advanced_TRACKER_STATUS");
+                auto *port = dlg->findChild<QSpinBox *>("advanced_TRACKER_PORT");
+                QVERIFY(nav && apply && flag && port);
+                nav->setCurrentRow(9);
+                QTRY_VERIFY_WITH_TIMEOUT(flag->isEnabled(), 6000);
+                QVERIFY(!port->isEnabled() && !flag->isChecked());
+                QVERIFY(!apply->isEnabled());
+                for (const auto &c : cases)
+                {
+                    auto *widget = dlg->findChild<QWidget *>(QString::fromLatin1(c.widget));
+                    QVERIFY2(widget, c.widget);
+                    if (!newer && (c.modern || QByteArray(c.key) == "disk_queue_size"))
+                    {
+                        QVERIFY2(!widget->isEnabled(), c.widget);
+                        continue;
+                    }
+                    QVERIFY2(widget->isEnabled(), c.widget);
+                    if (auto *box = qobject_cast<QCheckBox *>(widget))
+                    {
+                        QVERIFY(!box->isTristate());
+                        QCOMPARE(box->isChecked(), c.before.toBool());
+                        box->setChecked(c.after.toBool());
+                    }
+                    else if (auto *spin = qobject_cast<QSpinBox *>(widget))
+                    {
+                        QCOMPARE(double(spin->value()) * c.scale, c.before.toDouble());
+                        spin->setValue(int(c.after.toDouble() / c.scale));
+                    }
+                    else if (auto *combo = qobject_cast<QComboBox *>(widget))
+                    {
+                        if (c.before.isString())
+                        {
+                            QCOMPARE(combo->currentIndex(), 1);
+                            combo->setCurrentIndex(0);
+                        }
+                        else
+                        {
+                            QCOMPARE(combo->currentIndex(), c.before.toInt());
+                            combo->setCurrentIndex(c.after.toInt());
+                        }
+                    }
+                    else if (auto *line = qobject_cast<QLineEdit *>(widget))
+                    {
+                        QCOMPARE(line->text(), c.before.toString());
+                        line->setText(c.after.toString());
+                    }
+                    else QFAIL("Unknown Advanced editor");
+                }
+                QVERIFY(apply->isEnabled());
+                bool confirmed = false, failure = false;
+                QString unexpected;
+                QTimer driver;
+                driver.setInterval(20);
+                connect(&driver, &QTimer::timeout, dlg, [&] {
+                    if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget()))
+                    {
+                        if (box->windowTitle() == QStringLiteral("Change Advanced server settings"))
+                        {
+                            confirmed = true;
+                            box->button(QMessageBox::Yes)->click();
+                        }
+                        else if (ignored && box->windowTitle() == QStringLiteral("Cannot confirm server preferences"))
+                        {
+                            failure = true;
+                            box->accept();
+                        }
+                        else { unexpected = box->windowTitle(); box->reject(); }
+                    }
+                });
+                driver.start();
+                if (save)
+                {
+                    apply->click();
+                    QTRY_VERIFY_WITH_TIMEOUT(nav->isEnabled() && (ignored ? failure : !apply->isEnabled()), 6000);
+                    QCOMPARE(failure, ignored);
+                    QVERIFY(confirmed);
+                }
+                driver.stop();
+                QVERIFY2(unexpected.isEmpty(), qPrintable(unexpected));
+                finished = true;
+            });
+            prefs->trigger();
+            QVERIFY(finished);
+        };
+        exercise(false, false, false);
+        QCOMPARE(legacy.serverPreferences(), first);
+        QCOMPARE(legacy.commandsFor("/api/v2/app/setPreferences"), 0);
+        legacy.ignorePreferenceWrites(true);
+        exercise(false, true, true);
+        QCOMPARE(legacy.serverPreferences(), first);
+        QCOMPARE(modern.serverPreferences(), second);
+        exercise(true, true, false);
+        QJsonObject delta;
+        for (const auto &c : cases) delta.insert(c.key, c.after);
+        const QUrlQuery form(QString::fromUtf8(modern.lastCommandBody("/api/v2/app/setPreferences")));
+        QCOMPARE(QJsonDocument::fromJson(form.queryItemValue("json", QUrl::FullyDecoded).toUtf8()).object(), delta);
+        QCOMPARE(modern.serverPreferences(), delta);
+        QCOMPARE(legacy.serverPreferences(), first);
+        QCOMPARE(modern.commandsFor("/api/v2/app/setPreferences"), 1);
+        QCOMPARE(legacy.commandsFor("/api/v2/app/setPreferences"), 1);
+    }
+
     void webUIDynamicDNSAndAPIKeyManagement()
     {
         DemoQbittorrentServer legacy(true), modern(true);
