@@ -30,6 +30,7 @@ public:
     void setGroupActionsEnabled(bool enabled) { m_groupActionsEnabled = enabled; }
 
     void refreshFontMetrics();
+    void refreshBytePresentation() { updateDirectoryLabels(); }
     void setHideZeroStatusFilters(bool hide);
     void setSeparateTrackerStatusFilter(bool separate);
     void updateCounts(const QHash<QString, QJsonObject> &torrents,

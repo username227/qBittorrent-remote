@@ -8297,15 +8297,19 @@ private slots:
                 const auto cleanup = qScopeGuard([dialog] { if (dialog->isVisible()) dialog->reject(); });
                 auto *nav = dialog->findChild<QListWidget *>("preferencesSections");
                 auto *tracker = dialog->findChild<QCheckBox *>("checkBoxFullTrackerURL");
+                auto *decimal = dialog->findChild<QCheckBox *>("checkDecimalUnits");
                 auto *format = dialog->findChild<QComboBox *>("comboDateFormat");
                 auto *scheme = dialog->findChild<QComboBox *>("comboColorScheme");
                 auto *apply = dialog->findChild<QPushButton *>("preferencesApply");
-                QVERIFY(nav && tracker && format && scheme && apply);
+                QVERIFY(nav && tracker && decimal && format && scheme && apply);
                 nav->setCurrentRow(1);
                 QVERIFY(tracker->isEnabled());
                 QCOMPARE(tracker->isChecked(), settings.value("Preferences/Behavior/FullTrackerURL", false).toBool());
                 QVERIFY(format->isEnabled());
                 tracker->setChecked(full);
+                QVERIFY(decimal->isEnabled());
+                QCOMPARE(decimal->isChecked(), settings.value("Preferences/Behavior/DecimalUnits", false).toBool());
+                decimal->setChecked(full);
                 const int iso = format->findData(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
                 QVERIFY(iso > 0);
                 format->setCurrentIndex(iso);
@@ -8324,13 +8328,24 @@ private slots:
             prefs->trigger();
             QVERIFY(completed);
         };
+        const QString binarySize = QLocale().toString(2460000.0 / (1024.0 * 1024.0), 'f', 2)
+            + QStringLiteral(" MiB");
+        const QString decimalSize = QLocale().toString(2.46, 'f', 2) + QStringLiteral(" MB");
+        QCOMPARE(shown(complete, 1), binarySize);
         changePresentation(false, true);
         QCOMPARE(shown(complete, 16), QStringLiteral("tracker.example.test"));
         QCOMPARE(shown(complete, 13), originalDate);
+        QCOMPARE(shown(complete, 1), binarySize);
+        QVERIFY(!settings.value("Preferences/Behavior/DecimalUnits", false).toBool());
         changePresentation(true, true);
         QCOMPARE(shown(complete, 16), fullUrl);
         QVERIFY(settings.value("Preferences/Behavior/FullTrackerURL").toBool());
+        QVERIFY(settings.value("Preferences/Behavior/DecimalUnits").toBool());
+        QCOMPARE(shown(complete, 1), decimalSize);
+        QCOMPARE(table->model()->index(rowFor(complete), 1).data(Qt::UserRole).toLongLong(), qint64(2460000));
         changePresentation(true, false);
+        QCOMPARE(shown(complete, 1), binarySize);
+        QVERIFY(!settings.value("Preferences/Behavior/DecimalUnits").toBool());
         QCOMPARE(shown(complete, 16), QStringLiteral("tracker.example.test"));
         QCOMPARE(shown(complete, 13), QLocale().toString(QDateTime::fromSecsSinceEpoch(1700000000),
             QStringLiteral("yyyy-MM-dd HH:mm:ss")));

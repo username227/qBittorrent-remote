@@ -70,6 +70,7 @@ public:
     QString connectionStatus() const { return m_serverState.value(QStringLiteral("connection_status")).toString(); }
     void setProgressFollowsStateColors(bool enabled);
     void setPresentation(bool fullTrackerUrl, const QString &dateFormat);
+    void refreshBytePresentation();
     void setContentPathMappings(const QList<Remote::PathMapping> &mappings);
     void setContentDragEnabled(bool enabled);
     void setSeparateTrackerStatusFilter(bool enabled);

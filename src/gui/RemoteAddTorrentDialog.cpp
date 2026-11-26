@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/RemoteAddTorrentDialog.h"
+#include "gui/BytePresentation.h"
 #include "gui/RemoteFileSystemPathComboEdit.h"
 #include "gui/RemoteFileDialog.h"
 #include "gui/RemoteTorrentContentWidget.h"
@@ -46,7 +47,7 @@ namespace
 {
 QString displaySize(qint64 bytes)
 {
-    return QLocale().formattedDataSize(bytes);
+    return BytePresentation::dataSize(bytes);
 }
 
 bool validLink(const QString &line)

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/ServerPane.h"
+#include "gui/BytePresentation.h"
 #include "gui/RemoteRssDialog.h"
 #include "gui/RemoteExecutionLogWidget.h"
 #include "gui/FilterSidebar.h"
@@ -696,17 +697,7 @@ namespace
 {
 QString formatTransferRate(double bytes)
 {
-    if (bytes < 0)
-        return QStringLiteral("—");
-    static const char *units[] = {"B/s", "KiB/s", "MiB/s", "GiB/s", "TiB/s", "PiB/s", "EiB/s"};
-    int unit = 0;
-    while (bytes >= 1024 && unit < 6)
-    {
-        bytes /= 1024;
-        ++unit;
-    }
-    return QLocale().toString(bytes, 'f', unit == 0 ? 0 : 1)
-        + QLatin1Char(' ') + QString::fromLatin1(units[unit]);
+    return BytePresentation::format(bytes, 1, true);
 }
 }
 
@@ -722,20 +713,8 @@ QString ServerPane::uploadRateText() const
 
 QString ServerPane::freeSpaceText() const
 {
-    const QJsonValue value = m_serverState.value(QStringLiteral("free_space_on_disk"));
-    if (!value.isDouble() || value.toDouble() < 0)
-        return tr("Free: —");
-    double amount = value.toDouble();
-    static const char *units[] = {"B", "KiB", "MiB", "GiB", "TiB", "PiB"};
-    int unit = 0;
-    while (amount >= 1024 && unit < 5)
-    {
-        amount /= 1024;
-        ++unit;
-    }
-    return tr("Free: %1 %2").arg(
-        QLocale().toString(amount, 'f', unit == 0 ? 0 : 1),
-        QString::fromLatin1(units[unit]));
+    const auto value = m_serverState.value(QStringLiteral("free_space_on_disk"));
+    return tr("Free: %1").arg(BytePresentation::format(value.toDouble(-1), 1, false, 5));
 }
 
 void ServerPane::setContentPathMappings(const QList<Remote::PathMapping> &mappings)
@@ -746,6 +725,13 @@ void ServerPane::setContentPathMappings(const QList<Remote::PathMapping> &mappin
 void ServerPane::setContentDragEnabled(bool enabled)
 {
     m_details->setContentDragEnabled(enabled);
+}
+
+void ServerPane::refreshBytePresentation()
+{
+    m_model->refreshBytePresentation();
+    m_details->refreshBytePresentation();
+    m_sidebar->refreshBytePresentation();
 }
 
 void ServerPane::setPresentation(bool fullTrackerUrl, const QString &dateFormat)

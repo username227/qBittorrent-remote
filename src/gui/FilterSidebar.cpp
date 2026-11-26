@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/FilterSidebar.h"
+#include "gui/BytePresentation.h"
 #include "gui/upstream/transferlistfilterswidgetitem.h"
 
 #include <QCheckBox>
@@ -664,7 +665,7 @@ void FilterSidebar::updateDirectoryLabels()
     if (auto *all = m_directoryItems.value(QString()))
     {
         all->setText(0, tr("All (%1)").arg(totalCount));
-        all->setText(1, QLocale().formattedDataSize(totalBytes));
+        all->setText(1, BytePresentation::dataSize(totalBytes));
     }
     for (auto it = m_directoryTotals.cbegin(); it != m_directoryTotals.cend(); ++it)
     {
@@ -675,7 +676,7 @@ void FilterSidebar::updateDirectoryLabels()
         const int count = m_includeSubfolders ? stats.recursiveCount : stats.directCount;
         const qint64 bytes = m_includeSubfolders ? stats.recursiveBytes : stats.directBytes;
         item->setText(0, tr("%1 (%2)").arg(directoryName(it.key())).arg(count));
-        item->setText(1, QLocale().formattedDataSize(bytes));
+        item->setText(1, BytePresentation::dataSize(bytes));
     }
 }
 

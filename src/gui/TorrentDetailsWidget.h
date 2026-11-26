@@ -32,6 +32,7 @@ public:
     bool wantsPieceAvailability() const;
     void setSelection(const QString &hash, const QJsonObject &summary = {});
     void setDateFormat(const QString &pattern);
+    void refreshBytePresentation();
     void displayDetails(const QString &hash, int tab, const QJsonValue &data);
     void displayError(const QString &hash, int tab, const QString &reason);
     void appendRates(double downloadBytesPerSec, double uploadBytesPerSec);

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/MainWindow.h"
+#include "gui/BytePresentation.h"
 #include "RemoteBuildVersion.h"
 #include "gui/CompletionNotifier.h"
 #include "gui/ServerPane.h"
@@ -1874,6 +1875,9 @@ void MainWindow::updateTorrentCount()
 void MainWindow::applyLocalBehaviorPreferences()
 {
     updateTraySettings();
+    const bool decimal = m_settings->value(QStringLiteral("Preferences/Behavior/DecimalUnits"), false).toBool();
+    const bool unitsChanged = BytePresentation::decimalUnits != decimal;
+    BytePresentation::decimalUnits = decimal;
     const int refreshInterval = m_settings->value(QStringLiteral("Preferences/Advanced/RefreshInterval"), 2000).toInt();
     const bool speedGraphs = m_settings->value(QStringLiteral("Preferences/Advanced/EnableSpeedGraphs"), true).toBool();
     const bool menuIcons = m_settings->value(QStringLiteral("Preferences/Advanced/EnableMenuIcons"), true).toBool();
@@ -1903,12 +1907,13 @@ void MainWindow::applyLocalBehaviorPreferences()
     const QString dateFormat = m_settings->value(QStringLiteral("Preferences/Behavior/DateFormat")).toString();
     const auto apply = [alternating, hideZero, mode, hideZeroStatus,
                         stateColors, progressColor, separateTracker, contentDrag, rssImages, speedGraphs,
-                        fullTrackerUrl, dateFormat](ServerPane *pane) {
+                        fullTrackerUrl, dateFormat, unitsChanged](ServerPane *pane) {
         if (!pane)
             return;
         pane->table()->setAlternatingRowColors(alternating);
         pane->model()->setHideZeroValues(hideZero, mode);
         pane->setPresentation(fullTrackerUrl, dateFormat);
+        if (unitsChanged) pane->refreshBytePresentation();
         pane->sidebar()->setHideZeroStatusFilters(hideZeroStatus);
         pane->model()->setUseStateColors(stateColors);
         pane->setProgressFollowsStateColors(progressColor);
@@ -1922,6 +1927,14 @@ void MainWindow::applyLocalBehaviorPreferences()
     {
         apply(connection->pane);
         if (connection->session) connection->session->setRefreshInterval(refreshInterval);
+        if (unitsChanged && connection->statistics)
+            connection->statistics->updateStatistics(connection->pane->serverState());
+    }
+    if (unitsChanged)
+    {
+        const auto connection = activeConnection();
+        updateTransferRates(connection && connection->connected ? connection->pane : nullptr);
+        updateStatusBarFieldWidths();
     }
     updateServerFreeSpace();
 }
@@ -2351,11 +2364,7 @@ void MainWindow::updateTransferRates(const ServerPane *pane)
 {
     const auto state = pane ? pane->serverState() : QJsonObject{};
     const auto format = [](double value, bool rate) {
-        static const char *units[] = {"B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB"};
-        int unit = 0;
-        while (value >= 1024 && unit < 6) { value /= 1024; ++unit; }
-        return QLocale().toString(value, 'f', unit == 0 ? 0 : 1) + ' '
-            + QString::fromLatin1(units[unit]) + (rate ? QStringLiteral("/s") : QString());
+        return BytePresentation::format(value, 1, rate);
     };
     bool resize = false;
     const auto update = [&](QLabel *label, const QString &base, const char *limitKey, const char *totalKey) {

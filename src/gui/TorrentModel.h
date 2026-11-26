@@ -29,6 +29,7 @@ public:
     void setHideZeroValues(bool enabled, int mode);
     void setUseStateColors(bool enabled);
     void setPresentation(bool fullTrackerUrl, const QString &dateFormat);
+    void refreshBytePresentation();
     QString hashForRow(int row) const;
     const QHash<QString, QJsonObject> &torrents() const noexcept;
     bool hasFullSync() const noexcept { return m_hasFullSync; }

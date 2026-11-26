@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/TorrentDetailsWidget.h"
+#include "gui/BytePresentation.h"
 #include "gui/DatePresentation.h"
 #include "gui/MappedContentTreeWidget.h"
 #include "gui/NaturalNameSort.h"
@@ -60,18 +61,7 @@ namespace
 {
 QString bytesText(double amount, bool perSecond = false)
 {
-    if (amount < 0)
-        return QStringLiteral("—");
-    static const char *units[] = {"B", "KiB", "MiB", "GiB", "TiB", "PiB"};
-    int unit = 0;
-    while (amount >= 1024 && unit < 5)
-    {
-        amount /= 1024;
-        ++unit;
-    }
-    return QLocale().toString(amount, 'f', unit ? 1 : 0)
-        + QLatin1Char(' ') + QString::fromLatin1(units[unit])
-        + (perSecond ? QStringLiteral("/s") : QString());
+    return BytePresentation::format(amount, 1, perSecond, 5);
 }
 
 QString numberText(const QJsonValue &value)
@@ -570,6 +560,7 @@ public:
         layout->addWidget(m_graph);
     }
     void append(double down, double up) { m_graph->append(down, up); }
+    void refreshBytePresentation() { m_graph->update(); }
 private:
     NativeSpeedGraph *m_graph = nullptr;
 };
@@ -1079,6 +1070,34 @@ bool TorrentDetailsWidget::wantsPieceAvailability() const
     return !m_hash.isEmpty() && progress.isDouble() && progress.toDouble() < 1.0
         && (state == QLatin1String("downloading") || state == QLatin1String("stalledDL")
             || state == QLatin1String("forcedDL"));
+}
+
+void TorrentDetailsWidget::refreshBytePresentation()
+{
+    if (!m_lastGeneral.isEmpty()) displayGeneral(m_lastGeneral);
+    const bool peerSorting = m_peers->isSortingEnabled();
+    m_peers->setSortingEnabled(false);
+    for (int row = 0; row < m_peers->rowCount(); ++row)
+        for (int col : {4, 5, 9, 10})
+            if (auto *item = m_peers->item(row, col))
+            {
+                const auto raw = item->data(Qt::UserRole);
+                item->setText(raw.isValid() ? bytesText(raw.toDouble(), col == 4 || col == 5)
+                    : QStringLiteral("—"));
+            }
+    m_peers->setSortingEnabled(peerSorting);
+    auto *tree = m_ui->filesList;
+    QSignalBlocker blocker(tree);
+    const bool contentSorting = tree->isSortingEnabled();
+    tree->setSortingEnabled(false);
+    for (QTreeWidgetItemIterator it(tree); *it; ++it)
+        for (int col : {1, 4})
+        {
+            const auto raw = (*it)->data(col, Qt::UserRole);
+            if (raw.isValid()) (*it)->setText(col, bytesText(raw.toDouble()));
+        }
+    tree->setSortingEnabled(contentSorting);
+    m_speedGraph->refreshBytePresentation();
 }
 
 void TorrentDetailsWidget::setDateFormat(const QString &pattern)

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Remote adaptation of qBittorrent's statsdialog (Copyright 2013 Nick Tiskov).
 #include "gui/RemoteStatisticsDialog.h"
+#include "gui/BytePresentation.h"
 #include "api/RemoteSession.h"
 #include "ui_remotestatisticsdialog.h"
 
@@ -16,14 +17,7 @@ namespace
 {
 QString bytesText(const QJsonValue &value)
 {
-    if (!value.isDouble() || value.toDouble() < 0 || !std::isfinite(value.toDouble()))
-        return QStringLiteral("—");
-    double amount = value.toDouble();
-    static const char *units[] = {"B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB"};
-    int unit = 0;
-    while (amount >= 1024 && unit < 6) { amount /= 1024; ++unit; }
-    return QLocale().toString(amount, 'f', unit == 0 ? 0 : 2)
-        + QLatin1Char(' ') + QString::fromLatin1(units[unit]);
+    return BytePresentation::format(value.toDouble(-1), 2);
 }
 
 QString countText(const QJsonValue &value)
