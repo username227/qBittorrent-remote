@@ -118,6 +118,11 @@ public:
     using ArrayResult = std::function<void(const QJsonArray &)>;
     void requestNetworkInterfaces(ArrayResult received, PreferencesError failed);
     void requestNetworkAddresses(const QString &iface, ArrayResult received, PreferencesError failed);
+    using BytesResult = std::function<void(const QByteArray &)>;
+    void createTorrentTask(const QMap<QString, QString> &params, PreferencesResult received, PreferencesError failed);
+    void requestTorrentCreationStatus(const QString &taskId, ArrayResult received, PreferencesError failed);
+    void downloadCreatedTorrent(const QString &taskId, BytesResult received, PreferencesError failed);
+    void deleteTorrentCreationTask(const QString &taskId, std::function<void()> accepted, PreferencesError failed);
     // RSS stays on the authenticated server. Only these fixed RSS endpoints
     // are permitted; values are encoded once as form/query parameters.
     void requestRss(const QString &action, const QMap<QString, QString> &params,
@@ -209,6 +214,7 @@ private:
         bool exportRequest = false;
         bool jsonObjectRequest = false;
         bool jsonArrayRequest = false;
+        bool bytesRequest = false;
         bool jsonObjectPost = false;
         QString exportHash;
         QString detailHash;
@@ -219,6 +225,7 @@ private:
         std::function<void(const QString &)> onRejected;
         PreferencesResult onJsonObject;
         ArrayResult onJsonArray;
+        BytesResult onBytes;
         bool reportOperation = true;
     };
 

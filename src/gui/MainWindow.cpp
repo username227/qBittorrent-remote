@@ -9,6 +9,7 @@
 #include "gui/RemoteRssDialog.h"
 #include "gui/RemoteCategoryDialog.h"
 #include "gui/RemoteSpeedLimitsDialog.h"
+#include "gui/RemoteTorrentCreatorDialog.h"
 #include "gui/RemoteAddTorrentDialog.h"
 #include "gui/RemoteTrackerEntriesDialog.h"
 #include "gui/RemoteTorrentContentLayoutDialog.h"
@@ -779,6 +780,13 @@ void MainWindow::setupActions()
 
     m_ui->menuOptions->clear();
     m_ui->menuOptions->addAction(m_ui->actionCreateTorrent);
+    connect(m_ui->actionCreateTorrent, &QAction::triggered, this, [this] {
+        const auto server = activeConnection();
+        if (!server || !server->connected || !server->session) return;
+        RemoteTorrentCreatorDialog dialog(*m_settings, server->profile, server->session, server->version, this);
+        trackDialogGeometry(dialog, QStringLiteral("TorrentCreator"));
+        dialog.exec();
+    });
     m_ui->menuOptions->addAction(m_ui->actionOptions);
     m_ui->actionOptions->setEnabled(true);
     m_ui->actionOptions->setText(tr("Preferences..."));
@@ -1564,6 +1572,7 @@ void MainWindow::updateTorrentActionState()
 
     m_ui->actionOpen->setEnabled(ready);
     m_ui->actionDownloadFromURL->setEnabled(ready);
+    m_ui->actionCreateTorrent->setEnabled(ready);
     m_ui->actionOpenDestinationFolder->setEnabled(selected);
     for (QAction *action : {
         m_ui->actionDelete, m_ui->actionStart, m_ui->actionStop,
