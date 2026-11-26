@@ -8,6 +8,10 @@
 #include "gui/upstream/progressbarpainter.h"
 
 #include <QAction>
+#include <QApplication>
+#include <QClipboard>
+#include <QShortcut>
+#include <QKeySequence>
 #include <QDateTime>
 #include <QDesktopServices>
 #include <QDialog>
@@ -630,19 +634,61 @@ TorrentDetailsWidget::TorrentDetailsWidget(QWidget *parent)
 
     m_peers = new QTableWidget(this);
     m_peers->setObjectName(QStringLiteral("torrentPeers"));
-    m_peers->setColumnCount(8);
+    m_peers->setColumnCount(15);
     m_peers->setHorizontalHeaderLabels({
-        tr("IP"), tr("Country"), tr("Client"), tr("Progress"), tr("Down Speed"),
-        tr("Up Speed"), tr("Flags"), tr("Connection")
+        tr("IP/Address"), tr("Country/Region"), tr("Client"), tr("Progress"), tr("Down Speed"),
+        tr("Up Speed"), tr("Flags"), tr("Connection"), tr("Port"), tr("Downloaded"),
+        tr("Uploaded"), tr("Relevance"), tr("Contribution"), tr("Files"), tr("Peer ID Client")
     });
     m_peers->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_peers->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_peers->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    m_peers->verticalHeader()->hide();
     m_peers->setAlternatingRowColors(true);
     m_peers->horizontalHeader()->setStretchLastSection(true);
     m_peers->horizontalHeader()->setSectionsMovable(true);
     m_peers->horizontalHeader()->setHighlightSections(false);
     m_peers->setSortingEnabled(true);
     m_peers->sortItems(0, Qt::AscendingOrder);
+    m_peers->horizontalHeader()->setStretchLastSection(false);
+    m_peers->setColumnHidden(14, true); // upstream hides Peer ID Client by default
+    m_peers->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_peers, &QWidget::customContextMenuRequested, this, [this](const QPoint &pos) {
+        QMenu menu(this);
+        auto *copy = menu.addAction(QIcon(QStringLiteral(":/icons/edit-copy.svg")), tr("Copy IP:port"));
+        copy->setObjectName(QStringLiteral("copySelectedPeers"));
+        copy->setEnabled(!m_peers->selectionModel()->selectedRows().isEmpty());
+        connect(copy, &QAction::triggered, this, &TorrentDetailsWidget::copySelectedPeers);
+        menu.exec(m_peers->viewport()->mapToGlobal(pos));
+    });
+    auto *copyShortcut = new QShortcut(QKeySequence::Copy, m_peers);
+    copyShortcut->setContext(Qt::WidgetShortcut);
+    connect(copyShortcut, &QShortcut::activated, this, &TorrentDetailsWidget::copySelectedPeers);
+    auto *header = m_peers->horizontalHeader();
+    header->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(header, &QWidget::customContextMenuRequested, this, [this, header](const QPoint &pos) {
+        QMenu menu(this);
+        for (int col = 0; col < m_peers->columnCount(); ++col)
+        {
+            auto *action = menu.addAction(m_peers->horizontalHeaderItem(col)->text());
+            action->setCheckable(true);
+            action->setChecked(!m_peers->isColumnHidden(col));
+            if (action->isChecked() && header->count() - header->hiddenSectionCount() <= 1)
+                action->setEnabled(false);
+            connect(action, &QAction::triggered, this, [this, col](bool checked) {
+                m_peers->setColumnHidden(col, !checked);
+                if (checked && m_peers->columnWidth(col) <= 5)
+                    m_peers->resizeColumnToContents(col);
+            });
+        }
+        menu.addSeparator();
+        auto *resize = menu.addAction(tr("Resize columns"));
+        connect(resize, &QAction::triggered, this, [this]() {
+            for (int col = 0; col < m_peers->columnCount(); ++col)
+                if (!m_peers->isColumnHidden(col)) m_peers->resizeColumnToContents(col);
+        });
+        menu.exec(header->mapToGlobal(pos));
+    });
     m_ui->vBoxLayoutPeerPage->addWidget(m_peers);
 
     m_ui->listWebSeeds->setObjectName(QStringLiteral("torrentWebSeeds"));
@@ -861,6 +907,7 @@ void TorrentDetailsWidget::resetPages()
     m_trackerTiersKnown = false;
     m_trackers->clear();
     updateTrackerTierButtons();
+    m_peerRecords = {};
     m_peers->setRowCount(0);
     m_ui->listWebSeeds->clear();
     m_ui->filesList->clear();
@@ -1178,42 +1225,110 @@ void TorrentDetailsWidget::displayTrackers(const QJsonArray &trackers)
     updateTrackerTierButtons();
 }
 
+void TorrentDetailsWidget::copySelectedPeers()
+{
+    QStringList addresses;
+    for (const auto &index : m_peers->selectionModel()->selectedRows())
+        if (const auto *item = m_peers->item(index.row(), 0))
+            addresses.append(item->data(Qt::UserRole + 1).toString());
+    if (!addresses.isEmpty()) QApplication::clipboard()->setText(addresses.join(QLatin1Char('\n')));
+}
+
 void TorrentDetailsWidget::displayPeers(const QJsonObject &reply)
 {
-    const QJsonObject peers = reply.value(QStringLiteral("peers")).toObject();
-    m_peers->setSortingEnabled(false);
-    m_peers->setRowCount(peers.size());
-    int row = 0;
-    for (auto it = peers.constBegin(); it != peers.constEnd(); ++it, ++row)
+    const bool full = reply.value(QStringLiteral("full_update")).toBool()
+        || !reply.contains(QStringLiteral("rid")); // direct full-snapshot consumers
+    if (full) m_peerRecords = {};
+    for (const auto &removed : reply.value(QStringLiteral("peers_removed")).toArray())
+        m_peerRecords.remove(removed.toString());
+    const QJsonObject changes = reply.value(QStringLiteral("peers")).toObject();
+    for (auto it = changes.constBegin(); it != changes.constEnd(); ++it)
     {
-        const QJsonObject p = it.value().toObject();
-        const double progress = p.value(QStringLiteral("progress")).toDouble(-1);
-        const QString host = p.value(QStringLiteral("host_name")).toString();
-        const QString peerAddress = host.isEmpty() ? it.key() : QStringLiteral("%1 (%2)").arg(host, it.key());
+        auto record = m_peerRecords.value(it.key()).toObject();
+        const auto patch = it.value().toObject();
+        for (auto field = patch.constBegin(); field != patch.constEnd(); ++field)
+            record.insert(field.key(), field.value());
+        m_peerRecords.insert(it.key(), record);
+    }
+
+    // Keep surviving table items and their selection; update fields in place.
+    // Sorting is suspended so inserts/updates cannot change row identity.
+    m_peers->setUpdatesEnabled(false);
+    m_peers->setSortingEnabled(false);
+    QHash<QString, int> rows;
+    for (int row = m_peers->rowCount() - 1; row >= 0; --row)
+    {
+        const auto *item = m_peers->item(row, 0);
+        if (!item || !m_peerRecords.contains(item->data(Qt::UserRole + 1).toString()))
+            m_peers->removeRow(row);
+    }
+    for (int row = 0; row < m_peers->rowCount(); ++row)
+        rows.insert(m_peers->item(row, 0)->data(Qt::UserRole + 1).toString(), row);
+    const auto percentage = [](const QJsonValue &value) {
+        return value.isDouble() && value.toDouble() >= 0
+            ? QLocale().toString(value.toDouble() * 100, 'f', 1) + QLatin1Char('%')
+            : QStringLiteral("—");
+    };
+    for (auto it = m_peerRecords.constBegin(); it != m_peerRecords.constEnd(); ++it)
+    {
+        const auto p = it.value().toObject();
+        int row = rows.value(it.key(), -1);
+        if (row < 0)
+        {
+            row = m_peers->rowCount();
+            m_peers->insertRow(row);
+        }
+        const auto host = p.value(QStringLiteral("host_name")).toString();
+        const auto ip = p.value(QStringLiteral("ip")).toString();
+        const auto peerAddress = !host.isEmpty() ? host : !ip.isEmpty() ? ip : it.key();
+        QString files = p.value(QStringLiteral("files")).toString();
         const QStringList values {
-            peerAddress, p.value(QStringLiteral("country_code")).toString(),
+            peerAddress, p.value(QStringLiteral("country_code")).toString().toUpper(),
             p.value(QStringLiteral("client")).toString(),
-            progress < 0 ? QStringLiteral("—")
-                         : ProgressDisplay::percent(progress),
+            percentage(p.value(QStringLiteral("progress"))),
             speedText(p.value(QStringLiteral("dl_speed"))),
             speedText(p.value(QStringLiteral("up_speed"))),
             p.value(QStringLiteral("flags")).toString(),
-            p.value(QStringLiteral("connection")).toString()
+            p.value(QStringLiteral("connection")).toString(),
+            numberText(p.value(QStringLiteral("port"))),
+            sizeText(p.value(QStringLiteral("downloaded"))),
+            sizeText(p.value(QStringLiteral("uploaded"))),
+            percentage(p.value(QStringLiteral("relevance"))),
+            percentage(p.value(QStringLiteral("contribution"))),
+            QString(files).replace(QLatin1Char('\n'), QStringLiteral("; ")),
+            p.value(QStringLiteral("peer_id_client")).toString()
+        };
+        const QHash<int, QString> numeric {
+            {3, QStringLiteral("progress")}, {4, QStringLiteral("dl_speed")},
+            {5, QStringLiteral("up_speed")}, {8, QStringLiteral("port")},
+            {9, QStringLiteral("downloaded")}, {10, QStringLiteral("uploaded")},
+            {11, QStringLiteral("relevance")}, {12, QStringLiteral("contribution")}
         };
         for (int col = 0; col < values.size(); ++col)
         {
-            auto *item = new SortablePeerItem(values.at(col));
-            if (col == 0 && !host.isEmpty()) item->setToolTip(it.key());
-            if (col == 1) item->setToolTip(p.value(QStringLiteral("country")).toString());
-            const QJsonValue raw = col == 3 ? p.value(QStringLiteral("progress"))
-                : col == 4 ? p.value(QStringLiteral("dl_speed"))
-                : col == 5 ? p.value(QStringLiteral("up_speed")) : QJsonValue();
-            if (raw.isDouble() && raw.toDouble() >= 0)
-                item->setData(Qt::UserRole, raw.toDouble());
-            m_peers->setItem(row, col, item);
+            auto *item = m_peers->item(row, col);
+            if (!item)
+            {
+                item = new SortablePeerItem(values.at(col));
+                m_peers->setItem(row, col, item);
+            }
+            else if (item->text() != values.at(col)) item->setText(values.at(col));
+            if (col == 0)
+            {
+                item->setData(Qt::UserRole + 1, it.key());
+                item->setToolTip(it.key().toHtmlEscaped());
+            }
+            else if (col == 1) item->setToolTip(p.value(QStringLiteral("country")).toString().toHtmlEscaped());
+            else if (col == 6) item->setToolTip(p.value(QStringLiteral("flags_desc")).toString().toHtmlEscaped());
+            else if (col == 13) item->setToolTip(files.toHtmlEscaped());
+            const auto raw = p.value(numeric.value(col));
+            item->setData(Qt::UserRole, raw.isDouble() && raw.toDouble() >= 0
+                ? QVariant(raw.toDouble()) : QVariant());
+            if (numeric.contains(col)) item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
         }
     }
     m_peers->setSortingEnabled(true);
+    m_peers->setUpdatesEnabled(true);
 }
 
 void TorrentDetailsWidget::displayWebSeeds(const QJsonArray &sources)
@@ -1624,6 +1739,11 @@ void TorrentDetailsWidget::displayError(const QString &hash, int tab, const QStr
     {
         m_trackerTiersKnown = false;
         updateTrackerTierButtons();
+    }
+    if (tab == 2)
+    {
+        m_peerRecords = {};
+        m_peers->setRowCount(0);
     }
     m_error->setText(tr("Could not load torrent details: %1").arg(reason));
     m_error->show();

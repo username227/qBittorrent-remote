@@ -260,6 +260,7 @@ private:
     int m_detailPage = -1;
     bool m_detailAvailability = false;
     quint64 m_detailGeneration = 0;
+    int m_peerRid = 0;
     qint64 m_syncRid = 0;
     QTimer m_syncTimer;
 };

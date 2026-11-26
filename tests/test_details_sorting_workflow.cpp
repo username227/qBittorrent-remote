@@ -185,6 +185,28 @@ void DetailsSortingWorkflowTest::peersSortNumbersRatherThanFormattedPercentagesA
         QCOMPARE(table->horizontalHeader()->sortIndicatorSection(), 5);
         QCOMPARE(table->horizontalHeader()->sortIndicatorOrder(), Qt::DescendingOrder);
         QCOMPARE(table->item(0, 0)->text(), QStringLiteral("10.0.0.3:6881"));
+
+        table->selectRow(0);
+        auto *survivor = table->item(0, 0);
+        const auto delta = QJsonDocument::fromJson(R"JSON({
+          "rid":2,
+          "peers":{"10.0.0.3:6881":{"dl_speed":8192},
+                   "[2001:db8::1]:6881":{"ip":"2001:db8::1","port":6881,"client":"New","up_speed":0}},
+          "peers_removed":["10.0.0.10:6881"]
+        })JSON").object();
+        widget.displayDetails(QStringLiteral("test-hash"), 2, delta);
+        QCOMPARE(table->rowCount(), 3);
+        QCOMPARE(table->item(0, 0), survivor);
+        QCOMPARE(table->item(0, 2)->text(), QStringLiteral("beta"));
+        QCOMPARE(table->item(0, 4)->data(Qt::UserRole).toInt(), 8192);
+        QCOMPARE(table->selectionModel()->selectedRows().size(), 1);
+        widget.displayDetails(QStringLiteral("test-hash"), 2, QJsonObject{{"rid", 3}});
+        QCOMPARE(table->rowCount(), 3);
+        QCOMPARE(table->item(0, 0), survivor);
+        widget.displayDetails(QStringLiteral("other-hash"), 2, QJsonObject{{"rid", 4}, {"full_update", true}});
+        QCOMPARE(table->rowCount(), 3);
+        widget.displayDetails(QStringLiteral("test-hash"), 2, QJsonObject{{"rid", 1}, {"full_update", true}});
+        QCOMPARE(table->rowCount(), 0);
 }
 
 void DetailsSortingWorkflowTest::trackersSortStatusAndNumericColumnsWithoutFlatteningEndpoints()

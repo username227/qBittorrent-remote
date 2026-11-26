@@ -459,7 +459,16 @@ public:
                                 }
                             }
                             else if (path.startsWith("/api/v2/sync/torrentPeers?"))
-                                response = R"({"rid":1,"full_update":true,"peers":{"192.0.2.1:61413":{"client":"qBittorrent","country_code":"US","progress":0.75,"dl_speed":1024,"up_speed":2048,"flags":"D","connection":"TCP"}}})";
+                            {
+                                const auto rid = QUrlQuery(QString::fromLatin1(
+                                    path.mid(path.indexOf('?') + 1))).queryItemValue(QStringLiteral("rid"));
+                                if (rid == QLatin1String("1"))
+                                    response = R"({"rid":2,"peers":{"192.0.2.1:61413":{"dl_speed":4096}}})";
+                                else if (rid == QLatin1String("2"))
+                                    response = R"({"rid":3})";
+                                else
+                                    response = R"({"rid":1,"full_update":true,"peers":{"192.0.2.1:61413":{"client":"qBittorrent","country_code":"US","progress":0.75,"dl_speed":1024,"up_speed":2048,"flags":"D","connection":"TCP","ip":"192.0.2.1","port":61413,"downloaded":1048576,"uploaded":1024,"relevance":0.25,"files":"data/file.bin"}}})";
+                            }
                             else if (path.startsWith("/api/v2/torrents/webseeds?"))
                                 response = R"([{"url":"https://mirror.example/file.iso"}])";
                             else
@@ -8986,6 +8995,21 @@ private slots:
         QVERIFY(!peers->horizontalHeader()->highlightSections());
         QVERIFY(peers->horizontalHeader()->sectionsMovable());
         QCOMPARE(peers->item(0, 2)->text(), QStringLiteral("qBittorrent"));
+        QCOMPARE(peers->columnCount(), 15);
+        QCOMPARE(peers->item(0, 8)->data(Qt::UserRole).toInt(), 61413);
+        QCOMPARE(peers->item(0, 9)->data(Qt::UserRole).toInt(), 1048576);
+        peers->selectRow(0);
+        auto *peerItem = peers->item(0, 0);
+        serverPane->refreshSelectedDetails();
+        QTRY_COMPARE_WITH_TIMEOUT(peers->item(0, 4)->data(Qt::UserRole).toInt(), 4096, 6000);
+        QCOMPARE(peers->item(0, 0), peerItem);
+        QCOMPARE(peers->item(0, 2)->text(), QStringLiteral("qBittorrent"));
+        QCOMPARE(peers->selectionModel()->selectedRows().size(), 1);
+        const int previousPeerQueries = server.detailsFor("/api/v2/sync/torrentPeers?");
+        serverPane->refreshSelectedDetails();
+        QTRY_VERIFY_WITH_TIMEOUT(server.detailsFor("/api/v2/sync/torrentPeers?") > previousPeerQueries, 6000);
+        QTRY_VERIFY_WITH_TIMEOUT(server.lastDetailRequest().endsWith("&rid=2"), 6000);
+        QCOMPARE(peers->rowCount(), 1);
 
         tabBar->setCurrentIndex(3);
         auto *sources = window.findChild<QListWidget *>(QStringLiteral("torrentWebSeeds"));

@@ -54,6 +54,7 @@ private:
     void updateTrackerTierButtons();
     void changeTrackerTiers(int delta);
     void displayPeers(const QJsonObject &peers);
+    void copySelectedPeers();
     void displayWebSeeds(const QJsonArray &sources);
     void displayFiles(const QJsonArray &files);
     void chooseFilePriorities(int priority, bool allFiles);
@@ -64,6 +65,7 @@ private:
     Ui::PropertiesWidget *m_ui = nullptr;
     QTreeWidget *m_trackers = nullptr;
     QTableWidget *m_peers = nullptr;
+    QJsonObject m_peerRecords;
     SpeedGraphWidget *m_speedGraph = nullptr;
     RemotePiecesBar *m_progressBar = nullptr;
     RemotePiecesBar *m_availabilityBar = nullptr;

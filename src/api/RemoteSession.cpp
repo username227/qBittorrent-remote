@@ -288,6 +288,11 @@ void RemoteSession::connectToServer(const ServerProfile &profile,
 
     m_syncTimer.stop();
     m_operations.clear();
+    ++m_detailGeneration;
+    m_detailHash.clear();
+    m_detailPage = -1;
+    m_detailAvailability = false;
+    m_peerRid = 0;
     m_syncRid = 0;
     m_address = ServerAddress::parse(profile.url);
     if (!m_address)
@@ -920,7 +925,9 @@ void RemoteSession::pumpOperations()
         return;
 
     const QueuedOperation operation = m_operations.dequeue();
-    QNetworkRequest request = requestFor(operation.endpoint);
+    const bool peerRequest = operation.detailsRequest && operation.detailTab == 2;
+    QNetworkRequest request = requestFor(operation.endpoint
+        + (peerRequest ? QStringLiteral("&rid=%1").arg(m_peerRid) : QString()));
     if (!operation.detailsRequest && !operation.exportRequest && !operation.jsonArrayRequest && !operation.bytesRequest
         && (!operation.jsonObjectRequest || operation.jsonObjectPost))
         request.setHeader(QNetworkRequest::ContentTypeHeader,
@@ -1002,9 +1009,34 @@ void RemoteSession::pumpOperations()
                     || (expectsObject && !json.isObject())
                     || (!expectsObject && !json.isArray()))
                 {
+                    if (operation.detailTab == 2) m_peerRid = 0;
                     emit torrentDetailsFailed(operation.detailHash, operation.detailTab,
                                               tr("Unexpected torrent-details response."));
                     return;
+                }
+                if (operation.detailTab == 2)
+                {
+                    const auto peers = json.object();
+                    const int rid = peers.value(QStringLiteral("rid")).toInt(-1);
+                    const auto updates = peers.value(QStringLiteral("peers"));
+                    const auto removed = peers.value(QStringLiteral("peers_removed"));
+                    bool valid = rid > 0 && rid <= 1000000
+                        && (m_peerRid != 0 || peers.value(QStringLiteral("full_update")).toBool())
+                        && (updates.isUndefined() || updates.isObject())
+                        && (removed.isUndefined() || removed.isArray());
+                    const auto changes = updates.toObject();
+                    for (auto it = changes.constBegin(); it != changes.constEnd(); ++it)
+                        valid = valid && !it.key().isEmpty() && it.value().isObject();
+                    for (const auto &key : removed.toArray())
+                        valid = valid && key.isString();
+                    if (!valid)
+                    {
+                        m_peerRid = 0;
+                        emit torrentDetailsFailed(operation.detailHash, operation.detailTab,
+                            tr("Unexpected peer synchronization response."));
+                        return;
+                    }
+                    m_peerRid = rid;
                 }
                 emit torrentDetailsReceived(operation.detailHash, operation.detailTab,
                                              expectsObject ? QJsonValue(json.object())
@@ -1029,7 +1061,10 @@ void RemoteSession::pumpOperations()
             if (operation.detailsRequest)
             {
                 if (operation.detailGeneration == m_detailGeneration)
+                {
+                    if (operation.detailTab == 2) m_peerRid = 0;
                     emit torrentDetailsFailed(operation.detailHash, operation.detailTab, reason);
+                }
             }
             else if (operation.jsonObjectRequest || operation.jsonArrayRequest)
             {
@@ -1072,6 +1107,7 @@ void RemoteSession::requestTorrentDetails(const QString &hash, int tab, bool ava
     if (m_detailHash != selected || m_detailPage != page || m_detailAvailability != availability)
     {
         ++m_detailGeneration;
+        m_peerRid = 0;
         m_detailHash = selected;
         m_detailPage = page;
         m_detailAvailability = availability;
@@ -1088,9 +1124,8 @@ void RemoteSession::requestTorrentDetails(const QString &hash, int tab, bool ava
         QStringLiteral("torrents/files")
     };
     const auto enqueue = [&](const QString &endpoint, int kind) {
-        const QString url = QStringLiteral("api/v2/%1?hash=%2%3")
-            .arg(endpoint, QString::fromLatin1(QUrl::toPercentEncoding(hash)),
-                kind == 2 ? QStringLiteral("&rid=0") : QString());
+        const QString url = QStringLiteral("api/v2/%1?hash=%2")
+            .arg(endpoint, QString::fromLatin1(QUrl::toPercentEncoding(hash)));
         QueuedOperation request {url, {}, {}, {}, false};
         request.detailsRequest = true;
         request.detailHash = hash;

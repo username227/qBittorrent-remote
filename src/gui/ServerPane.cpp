@@ -1359,7 +1359,7 @@ void ServerPane::saveLayout(QSettings &settings, const QString &profileId) const
     saveHeader("torrentContent", "contentHeader");
 
     if (auto *peers = m_details->findChild<QTableWidget *>(QStringLiteral("torrentPeers")))
-        settings.setValue(root + QStringLiteral("/peerHeader"),
+        settings.setValue(root + QStringLiteral("/peerHeaderV2"),
                           peers->horizontalHeader()->saveState());
 }
 
@@ -1435,7 +1435,7 @@ void ServerPane::restoreLayout(QSettings &settings, const QString &profileId)
     if (auto *peers = m_details->findChild<QTableWidget *>(QStringLiteral("torrentPeers")))
     {
         const QByteArray data =
-            settings.value(root + QStringLiteral("/peerHeader")).toByteArray();
+            settings.value(root + QStringLiteral("/peerHeaderV2")).toByteArray();
         if (!data.isEmpty())
             peers->horizontalHeader()->restoreState(data);
         peers->horizontalHeader()->setSectionsMovable(true);
