@@ -140,11 +140,11 @@ public:
                         {
                             const QUrlQuery data(QString::fromUtf8(body));
                             const bool good = m_acceptPassword
-                                && data.queryItemValue(QStringLiteral("username")) == QStringLiteral("demo")
-                                && (data.queryItemValue(QStringLiteral("password"))
-                                        == QStringLiteral("demo-password")
+                                && data.queryItemValue(QStringLiteral("username"), QUrl::FullyDecoded) == m_loginUsername
+                                && (data.queryItemValue(QStringLiteral("password"), QUrl::FullyDecoded)
+                                        == m_loginPassword
                                     || (m_acceptBlank && data.queryItemValue(
-                                        QStringLiteral("password")).isEmpty()));
+                                        QStringLiteral("password"), QUrl::FullyDecoded).isEmpty()));
                             if (m_modernResponses)
                                 code = good ? 204 : 401;
                             else
@@ -433,6 +433,19 @@ public:
                                 if (!m_ignorePreferences)
                                 {
                                     const auto updates = parsed.object();
+                                    if (m_webUITransitionDemo)
+                                    {
+                                        if (updates.contains("web_ui_username"))
+                                            m_loginUsername = updates.value("web_ui_username").toString();
+                                        if (updates.contains("web_ui_password"))
+                                            m_loginPassword = updates.value("web_ui_password").toString();
+                                        if (updates.contains("web_ui_port"))
+                                        {
+                                            const auto port = quint16(updates.value("web_ui_port").toInt());
+                                            m_server.close();
+                                            m_server.listen(QHostAddress::LocalHost, port);
+                                        }
+                                    }
                                     for (auto it = updates.constBegin(); it != updates.constEnd(); ++it)
                                         if (m_preferences.contains(it.key()))
                                         {
@@ -858,6 +871,7 @@ public:
             {QStringLiteral("alt_dl_limit"), 30 * 1024}
         };
     }
+    void enableWebUITransitionDemo() { m_webUITransitionDemo = true; }
     void setServerPreferences(const QJsonObject &values)
     {
         m_preferencesDemo = true;
@@ -1032,6 +1046,9 @@ private:
     QJsonObject m_traySpeedLimits;
     bool m_rssDemo = false;
     QJsonObject m_rssItems, m_rssRules;
+    bool m_webUITransitionDemo = false;
+    QString m_loginUsername = QStringLiteral("demo");
+    QString m_loginPassword = QStringLiteral("demo-password");
     bool m_preferencesDemo = false;
     bool m_rejectPreferences = false;
     bool m_ignorePreferences = false;
@@ -4716,6 +4733,117 @@ private slots:
         QCOMPARE(modern.rssItems(), modernItems);
         QCOMPARE(modern.commandsFor("/api/v2/rss/addFeed"), 0);
         QCOMPARE(legacy.commandsFor("/api/v2/rss/addFeed"), 1);
+    }
+
+    void directWebUIConnectionTransition()
+    {
+        DemoQbittorrentServer server(true);
+        server.enableModernResponses();
+        server.enableWebUITransitionDemo();
+        QVERIFY(server.start());
+        const QString oldUrl = server.url();
+        server.setServerPreferences({
+            {"web_ui_address", "*"}, {"web_ui_port", QUrl(oldUrl).port()},
+            {"use_https", false}, {"web_ui_https_cert_path", ""}, {"web_ui_https_key_path", ""},
+            {"web_ui_username", "demo"}, {"bypass_local_auth", false},
+            {"bypass_auth_subnet_whitelist_enabled", false}, {"web_ui_reverse_proxy_enabled", false}
+        });
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath("profiles.ini"), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, oldUrl, true);
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains("v5.3.0"), 6000);
+        const auto original = Remote::ProfileStore(settings).profiles().first();
+        const QString originalId = original.id;
+        QTcpServer reserve;
+        QVERIFY(reserve.listen(QHostAddress::LocalHost, 0));
+        const int newPort = reserve.serverPort();
+        reserve.close();
+        auto *prefs = window.findChild<QAction *>("actionOptions");
+        QVERIFY(prefs);
+        const QString newPassword = QStringLiteral("changed+&%password");
+        bool confirmed = false, passwordEntered = false, edited = false;
+        QString unexpected;
+        QTimer modalDriver;
+        modalDriver.setInterval(20);
+        connect(&modalDriver, &QTimer::timeout, &window, [&] {
+            if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget()))
+            {
+                if (box->windowTitle() == QStringLiteral("Change server connection"))
+                {
+                    confirmed = true;
+                    box->button(QMessageBox::Yes)->click();
+                }
+                else
+                {
+                    unexpected = box->windowTitle() + QStringLiteral(": ") + box->text();
+                    box->reject();
+                }
+            }
+            else if (auto *input = qobject_cast<QInputDialog *>(QApplication::activeModalWidget()))
+            {
+                if (input->windowTitle() == QStringLiteral("Verify server login"))
+                {
+                    passwordEntered = true;
+                    input->setTextValue(newPassword);
+                    input->accept();
+                }
+            }
+        });
+        modalDriver.start();
+        QTimer::singleShot(0, &window, [&] {
+            auto *dlg = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget());
+            QVERIFY(dlg);
+            auto *nav = dlg->findChild<QListWidget *>("preferencesSections");
+            auto *port = dlg->findChild<QSpinBox *>("spinWebUIPort");
+            auto *user = dlg->findChild<QLineEdit *>("textWebUIUsername");
+            auto *password = dlg->findChild<QLineEdit *>("textWebUIPassword");
+            auto *apply = dlg->findChild<QPushButton *>("preferencesApply");
+            QVERIFY(nav && port && user && password && apply);
+            nav->setCurrentRow(8);
+            QTRY_VERIFY_WITH_TIMEOUT(port->isEnabled() && password->isEnabled(), 6000);
+            QCOMPARE(port->value(), QUrl(oldUrl).port());
+            QVERIFY(password->text().isEmpty());
+            port->setValue(newPort);
+            user->setText("new-user");
+            password->setText(newPassword);
+            QVERIFY(apply->isEnabled());
+            edited = true;
+            apply->click();
+        });
+        // Fail rather than hang indefinitely if a regression leaves the modal
+        // open. The watchdog only dismisses an idle dialog; active requests
+        // still use the normal transport timeout.
+        QTimer watchdog;
+        watchdog.setSingleShot(true);
+        connect(&watchdog, &QTimer::timeout, &window, [&] {
+            if (auto *dlg = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget()))
+                dlg->reject();
+        });
+        watchdog.start(35000);
+        prefs->trigger();
+        watchdog.stop();
+        modalDriver.stop();
+        QVERIFY2(unexpected.isEmpty(), qPrintable(unexpected));
+        QVERIFY(edited && confirmed && passwordEntered);
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains("v5.3.0"), 12000);
+        const auto saved = Remote::ProfileStore(settings).profiles();
+        QCOMPARE(saved.size(), 1);
+        QCOMPARE(saved.first().id, originalId);
+        QCOMPARE(QUrl(saved.first().url).port(), newPort);
+        QCOMPARE(saved.first().username, QStringLiteral("new-user"));
+        QCOMPARE(vault.data.value(vault.keyFor(saved.first())), newPassword);
+        QCOMPARE(server.commandsFor("/api/v2/app/setPreferences"), 1);
+        QCOMPARE(server.serverPreferences().value("web_ui_port").toInt(), newPort);
+        QCOMPARE(server.serverPreferences().value("web_ui_username").toString(), QStringLiteral("new-user"));
+        QVERIFY(!server.serverPreferences().contains("web_ui_password"));
+        settings.sync();
+        QFile file(settings.fileName());
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QVERIFY(!file.readAll().contains(newPassword.toUtf8()));
     }
 
     void webUIPreferencesFollowSelectedServer()

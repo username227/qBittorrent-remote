@@ -1266,7 +1266,7 @@ void MainWindow::openPreferences(const std::shared_ptr<SessionContext> &server)
         {
             // Even a password-only change must create a fresh login.
             disconnectConnection(server, tr("WebUI connection settings changed."));
-            connectToProfile(profile, newPassword);
+            connectToProfile(profile, newPassword, previous);
         }
         newPassword.clear();
     }
@@ -2165,7 +2165,8 @@ void MainWindow::showConnectionDialog(const QString &profileId)
 }
 
 void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
-                                  const QString &password)
+                                  const QString &password,
+                                  const Remote::ServerProfile &previousWebUIProfile)
 {
     // A live profile keeps its session; an offline profile or edited
     // endpoint receives a fresh session/model at the same tab position.
@@ -2975,7 +2976,7 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
         });
 
     connect(session, &Remote::RemoteSession::connected, this,
-        [this, connection, profile, password](const QString &version,
+        [this, connection, profile, password, previousWebUIProfile](const QString &version,
                                                const QString &apiVersion) {
             if (!containsConnection(connection))
                 return;
@@ -2994,12 +2995,24 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
             if (profile.rememberPassword && !password.isEmpty() && m_vault->available())
             {
                 QPointer<MainWindow> safeWindow(this);
-                m_vault->write(profile, password, [safeWindow](const QString &error) {
-                    if (safeWindow && !error.isEmpty())
+                m_vault->write(profile, password, [safeWindow, profile, previousWebUIProfile](const QString &error) {
+                    if (!safeWindow) return;
+                    if (!error.isEmpty())
                         QMessageBox::warning(safeWindow,
                             QObject::tr("Cannot Remember Password"),
                             QObject::tr("Connected successfully, but the password was not saved: %1")
                                 .arg(error));
+                    else if (previousWebUIProfile.rememberPassword && !previousWebUIProfile.id.isEmpty()
+                        && (QUrl(previousWebUIProfile.url).adjusted(QUrl::StripTrailingSlash)
+                            != QUrl(profile.url).adjusted(QUrl::StripTrailingSlash)
+                            || previousWebUIProfile.username != profile.username))
+                    {
+                        safeWindow->m_vault->erase(previousWebUIProfile, [safeWindow](const QString &reason) {
+                            if (safeWindow && !reason.isEmpty())
+                                QMessageBox::warning(safeWindow, QObject::tr("Cannot remove previous password"),
+                                    QObject::tr("The new password was saved, but the old credential could not be removed: %1").arg(reason));
+                        });
+                    }
                 });
             }
         });
@@ -3088,7 +3101,8 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
             disconnectConnection(connection, reason);
         });
 
-    if (profile.rememberPassword && password.isEmpty() && m_vault->available())
+    if (profile.rememberPassword && password.isEmpty() && m_vault->available()
+        && previousWebUIProfile.id.isEmpty())
     {
         QPointer<MainWindow> safeWindow(this);
         std::weak_ptr<SessionContext> weakConnection(connection);

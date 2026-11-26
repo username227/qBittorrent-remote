@@ -2999,7 +2999,6 @@ void RemotePreferencesDialog::applyWebUITransition(const QJsonObject &changes)
     for (auto it = changes.constBegin(); it != changes.constEnd(); ++it)
         if (it.key() != QLatin1String("web_ui_password")) m_webUIExpected.insert(it.key(), it.value());
     m_webUIPassword = password;
-    m_webUIPasswordChanged = changePassword;
     setRemoteBusy(true);
     const QPointer<RemotePreferencesDialog> dialog(this);
     // Check the original endpoint/credentials/security baseline before the
