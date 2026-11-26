@@ -345,6 +345,7 @@ RemotePreferencesDialog::RemotePreferencesDialog(QSettings &settings,
     QString numeric = serverVersion;
     if (numeric.startsWith(QLatin1Char('v'))) numeric.remove(0, 1);
     const auto version = QVersionNumber::fromString(numeric);
+    m_advancedModernServer = version.segmentCount() >= 3 && version >= QVersionNumber(5, 3, 0);
     m_banRangesSupported = version.segmentCount() >= 3
         && version >= QVersionNumber(5, 3, 0);
     bindIPFilterControls();
@@ -357,6 +358,7 @@ RemotePreferencesDialog::RemotePreferencesDialog(QSettings &settings,
     bindBitTorrentAutomaticTrackers();
     buildAdvancedPage();
     bindAdvancedRemoteControls();
+    bindAdvancedNetworkControls();
     buildRemotePathsPage(preferredProfileId);
 
     const char *icons[] = {
@@ -1582,8 +1584,12 @@ void RemotePreferencesDialog::refreshI2PControls()
 void RemotePreferencesDialog::readI2PBuildInfo()
 {
     if (!m_remoteSession || !m_remoteSession->isConnected()
-        || !remoteFieldAvailable("i2p_enabled"))
+        )
         return;
+    bool needed = remoteFieldAvailable("i2p_enabled");
+    for (const auto &field : m_remoteFields)
+        if (m_advancedCapabilityKeys.contains(field.key) && !field.baseline.isUndefined()) needed = true;
+    if (!needed) return;
 
     const QPointer<RemotePreferencesDialog> dialog(this);
     m_remoteSession->requestBuildInfo([dialog](const QJsonObject &info) {
@@ -1602,6 +1608,7 @@ void RemotePreferencesDialog::readI2PBuildInfo()
                 && version.minorVersion() >= 1;
         }
         dialog->m_i2pBuildInfoFinished = true;
+        dialog->configureAdvancedCapabilities(info);
         dialog->refreshRemoteControls();
         dialog->updateButtons();
     }, [dialog](const QString &) {
@@ -2438,7 +2445,9 @@ void RemotePreferencesDialog::refreshRemoteControls()
                 line->clear();
         }
         field.widget->setEnabled(supported && (!field.dependency || field.dependency()));
-        field.widget->setToolTip(supported ? field.tooltip : tr(
+        field.widget->setToolTip(supported && m_advancedCapabilityKeys.contains(field.key) && !advancedCapabilityAvailable(field.key)
+            ? tr("Not supported or not verified for the connected server's build.")
+            : supported ? field.tooltip : tr(
             "This setting is unavailable from the connected server. Displayed values are not live."));
         if (auto *combo = qobject_cast<QComboBox *>(field.widget))
             combo->view()->setEnabled(supported);
@@ -2563,6 +2572,8 @@ QJsonObject RemotePreferencesDialog::remoteChanges() const
         if (field.baseline.isUndefined())
             continue;
         if (field.key == QLatin1String("web_ui_api_key")) continue;
+        if (m_advancedCapabilityKeys.contains(field.key) && !advancedCapabilityAvailable(field.key))
+            continue;
         if (!m_webUIDirect && (field.key == QLatin1String("web_ui_address")
             || field.key == QLatin1String("web_ui_port") || field.key == QLatin1String("use_https")
             || field.key == QLatin1String("web_ui_https_cert_path") || field.key == QLatin1String("web_ui_https_key_path")
@@ -2627,6 +2638,7 @@ void RemotePreferencesDialog::loadRemotePreferences()
             {
                 dialog->populateRemoteFields(values);
                 dialog->readI2PBuildInfo();
+                dialog->readAdvancedNetworkInterfaces();
             }
         },
         [dialog](const QString &reason) {
@@ -3004,7 +3016,36 @@ void RemotePreferencesDialog::bindAdvancedRemoteControls()
         {"REQUEST_QUEUE_SIZE", "request_queue_size", 1},
         {"MAX_OUTSTANDING_BLOCK_REQUESTS", "max_outstanding_block_requests", 1},
         {"DHT_BOOTSTRAP_NODES", "dht_bootstrap_nodes", 1},
-        {"WEBTORRENT_STUN_SERVER", "webtorrent_stun_server", 1}
+        {"WEBTORRENT_STUN_SERVER", "webtorrent_stun_server", 1},
+        {"RESUME_DATA_STORAGE", "resume_data_storage_type", 1},
+        {"MEMORY_WORKING_SET_LIMIT", "memory_working_set_limit", 1},
+        {"APP_INSTANCE_NAME", "app_instance_name", 1},
+        {"ENABLE_MARK_OF_THE_WEB", "mark_of_the_web", 1},
+        {"PYTHON_EXECUTABLE_PATH", "python_executable_path", 1},
+        {"START_SESSION_PAUSED", "start_paused", 1},
+        {"SESSION_SHUTDOWN_TIMEOUT", "shutdown_timeout", 1},
+        {"HASHING_THREADS", "hashing_threads", 1},
+        {"CHECKING_MEM_USAGE", "checking_memory_use", 1},
+        {"DISK_CACHE", "disk_cache", 1},
+        {"DISK_CACHE_TTL", "disk_cache_ttl", 1},
+        {"DISK_IO_TYPE", "disk_io_type", 1},
+        {"DISK_IO_READ_MODE", "disk_io_read_mode", 1},
+        {"DISK_IO_WRITE_MODE", "disk_io_write_mode", 1},
+        {"COALESCE_RW", "enable_coalesce_read_write", 1},
+        {"ANNOUNCE_IP", "announce_ip", 1},
+        {"ANNOUNCE_PORT", "announce_port", 1},
+        {"I2P_INBOUND_QUANTITY", "i2p_inbound_quantity", 1},
+        {"I2P_OUTBOUND_QUANTITY", "i2p_outbound_quantity", 1},
+        {"I2P_INBOUND_LENGTH", "i2p_inbound_length", 1},
+        {"I2P_OUTBOUND_LENGTH", "i2p_outbound_length", 1},
+        {"I2P_INBOUND_LENGTH_VARIANCE", "i2p_inbound_length_variance", 1},
+        {"I2P_OUTBOUND_LENGTH_VARIANCE", "i2p_outbound_length_variance", 1}
+    };
+    m_advancedCapabilityKeys = {
+        "memory_working_set_limit", "mark_of_the_web", "hashing_threads", "checking_memory_use",
+        "disk_cache", "disk_cache_ttl", "disk_io_type", "disk_io_write_mode", "enable_coalesce_read_write",
+        "webtorrent_stun_server", "i2p_inbound_quantity", "i2p_outbound_quantity",
+        "i2p_inbound_length", "i2p_outbound_length", "i2p_inbound_length_variance", "i2p_outbound_length_variance"
     };
     const auto trackerEnabled = [this] {
         auto *flag = findChild<QCheckBox *>(QStringLiteral("advanced_TRACKER_STATUS"));
@@ -3021,6 +3062,8 @@ void RemotePreferencesDialog::bindAdvancedRemoteControls()
         std::function<bool()> dependency;
         if (key == QLatin1String("embedded_tracker_port") || key == QLatin1String("embedded_tracker_port_forwarding"))
             dependency = trackerEnabled;
+        if (m_advancedCapabilityKeys.contains(key))
+            dependency = [this, key] { return advancedCapabilityAvailable(key); };
         const auto tooltip = tr("Applies to the selected remote daemon, not this desktop. Use Apply to save.");
         if (auto *box = qobject_cast<QCheckBox *>(widget))
         {
@@ -3049,9 +3092,202 @@ void RemotePreferencesDialog::bindAdvancedRemoteControls()
         else if (key == QLatin1String("torrent_content_remove_option"))
             bindStringCombo(entry.key, qobject_cast<QComboBox *>(widget),
                 {QStringLiteral("Delete"), QStringLiteral("MoveToTrash")}, dependency);
+        else if (key == QLatin1String("resume_data_storage_type"))
+            bindStringCombo(entry.key, qobject_cast<QComboBox *>(widget),
+                {QStringLiteral("Legacy"), QStringLiteral("SQLite")}, dependency);
         else
             bindRemoteControl(entry.key, widget, dependency, tooltip);
     }
+}
+
+bool RemotePreferencesDialog::advancedCapabilityAvailable(const QString &key) const
+{
+    return m_advancedSupportedKeys.contains(key);
+}
+
+void RemotePreferencesDialog::configureAdvancedCapabilities(const QJsonObject &info)
+{
+    const auto version = QVersionNumber::fromString(info.value("libtorrent").toString());
+    const bool known = version.segmentCount() >= 2;
+    const bool lt1 = known && version.majorVersion() == 1;
+    const bool lt2 = known && version.majorVersion() == 2;
+    const bool lt21 = lt2 && version.minorVersion() >= 1;
+    const QString platform = info.value("platform").toString();
+    const int bits = info.value("bitness").toInt();
+    const bool knownBits = bits == 32 || bits == 64;
+    m_advancedSupportedKeys.clear();
+    const auto permit = [this](const char *key, bool yes) {
+        if (yes) m_advancedSupportedKeys.insert(QString::fromLatin1(key));
+    };
+    permit("hashing_threads", lt2);
+    permit("checking_memory_use", knownBits && known);
+    permit("disk_cache", lt1 && knownBits);
+    permit("disk_cache_ttl", lt1);
+    permit("enable_coalesce_read_write", lt1);
+    permit("disk_io_type", lt2);
+    permit("disk_io_write_mode", lt1 || lt2);
+    permit("webtorrent_stun_server", lt21);
+    permit("memory_working_set_limit", lt2 && (platform == QLatin1String("windows")
+        || (!m_advancedModernServer && platform == QLatin1String("linux"))));
+    permit("mark_of_the_web", platform == QLatin1String("windows") || platform == QLatin1String("macos"));
+    // The Web API does not disclose TORRENT_USE_I2P. Match the existing
+    // I2P preferences rule: libtorrent 2 and a real enabled I2P setting.
+    // A positive enable flag is stronger evidence than advertised defaults.
+    const auto *i2p = m_ui->groupI2P;
+    for (const auto &key : m_advancedCapabilityKeys)
+        if (key.startsWith(QLatin1String("i2p_")) && lt2
+            && remoteFieldAvailable("i2p_enabled") && i2p->isChecked())
+            m_advancedSupportedKeys.insert(key);
+
+    const bool wasLoading = m_loadingRemotePreferences;
+    m_loadingRemotePreferences = true;
+    for (auto &field : m_remoteFields)
+    {
+        if (!m_advancedCapabilityKeys.contains(field.key)) continue;
+        const QSignalBlocker blocker(field.widget);
+        if (field.key == QLatin1String("checking_memory_use") && knownBits)
+            qobject_cast<QSpinBox *>(field.widget)->setMaximum(bits == 32 ? 128 : 1024);
+        if (field.key == QLatin1String("disk_cache") && knownBits)
+            qobject_cast<QSpinBox *>(field.widget)->setMaximum(bits == 32 ? 1536 : 33554431);
+        if (field.key == QLatin1String("disk_io_type"))
+        {
+            auto *combo = qobject_cast<QComboBox *>(field.widget);
+            if ((!lt21 || !m_advancedModernServer) && combo->count() == 5) combo->removeItem(4);
+        }
+        if (field.key == QLatin1String("disk_io_write_mode") && lt1)
+        {
+            auto *combo = qobject_cast<QComboBox *>(field.widget);
+            if (combo->count() == 3) combo->removeItem(2);
+        }
+        if (!field.baseline.isUndefined())
+        {
+            if (!field.accepts(field.baseline))
+                field.baseline = QJsonValue(QJsonValue::Undefined);
+            else
+                field.write(field.baseline);
+        }
+        // Hide only positively incompatible engine/platform rows. Unknown
+        // build details remain visibly disabled instead of guessing.
+        const bool incompatible = (lt1 && (field.key == QLatin1String("hashing_threads")
+                || field.key == QLatin1String("disk_io_type") || field.key.startsWith(QLatin1String("i2p_"))))
+            || (lt2 && (field.key == QLatin1String("disk_cache") || field.key == QLatin1String("disk_cache_ttl")
+                || field.key == QLatin1String("enable_coalesce_read_write")))
+            || (known && !lt21 && field.key == QLatin1String("webtorrent_stun_server"))
+            || (!platform.isEmpty() && platform != QLatin1String("unknown")
+                && (field.key == QLatin1String("memory_working_set_limit") || field.key == QLatin1String("mark_of_the_web"))
+                && !advancedCapabilityAvailable(field.key));
+        auto *table = findChild<QTableWidget *>("advancedSettingsTable");
+        for (int row = 0; table && row < table->rowCount(); ++row)
+            if (table->cellWidget(row, 1) == field.widget) table->setRowHidden(row, incompatible);
+    }
+    m_loadingRemotePreferences = wasLoading;
+}
+
+void RemotePreferencesDialog::bindAdvancedNetworkControls()
+{
+    auto *iface = findChild<QComboBox *>("advanced_NETWORK_IFACE");
+    auto *address = findChild<QComboBox *>("advanced_NETWORK_IFACE_ADDRESS");
+    const auto bind = [this](const char *key, QComboBox *combo, std::function<bool()> dependency) {
+        combo->clear();
+        combo->setProperty("advancedRemote", true);
+        m_advancedRemoteKeys.insert(QString::fromLatin1(key));
+        bindRemoteField(RemoteField{QString::fromLatin1(key), combo,
+            [combo] { return QJsonValue(combo->currentData().toString()); },
+            [combo](const QJsonValue &v) {
+                const QString value = v.toString();
+                int index = combo->findData(value);
+                if (index < 0)
+                {
+                    combo->addItem(value.isEmpty() ? QObject::tr("All / Any") : value, value);
+                    index = combo->count() - 1;
+                }
+                combo->setCurrentIndex(index);
+            },
+            [](const QJsonValue &v) { return v.isString(); }, std::move(dependency),
+            tr("Network binding on the selected server. Changes may interrupt torrent connectivity.")});
+    };
+    bind("current_network_interface", iface, [this] { return m_advancedInterfacesReady && m_advancedAddressesReady; });
+    bind("current_interface_address", address, [this] { return m_advancedAddressesReady && m_advancedInterfacesReady; });
+    connect(iface, &QComboBox::currentIndexChanged, this, [this] {
+        if (m_loadingRemotePreferences) return;
+        readAdvancedNetworkAddresses();
+        remoteFieldChanged();
+    });
+    connect(address, &QComboBox::currentIndexChanged, this, [this] { remoteFieldChanged(); });
+}
+
+void RemotePreferencesDialog::readAdvancedNetworkInterfaces()
+{
+    if (!m_remoteSession || !remoteFieldAvailable("current_network_interface")
+        || !remoteFieldAvailable("current_interface_address")) return;
+    const QPointer<RemotePreferencesDialog> dialog(this);
+    m_remoteSession->requestNetworkInterfaces([dialog](const QJsonArray &values) {
+        if (!dialog || !dialog->m_remotePreferencesLoaded) return;
+        auto *combo = dialog->findChild<QComboBox *>("advanced_NETWORK_IFACE");
+        const QString selected = combo->currentData().toString();
+        const QSignalBlocker blocker(combo);
+        combo->clear();
+        combo->addItem(dialog->tr("Any interface"), QString());
+        dialog->m_advancedInterfaceValues = {QString()};
+        for (const auto &value : values)
+        {
+            const auto item = value.toObject();
+            const QString id = item.value("value").toString();
+            const QString name = item.value("name").toString();
+            if (id.isEmpty() || name.isEmpty() || dialog->m_advancedInterfaceValues.contains(id)) continue;
+            dialog->m_advancedInterfaceValues.insert(id);
+            combo->addItem(name, id);
+        }
+        if (combo->findData(selected) < 0) combo->addItem(dialog->tr("%1 (current, unavailable)").arg(selected), selected);
+        combo->setCurrentIndex(combo->findData(selected));
+        dialog->m_advancedInterfacesReady = true;
+        dialog->readAdvancedNetworkAddresses();
+    }, [dialog](const QString &) {
+        if (dialog) { dialog->m_advancedInterfacesReady = false; dialog->refreshRemoteControls(); }
+    });
+}
+
+void RemotePreferencesDialog::readAdvancedNetworkAddresses()
+{
+    if (!m_remoteSession || !m_advancedInterfacesReady || !m_remotePreferencesLoaded) return;
+    auto *iface = findChild<QComboBox *>("advanced_NETWORK_IFACE");
+    auto *combo = findChild<QComboBox *>("advanced_NETWORK_IFACE_ADDRESS");
+    const QString selected = iface->currentData().toString();
+    const bool changed = selected != m_advancedAddressInterface && m_advancedAddressesReady;
+    const QString prior = changed ? QString() : combo->currentData().toString();
+    m_advancedAddressesReady = false;
+    const quint64 generation = ++m_advancedAddressGeneration;
+    refreshRemoteControls();
+    const QPointer<RemotePreferencesDialog> dialog(this);
+    m_remoteSession->requestNetworkAddresses(selected, [dialog, generation, selected, prior](const QJsonArray &values) {
+        if (!dialog || !dialog->m_remotePreferencesLoaded || dialog->m_advancedAddressGeneration != generation) return;
+        auto *combo = dialog->findChild<QComboBox *>("advanced_NETWORK_IFACE_ADDRESS");
+        const QSignalBlocker blocker(combo);
+        combo->clear();
+        combo->addItem(dialog->tr("All addresses"), QString());
+        combo->addItem(dialog->tr("All IPv4 addresses"), QStringLiteral("0.0.0.0"));
+        combo->addItem(dialog->tr("All IPv6 addresses"), QStringLiteral("::"));
+        dialog->m_advancedAddressValues = {QString(), QStringLiteral("0.0.0.0"), QStringLiteral("::")};
+        for (const auto &value : values)
+        {
+            const QString ip = value.toString();
+            if (QHostAddress(ip).isNull() || dialog->m_advancedAddressValues.contains(ip)) continue;
+            dialog->m_advancedAddressValues.insert(ip);
+            combo->addItem(ip, ip);
+        }
+        if (combo->findData(prior) < 0) combo->addItem(dialog->tr("%1 (current, unavailable)").arg(prior), prior);
+        combo->setCurrentIndex(combo->findData(prior));
+        dialog->m_advancedAddressInterface = selected;
+        dialog->m_advancedAddressesReady = true;
+        dialog->remoteFieldChanged();
+    }, [dialog, generation](const QString &) {
+        if (!dialog || dialog->m_advancedAddressGeneration != generation) return;
+        // Permit changing the interface again after a failed address fetch.
+        dialog->m_advancedAddressesReady = false;
+        dialog->refreshRemoteControls();
+        dialog->findChild<QComboBox *>("advanced_NETWORK_IFACE")->setEnabled(dialog->m_advancedInterfacesReady);
+        dialog->updateButtons();
+    });
 }
 
 bool RemotePreferencesDialog::validateAdvancedChanges(const QJsonObject &changes)
@@ -3060,6 +3296,18 @@ bool RemotePreferencesDialog::validateAdvancedChanges(const QJsonObject &changes
     for (auto it = changes.constBegin(); it != changes.constEnd(); ++it)
         advanced |= m_advancedRemoteKeys.contains(it.key());
     if (!advanced) return true;
+    if (changes.contains("current_network_interface") || changes.contains("current_interface_address"))
+    {
+        const QString iface = findChild<QComboBox *>("advanced_NETWORK_IFACE")->currentData().toString();
+        const QString address = findChild<QComboBox *>("advanced_NETWORK_IFACE_ADDRESS")->currentData().toString();
+        if (!m_advancedInterfacesReady || !m_advancedAddressesReady || m_advancedAddressInterface != iface
+            || !m_advancedInterfaceValues.contains(iface) || !m_advancedAddressValues.contains(address))
+        {
+            QMessageBox::warning(this, tr("Invalid server network binding"),
+                tr("Choose a verified server interface and address before applying."));
+            return false;
+        }
+    }
     if (changes.contains("outgoing_ports_min") || changes.contains("outgoing_ports_max"))
     {
         const int low = findChild<QSpinBox *>("advanced_OUTGOING_PORT_MIN")->value();
@@ -3073,7 +3321,7 @@ bool RemotePreferencesDialog::validateAdvancedChanges(const QJsonObject &changes
         }
     }
     return QMessageBox::question(this, tr("Change Advanced server settings"),
-        tr("These settings modify the selected server's torrent engine and may affect performance, security or tracker connectivity. Ensure you have independent server access. Apply the changes?"),
+        tr("These settings modify the selected server's torrent engine and may affect performance, security or tracker connectivity. Ensure you have independent server access. Settings marked as requiring restart must be activated by restarting the daemon separately; this application will not restart it. Apply the changes?"),
         QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes;
 }
 

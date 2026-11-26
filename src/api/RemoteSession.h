@@ -8,6 +8,7 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QJsonObject>
+#include <QJsonArray>
 #include <QMap>
 #include <QJsonValue>
 #include <QQueue>
@@ -114,6 +115,9 @@ public:
     void rotateWebUIAPIKey(PreferencesResult received, PreferencesError failed);
     void deleteWebUIAPIKey(std::function<void()> accepted, PreferencesError failed);
     void requestBuildInfo(PreferencesResult received, PreferencesError failed);
+    using ArrayResult = std::function<void(const QJsonArray &)>;
+    void requestNetworkInterfaces(ArrayResult received, PreferencesError failed);
+    void requestNetworkAddresses(const QString &iface, ArrayResult received, PreferencesError failed);
     // RSS stays on the authenticated server. Only these fixed RSS endpoints
     // are permitted; values are encoded once as form/query parameters.
     void requestRss(const QString &action, const QMap<QString, QString> &params,
@@ -203,6 +207,7 @@ private:
         bool detailsRequest = false;
         bool exportRequest = false;
         bool jsonObjectRequest = false;
+        bool jsonArrayRequest = false;
         bool jsonObjectPost = false;
         QString exportHash;
         QString detailHash;
@@ -212,6 +217,7 @@ private:
         std::function<void()> onAccepted;
         std::function<void(const QString &)> onRejected;
         PreferencesResult onJsonObject;
+        ArrayResult onJsonArray;
         bool reportOperation = true;
     };
 
