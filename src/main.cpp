@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/MainWindow.h"
+#include "gui/InterfaceLanguage.h"
 #include "app/SingleInstance.h"
 #include "RemoteBuildVersion.h"
 
@@ -19,6 +20,10 @@ int main(int argc, char *argv[])
     app.setDesktopFileName(QStringLiteral("qbittorrent-remote"));
 #endif
     app.setOrganizationName(QStringLiteral("qBittorrent Remote"));
+
+    QTranslator interfaceTranslator;
+    if (InterfaceLanguage::load(interfaceTranslator, QSettings()))
+        app.installTranslator(&interfaceTranslator);
 
     QStringList arguments;
     QString error;

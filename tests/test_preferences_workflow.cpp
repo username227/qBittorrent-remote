@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/RemotePreferencesDialog.h"
 #include "gui/MainWindow.h"
+#include "gui/InterfaceLanguage.h"
+#include <QScopeGuard>
+#include <QMenu>
 #include "api/PathMappingStore.h"
 #include "api/ServerProfile.h"
 
@@ -420,6 +423,60 @@ private slots:
         QVERIFY(!apply->isEnabled());
         dialog.reject();
         QCOMPARE(settings.value(QStringLiteral("Preferences/LastPage")).toInt(), 9);
+    }
+
+    void interfaceLanguageIsLocalAndAppliedOnRestart()
+    {
+        QTemporaryDir tmp;
+        QVERIFY(tmp.isValid());
+        QSettings settings(tmp.filePath(QStringLiteral("language.ini")), QSettings::IniFormat);
+        const auto key = QStringLiteral("Appearance/Language");
+        {
+            RemotePreferencesDialog dialog(settings);
+            auto *language = dialog.findChild<QComboBox *>("comboLanguage");
+            QVERIFY(language && language->isEnabled());
+            QCOMPARE(language->currentData().toString(), QStringLiteral("en"));
+            language->setCurrentIndex(language->findData(QStringLiteral("de")));
+            dialog.reject();
+        }
+        QVERIFY(!settings.contains(key));
+        {
+            RemotePreferencesDialog dialog(settings);
+            auto *language = dialog.findChild<QComboBox *>("comboLanguage");
+            auto *apply = dialog.findChild<QPushButton *>("preferencesApply");
+            QVERIFY(language && apply);
+            language->setCurrentIndex(language->findData(QStringLiteral("de")));
+            QVERIFY(apply->isEnabled());
+            apply->click();
+            QCOMPARE(settings.value(key).toString(), QStringLiteral("de"));
+            QCOMPARE(dialog.findChild<QLabel *>("labelLanguage")->text(), QStringLiteral("Language:"));
+            dialog.reject();
+        }
+        {
+            QTranslator translator;
+            QVERIFY(InterfaceLanguage::load(translator, settings));
+            QVERIFY(QApplication::installTranslator(&translator));
+            const auto cleanup = qScopeGuard([&] { QApplication::removeTranslator(&translator); });
+            MainWindow window(nullptr, &settings);
+            auto *menu = window.findChild<QMenu *>("menuFile");
+            QVERIFY(menu);
+            QCOMPARE(menu->title(), QStringLiteral("&Datei"));
+            RemotePreferencesDialog dialog(settings);
+            auto *language = dialog.findChild<QComboBox *>("comboLanguage");
+            QVERIFY(language && language->isEnabled());
+            QCOMPARE(language->currentData().toString(), QStringLiteral("de"));
+            QCOMPARE(dialog.findChild<QLabel *>("labelLanguage")->text(), QStringLiteral("Sprache:"));
+            language->setCurrentIndex(language->findData(QStringLiteral("en")));
+            dialog.findChild<QPushButton *>("preferencesApply")->click();
+            QCOMPARE(settings.value(key).toString(), QStringLiteral("en"));
+            QCOMPARE(menu->title(), QStringLiteral("&Datei"));
+        }
+        QTranslator fallback;
+        QVERIFY(!InterfaceLanguage::load(fallback, settings));
+        settings.setValue(key, QStringLiteral("../../untrusted"));
+        QVERIFY(!InterfaceLanguage::load(fallback, settings));
+        MainWindow english(nullptr, &settings);
+        QCOMPARE(english.findChild<QMenu *>("menuFile")->title(), QStringLiteral("&File"));
     }
 
     void migrationKeepsLastSelectedPageWhenServersMoveFirst()

@@ -33,7 +33,7 @@ add_custom_target(qbt_remote_build_version ALL
 # SVG icons from the bundled qBittorrent UI require the QtSvg icon-engine
 # plugin on every platform. Make the dependency explicit so missing SVG
 # support fails at configure time rather than silently hiding all icons.
-find_package(Qt6 6.6 REQUIRED COMPONENTS Core Widgets Network Svg Multimedia)
+find_package(Qt6 6.6 REQUIRED COMPONENTS Core Widgets Network Svg Multimedia LinguistTools)
 if(UNIX AND NOT APPLE)
     find_package(Qt6 6.6 REQUIRED COMPONENTS DBus)
 endif()
@@ -93,6 +93,7 @@ endif()
 add_library(qbittorrent_remote_gui STATIC
     src/gui/MainWindow.cpp
     src/gui/MainWindow.h
+    src/gui/InterfaceLanguage.h
     src/gui/CompletionNotifier.cpp
     src/gui/CompletionNotifier.h
     src/gui/completion_sounds.qrc
@@ -186,6 +187,20 @@ endif()
 qt_add_executable(qbittorrent-remote
     src/main.cpp
 )
+# Extract only compiled application sources, excluding reference-only layouts and tests.
+set(remote_ts_files "${PROJECT_SOURCE_DIR}/translations/qbittorrent_remote_de.ts")
+get_target_property(remote_gui_translation_sources qbittorrent_remote_gui SOURCES)
+get_target_property(remote_core_translation_sources qbittorrent_remote_core SOURCES)
+set(remote_translation_sources ${remote_gui_translation_sources}
+    ${remote_core_translation_sources} src/main.cpp)
+list(FILTER remote_translation_sources INCLUDE REGEX "\\.(cpp|h|ui)$")
+qt_add_lupdate(qbittorrent-remote TS_FILES ${remote_ts_files}
+    SOURCES ${remote_translation_sources} OPTIONS -no-obsolete)
+qt_add_lrelease(qbittorrent-remote TS_FILES ${remote_ts_files}
+    QM_FILES_OUTPUT_VARIABLE remote_qm_files OPTIONS -nounfinished)
+qt_add_resources(qbittorrent-remote remote_interface_translations
+    PREFIX "/i18n" BASE "${CMAKE_CURRENT_BINARY_DIR}" FILES ${remote_qm_files})
+
 add_dependencies(qbittorrent-remote qbt_remote_build_version)
 target_link_libraries(qbittorrent-remote PRIVATE
     qbittorrent_remote_core
@@ -230,6 +245,9 @@ if(BUILD_TESTING)
         tests/test_connection_workflow.cpp
         tests/test_tls_trust_workflow.cpp
     )
+    qt_add_resources(qbittorrent_remote_tests remote_test_interface_translations
+        PREFIX "/i18n" BASE "${CMAKE_CURRENT_BINARY_DIR}" FILES ${remote_qm_files})
+    add_dependencies(qbittorrent_remote_tests qbittorrent-remote_lrelease)
     target_link_libraries(qbittorrent_remote_tests PRIVATE
         qbittorrent_remote_gui
         Qt6::Test

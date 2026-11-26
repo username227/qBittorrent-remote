@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/RemotePreferencesDialog.h"
+#include "gui/InterfaceLanguage.h"
 #include "gui/DatePresentation.h"
 #include "gui/RemoteBanListDialog.h"
 #include "gui/RemoteRssDialog.h"
@@ -566,6 +567,11 @@ void RemotePreferencesDialog::loadLocalBehaviorControls()
         if (auto *combo = qobject_cast<QComboBox *>(widget))
             combo->view()->setEnabled(true);
     };
+    unlock(m_ui->comboLanguage, tr("Interface language. Requires application restart. Preview translations are incomplete; untranslated text remains English."));
+    m_ui->comboLanguage->addItem(tr("System default"), QStringLiteral("system"));
+    m_ui->comboLanguage->addItem(QStringLiteral("English"), QStringLiteral("en"));
+    m_ui->comboLanguage->addItem(QStringLiteral("Deutsch (Preview)"), QStringLiteral("de"));
+    m_ui->comboLanguage->setCurrentIndex(m_ui->comboLanguage->findData(InterfaceLanguage::selection(m_settings)));
     unlock(m_ui->confirmDeletion);
     unlock(m_ui->checkDefaultDeleteTorrentContent, tr("Preselect removal of remote downloaded files in the confirmation dialog. With confirmation disabled, only the torrent is removed."));
     unlock(m_ui->checkBoxFullTrackerURL, tr("Show the complete tracker URL in the transfer list. URLs may contain private tracker passkeys."));
@@ -734,6 +740,8 @@ void RemotePreferencesDialog::loadLocalBehaviorControls()
         dirty();
     });
     connect(m_ui->checkDefaultDeleteTorrentContent, &QCheckBox::toggled, this, dirty);
+    connect(m_ui->comboLanguage, QOverload<int>::of(&QComboBox::currentIndexChanged),
+        this, [dirty](int) { dirty(); });
     connect(m_ui->checkBoxFullTrackerURL, &QCheckBox::toggled, this, dirty);
     connect(m_ui->comboDateFormat, QOverload<int>::of(&QComboBox::currentIndexChanged),
         this, [dirty](int) { dirty(); });
@@ -4184,6 +4192,7 @@ bool RemotePreferencesDialog::applyLocalChanges()
             m_ui->confirmDeletion->isChecked());
         m_settings.setValue(QStringLiteral("Preferences/Behavior/DefaultDeleteTorrentContent"),
             m_ui->checkDefaultDeleteTorrentContent->isChecked());
+        m_settings.setValue(QStringLiteral("Appearance/Language"), m_ui->comboLanguage->currentData().toString());
         m_settings.setValue(QStringLiteral("Preferences/Behavior/FullTrackerURL"),
             m_ui->checkBoxFullTrackerURL->isChecked());
         m_settings.setValue(QStringLiteral("Preferences/Behavior/DateFormat"),

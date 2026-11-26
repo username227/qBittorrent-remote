@@ -1,0 +1,5 @@
+# Interface translations
+
+The German preview catalog is derived from the native qBittorrent German catalog (`src/lang/qbittorrent_de.ts` on `upstream-source`), GPL-3.0-or-later, with upstream translation contributors credited through the original project. Only finished exact context/source matches from the active MainWindow and OptionsDialog forms were imported; remote-specific strings need review and translation. English is the source language. No claim of complete localization is made.
+
+Run `cmake --preset dev`, then `cmake --build build/dev --target update_translations` to extract the current compiled application sources into the catalog. Review changes with Qt Linguist. Preserve placeholders, accelerators, plural forms and context; never translate API keys, paths or protocol values. Unfinished entries are excluded by lrelease. Rebuild normally to embed the resulting catalog. To add a locale, register its TS file, a fixed selection code and native-language name; extend functional testing and update this status. No installed translation files or manual scripts are required.
