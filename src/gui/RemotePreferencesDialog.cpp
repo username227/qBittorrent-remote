@@ -567,6 +567,7 @@ void RemotePreferencesDialog::loadLocalBehaviorControls()
             combo->view()->setEnabled(true);
     };
     unlock(m_ui->confirmDeletion);
+    unlock(m_ui->checkDefaultDeleteTorrentContent, tr("Preselect removal of remote downloaded files in the confirmation dialog. With confirmation disabled, only the torrent is removed."));
     unlock(m_ui->checkBoxFullTrackerURL, tr("Show the complete tracker URL in the transfer list. URLs may contain private tracker passkeys."));
     m_ui->checkBoxFullTrackerURL->setChecked(m_settings.value(
         QStringLiteral("Preferences/Behavior/FullTrackerURL"), false).toBool());
@@ -654,6 +655,9 @@ void RemotePreferencesDialog::loadLocalBehaviorControls()
 
     m_ui->confirmDeletion->setChecked(m_settings.value(
         QStringLiteral("Preferences/Behavior/ConfirmTorrentDeletion"), true).toBool());
+    m_ui->checkDefaultDeleteTorrentContent->setChecked(m_settings.value(
+        QStringLiteral("Preferences/Behavior/DefaultDeleteTorrentContent"), false).toBool());
+    m_ui->checkDefaultDeleteTorrentContent->setEnabled(m_ui->confirmDeletion->isChecked());
     m_ui->checkProgramExitConfirm->setChecked(m_settings.value(
         QStringLiteral("Preferences/Behavior/ConfirmExit"), false).toBool());
     m_ui->checkTorrentContentDrag->setChecked(m_settings.value(
@@ -725,7 +729,11 @@ void RemotePreferencesDialog::loadLocalBehaviorControls()
     connect(m_ui->checkSoundTorrentCompletion, &QCheckBox::toggled, this, dirty);
     connect(m_ui->comboTrayIcon, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [dirty](int) { dirty(); });
-    connect(m_ui->confirmDeletion, &QCheckBox::toggled, this, dirty);
+    connect(m_ui->confirmDeletion, &QCheckBox::toggled, this, [this, dirty](bool enabled) {
+        m_ui->checkDefaultDeleteTorrentContent->setEnabled(enabled);
+        dirty();
+    });
+    connect(m_ui->checkDefaultDeleteTorrentContent, &QCheckBox::toggled, this, dirty);
     connect(m_ui->checkBoxFullTrackerURL, &QCheckBox::toggled, this, dirty);
     connect(m_ui->comboDateFormat, QOverload<int>::of(&QComboBox::currentIndexChanged),
         this, [dirty](int) { dirty(); });
@@ -4174,6 +4182,8 @@ bool RemotePreferencesDialog::applyLocalChanges()
             m_ui->comboTrayIcon->currentIndex());
         m_settings.setValue(QStringLiteral("Preferences/Behavior/ConfirmTorrentDeletion"),
             m_ui->confirmDeletion->isChecked());
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/DefaultDeleteTorrentContent"),
+            m_ui->checkDefaultDeleteTorrentContent->isChecked());
         m_settings.setValue(QStringLiteral("Preferences/Behavior/FullTrackerURL"),
             m_ui->checkBoxFullTrackerURL->isChecked());
         m_settings.setValue(QStringLiteral("Preferences/Behavior/DateFormat"),

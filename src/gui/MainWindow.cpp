@@ -2522,12 +2522,20 @@ void MainWindow::removeRemoteTorrents(const std::shared_ptr<SessionContext> &ser
     prompt.setWindowTitle(tr("Remove torrents"));
     prompt.setText(tr("Remove %1 selected torrent(s) from %2?")
                        .arg(hashes.size()).arg(server->profile.name));
-    prompt.setInformativeText(tr("Removing a torrent does not delete its downloaded files "
-                                  "unless you explicitly select the option below."));
+    prompt.setInformativeText(tr("Review whether to remove the downloaded files on the selected server before confirming."));
     auto *deleteFiles = new QCheckBox(
         tr("Also delete downloaded files from the REMOTE server"), &prompt);
+    deleteFiles->setObjectName(QStringLiteral("deleteRemoteTorrentContent"));
+    deleteFiles->setChecked(m_settings->value(
+        QStringLiteral("Preferences/Behavior/DefaultDeleteTorrentContent"), false).toBool());
     prompt.setCheckBox(deleteFiles);
     prompt.setStandardButtons(QMessageBox::Yes | QMessageBox::Cancel);
+    const auto updateChoice = [&prompt](bool removeContent) {
+        prompt.button(QMessageBox::Yes)->setText(removeContent
+            ? QObject::tr("Remove torrent and content") : QObject::tr("Remove torrent"));
+    };
+    connect(deleteFiles, &QCheckBox::toggled, &prompt, updateChoice);
+    updateChoice(deleteFiles->isChecked());
     prompt.setDefaultButton(QMessageBox::Cancel);
     if (prompt.exec() != QMessageBox::Yes || !containsConnection(server)
         || !server->connected)

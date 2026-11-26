@@ -11586,6 +11586,87 @@ private slots:
         QCOMPARE(deletion.queryItemValue(QStringLiteral("deleteFiles")),
                  QStringLiteral("false"));
 
+        auto *prefs = action("actionOptions");
+        QVERIFY(prefs);
+        const auto setDefault = [&](bool confirm, bool content, bool applyChanges) {
+            bool exercised = false;
+            QTimer::singleShot(0, &window, [&] {
+                auto *dialog = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget());
+                if (!dialog) return;
+                const auto cleanup = qScopeGuard([dialog] { if (dialog->isVisible()) dialog->reject(); });
+                auto *nav = dialog->findChild<QListWidget *>("preferencesSections");
+                auto *confirmBox = dialog->findChild<QCheckBox *>("confirmDeletion");
+                auto *defaultBox = dialog->findChild<QCheckBox *>("checkDefaultDeleteTorrentContent");
+                auto *apply = dialog->findChild<QPushButton *>("preferencesApply");
+                QVERIFY(nav && confirmBox && defaultBox && apply);
+                nav->setCurrentRow(1);
+                QCOMPARE(defaultBox->isChecked(), settings.value("Preferences/Behavior/DefaultDeleteTorrentContent", false).toBool());
+                confirmBox->setChecked(true);
+                QVERIFY(defaultBox->isEnabled());
+                defaultBox->setChecked(content);
+                confirmBox->setChecked(confirm);
+                QCOMPARE(defaultBox->isEnabled(), confirm);
+                if (applyChanges)
+                {
+                    QVERIFY(apply->isEnabled());
+                    apply->click();
+                    QTRY_VERIFY(!apply->isEnabled());
+                }
+                exercised = true;
+            });
+            prefs->trigger();
+            QVERIFY(exercised);
+        };
+        const auto removeWithChoice = [&](bool expectedDefault, bool content, bool accept) {
+            bool exercised = false;
+            table->selectRow(0);
+            QTimer::singleShot(0, &window, [&] {
+                auto *dialog = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+                if (!dialog) return;
+                const auto cleanup = qScopeGuard([dialog] { if (dialog->isVisible()) dialog->reject(); });
+                QVERIFY(dialog->objectName() == QStringLiteral("removeTorrentsDialog"));
+                QVERIFY(dialog->checkBox());
+                QCOMPARE(dialog->checkBox()->isChecked(), expectedDefault);
+                QCOMPARE(dialog->defaultButton(), dialog->button(QMessageBox::Cancel));
+                QCOMPARE(dialog->button(QMessageBox::Yes)->text(), expectedDefault
+                    ? QStringLiteral("Remove torrent and content") : QStringLiteral("Remove torrent"));
+                dialog->checkBox()->setChecked(content);
+                QCOMPARE(dialog->button(QMessageBox::Yes)->text(), content
+                    ? QStringLiteral("Remove torrent and content") : QStringLiteral("Remove torrent"));
+                exercised = true;
+                dialog->button(accept ? QMessageBox::Yes : QMessageBox::Cancel)->click();
+            });
+            remove->trigger();
+            QVERIFY(exercised);
+        };
+        setDefault(true, true, false);
+        QVERIFY(!settings.value("Preferences/Behavior/DefaultDeleteTorrentContent", false).toBool());
+        removeWithChoice(false, true, false);
+        QCOMPARE(server.commandsFor("/api/v2/torrents/delete"), 1);
+        setDefault(true, true, true);
+        QVERIFY(settings.value("Preferences/Behavior/DefaultDeleteTorrentContent").toBool());
+        removeWithChoice(true, false, true);
+        QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor("/api/v2/torrents/delete"), 2, 5000);
+        QCOMPARE(QUrlQuery(QString::fromUtf8(server.lastCommandBody("/api/v2/torrents/delete")))
+            .queryItemValue("deleteFiles"), QStringLiteral("false"));
+        removeWithChoice(true, true, false);
+        QCOMPARE(server.commandsFor("/api/v2/torrents/delete"), 2);
+        removeWithChoice(true, true, true);
+        QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor("/api/v2/torrents/delete"), 3, 5000);
+        QCOMPARE(QUrlQuery(QString::fromUtf8(server.lastCommandBody("/api/v2/torrents/delete")))
+            .queryItemValue("deleteFiles"), QStringLiteral("true"));
+        // A remembered destructive default must never turn a non-confirmed
+        // deletion into a remote content deletion.
+        setDefault(false, true, true);
+        QVERIFY(settings.value("Preferences/Behavior/DefaultDeleteTorrentContent").toBool());
+        QVERIFY(!settings.value("Preferences/Behavior/ConfirmTorrentDeletion").toBool());
+        table->selectRow(0);
+        remove->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor("/api/v2/torrents/delete"), 4, 5000);
+        QCOMPARE(QUrlQuery(QString::fromUtf8(server.lastCommandBody("/api/v2/torrents/delete")))
+            .queryItemValue("deleteFiles"), QStringLiteral("false"));
+        QCOMPARE(server.commandsFor("/api/v2/app/setPreferences"), 0);
+
         QTimer::singleShot(0, []() {
             auto *dialog = qobject_cast<RemoteAddTorrentDialog *>(
                 QApplication::activeModalWidget());

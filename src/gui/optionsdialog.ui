@@ -288,6 +288,16 @@
                 </widget>
                </item>
                <item>
+                <widget class="QCheckBox" name="checkDefaultDeleteTorrentContent">
+                 <property name="text">
+                  <string>Preselect removal of downloaded files when deleting torrents</string>
+                 </property>
+                 <property name="toolTip">
+                  <string>Only changes the initial choice in the local confirmation dialog. Downloaded files are never removed without confirmation.</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
                 <widget class="QCheckBox" name="checkAltRowColors">
                  <property name="text">
                   <string extracomment="In table elements, every other row will have a grey background.">Use alternating row colors</string>
