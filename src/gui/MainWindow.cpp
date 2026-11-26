@@ -61,6 +61,9 @@
 #include <QTableView>
 #include <QAction>
 #include <QComboBox>
+#include <QAbstractSpinBox>
+#include <QAbstractScrollArea>
+#include <QWheelEvent>
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QLabel>
@@ -86,6 +89,62 @@
 
 namespace
 {
+// Application-wide policy: scrolling over a closed combo or numeric/date
+// editor must not change its value, even if that editor has keyboard focus.
+// Forward the complete wheel event to the nearest enclosing scroll area.
+// Open combo popups, menus, sliders and ordinary item views retain native
+// wheel behavior. No individual dialog needs to opt into this protection.
+class EditorWheelGuard final : public QObject
+{
+public:
+    explicit EditorWheelGuard(QObject *parent) : QObject(parent)
+    {
+        setObjectName(QStringLiteral("remoteEditorWheelGuard"));
+    }
+
+protected:
+    bool eventFilter(QObject *receiver, QEvent *event) override
+    {
+        if (event->type() != QEvent::Wheel) return false;
+        auto *widget = qobject_cast<QWidget *>(receiver);
+        QWidget *editor = nullptr;
+        // Include embedded line edits, but never walk from the popup's
+        // item view back into the owning combo.
+        for (auto *p = widget; p; p = p->parentWidget())
+        {
+            if (qobject_cast<QAbstractItemView *>(p) || p->isWindow()) break;
+            if (qobject_cast<QComboBox *>(p) || qobject_cast<QAbstractSpinBox *>(p))
+            {
+                editor = p;
+                break;
+            }
+        }
+        if (!editor) return false;
+        if (QApplication::activePopupWidget()) return false;
+        auto *wheel = static_cast<QWheelEvent *>(event);
+        for (auto *p = editor->parentWidget(); p; p = p->parentWidget())
+        {
+            if (auto *area = qobject_cast<QAbstractScrollArea *>(p))
+            {
+                auto *viewport = area->viewport();
+                QWheelEvent forwarded(viewport->mapFromGlobal(wheel->globalPosition()),
+                    wheel->globalPosition(), wheel->pixelDelta(), wheel->angleDelta(),
+                    wheel->buttons(), wheel->modifiers(), wheel->phase(), wheel->inverted(),
+                    wheel->source(), wheel->pointingDevice());
+                forwarded.setTimestamp(wheel->timestamp());
+                forwarded.setAccepted(false);
+                QApplication::sendEvent(viewport, &forwarded);
+                if (forwarded.isAccepted()) break;
+            }
+            if (p->isWindow()) break;
+        }
+        // Suppress the original event regardless of whether there was a
+        // scrollable ancestor. Never fall back to changing the editor.
+        wheel->accept();
+        return true;
+    }
+};
+
 struct DroppedTorrentSources
 {
     QStringList files;
@@ -337,6 +396,10 @@ MainWindow::MainWindow(QWidget *parent, QSettings *settings,
     , m_settings(settings ? settings : &m_defaultSettings)
     , m_vault(vault ? vault : &m_defaultVault)
 {
+    // Install once per application, including all later modal dialogs.
+    if (!qApp->findChild<QObject *>(QStringLiteral("remoteEditorWheelGuard"), Qt::FindDirectChildrenOnly))
+        qApp->installEventFilter(new EditorWheelGuard(qApp));
+
     // Required when SVG resources live in a linked static library.
     Q_INIT_RESOURCE(qbittorrent_icons);
 

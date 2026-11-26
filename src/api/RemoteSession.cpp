@@ -584,6 +584,43 @@ void RemoteSession::requestBuildInfo(PreferencesResult received, PreferencesErro
     pumpOperations();
 }
 
+void RemoteSession::requestNetworkInterfaces(ArrayResult received, PreferencesError rejected)
+{
+    if (!m_connected || !m_address)
+    {
+        if (rejected) rejected(tr("The selected server is not connected."));
+        return;
+    }
+    QueuedOperation request;
+    request.endpoint = QStringLiteral("api/v2/app/networkInterfaceList");
+    request.description = tr("Read remote network interfaces");
+    request.jsonArrayRequest = true;
+    request.reportOperation = false;
+    request.onJsonArray = std::move(received);
+    request.onRejected = std::move(rejected);
+    m_operations.enqueue(std::move(request));
+    pumpOperations();
+}
+
+void RemoteSession::requestNetworkAddresses(const QString &iface, ArrayResult received, PreferencesError rejected)
+{
+    if (!m_connected || !m_address)
+    {
+        if (rejected) rejected(tr("The selected server is not connected."));
+        return;
+    }
+    QueuedOperation request;
+    request.endpoint = QStringLiteral("api/v2/app/networkInterfaceAddressList?iface=")
+        + QString::fromLatin1(QUrl::toPercentEncoding(iface));
+    request.description = tr("Read remote interface addresses");
+    request.jsonArrayRequest = true;
+    request.reportOperation = false;
+    request.onJsonArray = std::move(received);
+    request.onRejected = std::move(rejected);
+    m_operations.enqueue(std::move(request));
+    pumpOperations();
+}
+
 namespace
 {
 QByteArray rssForm(const QMap<QString, QString> &params)
@@ -675,12 +712,12 @@ void RemoteSession::pumpOperations()
 
     const QueuedOperation operation = m_operations.dequeue();
     QNetworkRequest request = requestFor(operation.endpoint);
-    if (!operation.detailsRequest && !operation.exportRequest
+    if (!operation.detailsRequest && !operation.exportRequest && !operation.jsonArrayRequest
         && (!operation.jsonObjectRequest || operation.jsonObjectPost))
         request.setHeader(QNetworkRequest::ContentTypeHeader,
                           QString::fromLatin1(operation.contentType));
     QNetworkReply *reply = (operation.detailsRequest || operation.exportRequest
-                            || (operation.jsonObjectRequest && !operation.jsonObjectPost))
+                            || operation.jsonArrayRequest || (operation.jsonObjectRequest && !operation.jsonObjectPost))
         ? m_network.get(request) : m_network.post(request, operation.body);
     armReply(reply);
     connect(reply, &QNetworkReply::finished, this, [this, reply, operation]() {
@@ -695,6 +732,16 @@ void RemoteSession::pumpOperations()
                 }
                 else
                     emit torrentExportReceived(operation.exportHash, response);
+            }
+            else if (operation.jsonArrayRequest)
+            {
+                QJsonParseError error;
+                const auto json = QJsonDocument::fromJson(response, &error);
+                if (error.error != QJsonParseError::NoError || !json.isArray())
+                {
+                    if (operation.onRejected) operation.onRejected(tr("Invalid network list returned by the server."));
+                }
+                else if (operation.onJsonArray) operation.onJsonArray(json.array());
             }
             else if (operation.jsonObjectRequest)
             {
@@ -754,7 +801,7 @@ void RemoteSession::pumpOperations()
         }, [this, operation](const QString &reason) {
             if (operation.detailsRequest)
                 emit torrentDetailsFailed(operation.detailHash, operation.detailTab, reason);
-            else if (operation.jsonObjectRequest)
+            else if (operation.jsonObjectRequest || operation.jsonArrayRequest)
             {
                 if (operation.onRejected)
                     operation.onRejected(reason);
@@ -770,7 +817,7 @@ void RemoteSession::pumpOperations()
                 if (operation.onRejected)
                     operation.onRejected(reason);
             }
-        }, !operation.detailsRequest && !operation.exportRequest && !operation.jsonObjectRequest);
+        }, !operation.detailsRequest && !operation.exportRequest && !operation.jsonObjectRequest && !operation.jsonArrayRequest);
         // Continue the queue even when an individual command was rejected.
         if (m_connected && !m_pendingReply)
             QTimer::singleShot(0, this, &RemoteSession::pumpOperations);

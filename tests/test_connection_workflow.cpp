@@ -90,6 +90,7 @@
 #include <QTcpSocket>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <QWheelEvent>
 #include <QUrlQuery>
 #include <QtTest/QtTest>
 
@@ -165,6 +166,18 @@ public:
                         else if (path == "/api/v2/app/webapiVersion" && hasCookie)
                         {
                             response = m_reportedApiVersion;
+                        }
+                        else if (path == "/api/v2/app/networkInterfaceList" && hasCookie)
+                        {
+                            if (m_networkInterfaces.isEmpty()) { code = 404; response = "Unavailable"; }
+                            else response = QJsonDocument(m_networkInterfaces).toJson(QJsonDocument::Compact);
+                        }
+                        else if (path.startsWith("/api/v2/app/networkInterfaceAddressList?") && hasCookie)
+                        {
+                            const QUrlQuery query(QString::fromLatin1(path.mid(path.indexOf('?') + 1)));
+                            const QString iface = query.queryItemValue("iface", QUrl::FullyDecoded);
+                            if (!m_networkAddresses.contains(iface)) { code = 404; response = "Unavailable"; }
+                            else response = QJsonDocument(m_networkAddresses.value(iface)).toJson(QJsonDocument::Compact);
                         }
                         else if (path == "/api/v2/app/buildInfo" && hasCookie)
                         {
@@ -914,6 +927,8 @@ public:
     QJsonObject rssItems() const { return m_rssItems; }
     QJsonObject rssRules() const { return m_rssRules; }
     void setBuildInfo(const QJsonObject &info) { m_buildInfo = info; }
+    void setNetworkLists(const QJsonArray &interfaces, const QHash<QString, QJsonArray> &addresses)
+    { m_networkInterfaces = interfaces; m_networkAddresses = addresses; }
     int preferenceReads() const { return m_preferenceReads; }
     void rejectPreferenceWrites(bool reject) { m_rejectPreferences = reject; }
     void ignorePreferenceWrites(bool ignore) { m_ignorePreferences = ignore; }
@@ -1082,6 +1097,8 @@ private:
     int m_preferenceReads = 0;
     QJsonObject m_preferences;
     QJsonObject m_buildInfo;
+    QJsonArray m_networkInterfaces;
+    QHash<QString, QJsonArray> m_networkAddresses;
     bool m_queueingEnabled = false;
     bool m_mappedFolderDemo = false;
     QJsonValue m_savingManagementTorrent;
@@ -4948,6 +4965,151 @@ private slots:
         QCOMPARE(Remote::PathMappingStore(settings).mappings(originalId), mappings);
     }
 
+    void advancedServerCapabilitiesWorkflow()
+    {
+        DemoQbittorrentServer legacy(true), modern(true);
+        modern.enableModernResponses();
+        QVERIFY(legacy.start() && modern.start());
+        legacy.setBuildInfo({{"libtorrent", "1.2.20.0"}, {"platform", "linux"}, {"bitness", 32}});
+        modern.setBuildInfo({{"libtorrent", "2.1.0.0"}, {"platform", "windows"}, {"bitness", 64}});
+        const QJsonObject values{
+            {"current_network_interface", "nas0"}, {"current_interface_address", "10.1.0.2"},
+            {"resume_data_storage_type", "Legacy"}, {"disk_io_type", 0}, {"disk_io_write_mode", 1},
+            {"checking_memory_use", 64}, {"hashing_threads", 4}, {"disk_cache", 512},
+            {"disk_cache_ttl", 60}, {"enable_coalesce_read_write", false},
+            {"memory_working_set_limit", 256}, {"mark_of_the_web", false},
+            {"announce_ip", ""}, {"announce_port", 0}, {"start_paused", false},
+            {"shutdown_timeout", -1}, {"python_executable_path", ""},
+            {"listen_port", 6881}, {"proxy_type", "None"}
+        };
+        legacy.setServerPreferences(values);
+        modern.setServerPreferences(values);
+        const QJsonArray ifaces{QJsonObject{{"name", "NAS interface"}, {"value", "nas0"}},
+            QJsonObject{{"name", "VPN tunnel"}, {"value", "vpn&1"}}};
+        const QHash<QString, QJsonArray> addresses{{"nas0", QJsonArray{"10.1.0.2"}},
+            {"vpn&1", QJsonArray{"10.2.0.3"}}, {"", QJsonArray{"10.1.0.2", "10.2.0.3"}}};
+        legacy.setNetworkLists(ifaces, addresses);
+        modern.setNetworkLists(ifaces, addresses);
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath("profiles.ini"), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, legacy.url());
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains("v5.1.4"), 6000);
+        openConnectDialog(window, modern.url(), false, true, true, "Modern");
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains("v5.3.0"), 6000);
+        auto *tabs = window.findChild<QTabWidget *>("serverTabs");
+        auto *prefs = window.findChild<QAction *>("actionOptions");
+        QVERIFY(tabs && prefs);
+        for (const bool newer : {false, true})
+        {
+            tabs->setCurrentIndex(newer ? 1 : 0);
+            bool finished = false;
+            QTimer::singleShot(0, &window, [&] {
+                auto *dlg = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget());
+                QVERIFY(dlg);
+                const auto cleanup = qScopeGuard([dlg] { if (dlg->isVisible()) dlg->reject(); });
+                auto *nav = dlg->findChild<QListWidget *>("preferencesSections");
+                auto *apply = dlg->findChild<QPushButton *>("preferencesApply");
+                auto *iface = dlg->findChild<QComboBox *>("advanced_NETWORK_IFACE");
+                auto *addr = dlg->findChild<QComboBox *>("advanced_NETWORK_IFACE_ADDRESS");
+                auto *storage = dlg->findChild<QComboBox *>("advanced_RESUME_DATA_STORAGE");
+                auto *disk = dlg->findChild<QComboBox *>("advanced_DISK_IO_TYPE");
+                auto *write = dlg->findChild<QComboBox *>("advanced_DISK_IO_WRITE_MODE");
+                auto *cache = dlg->findChild<QSpinBox *>("advanced_DISK_CACHE");
+                auto *mem = dlg->findChild<QSpinBox *>("advanced_CHECKING_MEM_USAGE");
+                auto *hash = dlg->findChild<QSpinBox *>("advanced_HASHING_THREADS");
+                auto *motw = dlg->findChild<QCheckBox *>("advanced_ENABLE_MARK_OF_THE_WEB");
+                QVERIFY(nav && apply && iface && addr && storage && disk && write && cache && mem && hash && motw);
+                nav->setCurrentRow(9);
+                QTRY_VERIFY_WITH_TIMEOUT(iface->isEnabled() && addr->isEnabled(), 6000);
+                QCOMPARE(iface->currentData().toString(), QStringLiteral("nas0"));
+                QCOMPARE(addr->currentData().toString(), QStringLiteral("10.1.0.2"));
+                QCOMPARE(mem->maximum(), newer ? 1024 : 128);
+                QCOMPARE(disk->isEnabled(), newer);
+                QCOMPARE(hash->isEnabled(), newer);
+                QCOMPARE(motw->isEnabled(), newer);
+                QCOMPARE(cache->isEnabled(), !newer);
+                QCOMPARE(write->count(), newer ? 3 : 2);
+                auto *python = dlg->findChild<QLineEdit *>("advanced_PYTHON_EXECUTABLE_PATH");
+                QVERIFY(python && python->isEnabled());
+                QVERIFY(python->text().isEmpty() && python->placeholderText().isEmpty());
+                QVERIFY(!apply->isEnabled());
+                // Wheel events over real enabled editors, including focused
+                // editors, must not change values or stage remote writes.
+                const auto wheel = [](QWidget *editor, int delta = -120) {
+                    editor->setFocus();
+                    const QPoint local = editor->rect().center();
+                    QWheelEvent event(QPointF(local), QPointF(editor->mapToGlobal(local)),
+                        QPoint(), QPoint(0, delta), Qt::NoButton, Qt::NoModifier,
+                        Qt::NoScrollPhase, false);
+                    QApplication::sendEvent(editor, &event);
+                };
+                const int memoryBefore = mem->value();
+                const int storageBefore = storage->currentIndex();
+                auto *advanced = dlg->findChild<QTableWidget *>("advancedSettingsTable");
+                QVERIFY(advanced);
+                advanced->scrollToTop();
+                QTRY_VERIFY(advanced->verticalScrollBar()->maximum() > 0);
+                wheel(storage);
+                QVERIFY(advanced->verticalScrollBar()->value() > 0);
+                wheel(mem);
+                QCOMPARE(mem->value(), memoryBefore);
+                QCOMPARE(storage->currentIndex(), storageBefore);
+                QVERIFY(!apply->isEnabled());
+
+                // Designer-created editors outside Advanced use the same
+                // application policy; this is not a special table workaround.
+                nav->setCurrentRow(3);
+                auto *proxy = dlg->findChild<QComboBox *>("comboProxyType");
+                auto *listen = dlg->findChild<QSpinBox *>("spinPort");
+                QVERIFY(proxy && listen && proxy->isEnabled() && listen->isEnabled());
+                const int proxyBefore = proxy->currentIndex();
+                const int listenBefore = listen->value();
+                wheel(proxy);
+                wheel(listen);
+                QCOMPARE(proxy->currentIndex(), proxyBefore);
+                QCOMPARE(listen->value(), listenBefore);
+                QVERIFY(!apply->isEnabled());
+                nav->setCurrentRow(9);
+                iface->setCurrentIndex(iface->findData(QStringLiteral("vpn&1")));
+                QTRY_VERIFY_WITH_TIMEOUT(addr->isEnabled() && addr->findData(QStringLiteral("10.2.0.3")) >= 0, 6000);
+                QCOMPARE(addr->findData(QStringLiteral("10.1.0.2")), -1);
+                addr->setCurrentIndex(addr->findData(QStringLiteral("10.2.0.3")));
+                storage->setCurrentIndex(1);
+                if (newer) disk->setCurrentIndex(4);
+                else cache->setValue(768);
+                QVERIFY(apply->isEnabled());
+                if (newer)
+                {
+                    QTimer driver;
+                    connect(&driver, &QTimer::timeout, dlg, [] {
+                        if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget()))
+                        {
+                            if (box->windowTitle() == "Change Advanced server settings") box->button(QMessageBox::Yes)->click();
+                            else box->reject();
+                        }
+                    });
+                    driver.start(20);
+                    apply->click();
+                    QTRY_VERIFY_WITH_TIMEOUT(nav->isEnabled() && !apply->isEnabled(), 6000);
+                }
+                finished = true;
+            });
+            prefs->trigger();
+            QVERIFY(finished);
+        }
+        QCOMPARE(legacy.serverPreferences(), values);
+        QCOMPARE(legacy.commandsFor("/api/v2/app/setPreferences"), 0);
+        const QJsonObject delta{{"current_network_interface", "vpn&1"}, {"current_interface_address", "10.2.0.3"},
+            {"resume_data_storage_type", "SQLite"}, {"disk_io_type", 4}};
+        const QUrlQuery form(QString::fromUtf8(modern.lastCommandBody("/api/v2/app/setPreferences")));
+        QCOMPARE(QJsonDocument::fromJson(form.queryItemValue("json", QUrl::FullyDecoded).toUtf8()).object(), delta);
+        QCOMPARE(modern.commandsFor("/api/v2/app/setPreferences"), 1);
+    }
+
     void advancedRemoteSettingsBulkWorkflow()
     {
         struct Case { const char *widget; const char *key; QJsonValue before; QJsonValue after; int scale; bool modern; };
@@ -5012,6 +5174,8 @@ private slots:
             if (!c.modern) first.insert(c.key, c.before);
             second.insert(c.key, c.before);
         }
+        // STUN is only supported by libtorrent 2.1 or later.
+        modern.setBuildInfo({{"libtorrent", "2.1.0.0"}, {"platform", "linux"}, {"bitness", 64}});
         // Deliberately malformed value cannot be represented by a KiB editor.
         first.insert("disk_queue_size", 1025);
         legacy.setServerPreferences(first);
@@ -5054,7 +5218,7 @@ private slots:
                         QVERIFY2(!widget->isEnabled(), c.widget);
                         continue;
                     }
-                    QVERIFY2(widget->isEnabled(), c.widget);
+                    QTRY_VERIFY_WITH_TIMEOUT(widget->isEnabled(), 6000);
                     if (auto *box = qobject_cast<QCheckBox *>(widget))
                     {
                         QVERIFY(!box->isTristate());

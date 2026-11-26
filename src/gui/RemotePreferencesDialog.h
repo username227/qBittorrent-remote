@@ -54,6 +54,11 @@ private:
     void buildRemotePathsPage(const QString &preferredProfileId);
     void buildAdvancedPage();
     void bindAdvancedRemoteControls();
+    void bindAdvancedNetworkControls();
+    void readAdvancedNetworkInterfaces();
+    void readAdvancedNetworkAddresses();
+    void configureAdvancedCapabilities(const QJsonObject &info);
+    bool advancedCapabilityAvailable(const QString &key) const;
     bool validateAdvancedChanges(const QJsonObject &changes);
     bool hasAdvancedLocalChanges() const;
     void disableUnimplementedControls();
@@ -169,6 +174,15 @@ private:
     QHash<QString, QList<Remote::PathMapping>> m_staged;
     QSet<QString> m_changedProfiles;
     QSet<QString> m_advancedRemoteKeys;
+    QSet<QString> m_advancedCapabilityKeys;
+    QSet<QString> m_advancedSupportedKeys;
+    bool m_advancedModernServer = false;
+    bool m_advancedInterfacesReady = false;
+    bool m_advancedAddressesReady = false;
+    quint64 m_advancedAddressGeneration = 0;
+    QString m_advancedAddressInterface;
+    QSet<QString> m_advancedInterfaceValues;
+    QSet<QString> m_advancedAddressValues;
     QHash<QString, QCheckBox *> m_advancedLocalChecks;
     QHash<QString, bool> m_advancedLocalBaseline;
     bool m_behaviorDirty = false;
