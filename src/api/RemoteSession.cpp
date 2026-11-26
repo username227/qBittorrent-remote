@@ -425,6 +425,8 @@ void RemoteSession::requestApiVersion(const QString &version)
                 QStringLiteral("^\\d+\\.\\d+\\.\\d+$"));
             m_trackerTierEditing = numericVersion.match(apiVersion).hasMatch()
                 && QVersionNumber::fromString(apiVersion) >= QVersionNumber(2, 13, 0);
+            m_pathFreeSpace = numericVersion.match(apiVersion).hasMatch()
+                && QVersionNumber::fromString(apiVersion) >= QVersionNumber(2, 16, 0);
             m_connected = true;
             emit connected(version, apiVersion);
             // The first request uses rid=0 for the full server snapshot.
@@ -608,6 +610,55 @@ void RemoteSession::requestLog(bool peers, int lastKnownId, ArrayResult received
     request.jsonArrayRequest = true;
     request.reportOperation = false;
     request.onJsonArray = std::move(received);
+    request.onRejected = std::move(rejected);
+    m_operations.enqueue(std::move(request));
+    pumpOperations();
+}
+
+void RemoteSession::requestDirectoryContent(const QString &path, bool directories, ArrayResult received, PreferencesError rejected)
+{
+    if (!m_connected || !m_address || path.isEmpty() || path.contains(QChar::Null))
+    {
+        if (rejected) rejected(tr("The selected server or directory is unavailable."));
+        return;
+    }
+    QueuedOperation request;
+    request.endpoint = QStringLiteral("api/v2/app/getDirectoryContent?dirPath=")
+        + QString::fromLatin1(QUrl::toPercentEncoding(path))
+        + (directories ? QStringLiteral("&mode=dirs") : QStringLiteral("&mode=files"))
+        + QStringLiteral("&withMetadata=true");
+    request.description = tr("Read remote directory");
+    request.jsonArrayRequest = true;
+    request.reportOperation = false;
+    request.onJsonArray = std::move(received);
+    request.onRejected = std::move(rejected);
+    m_operations.enqueue(std::move(request));
+    pumpOperations();
+}
+
+void RemoteSession::requestPathFreeSpace(const QString &path, std::function<void(qint64)> received,
+    PreferencesError rejected)
+{
+    if (!supportsPathFreeSpace() || path.isEmpty() || path.contains(QChar::Null))
+    {
+        if (rejected) rejected(tr("Path-specific free space is unavailable."));
+        return;
+    }
+    QueuedOperation request;
+    request.endpoint = QStringLiteral("api/v2/app/getFreeSpaceAtPath?path=")
+        + QString::fromLatin1(QUrl::toPercentEncoding(path));
+    request.description = tr("Read available remote disk space");
+    request.bytesRequest = true;
+    request.reportOperation = false;
+    request.onBytes = [received = std::move(received), rejected](const QByteArray &response) {
+        bool ok = false;
+        const qint64 bytes = response.trimmed().toLongLong(&ok);
+        if (!ok || bytes < 0)
+        {
+            if (rejected) rejected(tr("Available disk space is unknown."));
+        }
+        else if (received) received(bytes);
+    };
     request.onRejected = std::move(rejected);
     m_operations.enqueue(std::move(request));
     pumpOperations();

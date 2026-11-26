@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/RemoteAddTorrentDialog.h"
 #include "gui/RemoteFileSystemPathComboEdit.h"
+#include "gui/RemoteFileDialog.h"
 #include "gui/RemoteTorrentContentWidget.h"
 
 #include "ui_addnewtorrentdialog.h"
@@ -13,6 +14,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileDialog>
+#include <QDesktopServices>
 #include <QFileInfo>
 #include <QGroupBox>
 #include <QGridLayout>
@@ -195,6 +197,7 @@ void RemoteAddTorrentDialog::switchServer(const QString &id)
         return;
     m_server = *it;
     clearTargetFields();
+    configurePathBrowsing();
     loadServerDefaults();
     if (m_source == Source::Links)
         setWindowTitle(tr("Add Torrent — %1").arg(m_server.name));
@@ -251,10 +254,12 @@ void RemoteAddTorrentDialog::setupPaths()
         m_ui->checkBoxRememberLastSavePath->setChecked(true);
     }
 
-    connect(m_ui->savePath, &RemoteFileSystemPathComboEdit::browseRequested,
-            this, [this]() { browseMappedPath(m_ui->savePath); });
-    connect(m_ui->downloadPath, &RemoteFileSystemPathComboEdit::browseRequested,
-            this, [this]() { browseMappedPath(m_ui->downloadPath); });
+    using PathEdit = RemoteFileSystemPathComboEdit;
+    connect(m_ui->savePath, &PathEdit::filesystemBrowseRequested,
+            this, [this](PathEdit::BrowseMode mode) { browseMappedPath(m_ui->savePath, mode); });
+    connect(m_ui->downloadPath, &PathEdit::filesystemBrowseRequested,
+            this, [this](PathEdit::BrowseMode mode) { browseMappedPath(m_ui->downloadPath, mode); });
+    configurePathBrowsing();
     m_ui->groupBoxDownloadPath->setChecked(false);
 }
 
@@ -528,6 +533,7 @@ void RemoteAddTorrentDialog::populatePathChoices()
 {
     const int length = qBound(0, m_settings.value(QStringLiteral("Preferences/Advanced/SavePathHistoryLength"), 8).toInt(), 99);
     const auto fill = [&](RemoteFileSystemPathComboEdit *combo, bool incomplete) {
+        combo->setProperty("explicitRemotePath", QVariant());
         combo->comboBox()->clear();
         QStringList paths = m_settings.value(pathHistoryKey(incomplete)).toStringList().mid(0, length);
         for (const auto &entry : m_pathStore.mappings(m_server.id))
@@ -552,29 +558,67 @@ void RemoteAddTorrentDialog::rememberPath(const QString &path, bool incomplete)
     m_settings.setValue(key, history.mid(0, length));
 }
 
-void RemoteAddTorrentDialog::browseMappedPath(RemoteFileSystemPathComboEdit *target)
+void RemoteAddTorrentDialog::configurePathBrowsing()
 {
+    for (auto *target : {m_ui->savePath, m_ui->downloadPath})
+    {
+        target->configureFilesystemBrowse(m_settings, m_server.id, [this, target] {
+            const auto entries = m_pathStore.mappings(m_server.id);
+            const auto *session = m_sessionForServer ? m_sessionForServer(m_server.id) : nullptr;
+            const QString mapped = Remote::PathMappingStore::toLocal(resolveServerPath(target), entries);
+            return RemoteFileSystemPathComboEdit::BrowseAvailability{
+                session && session->isConnected(), !entries.isEmpty(),
+                !mapped.isEmpty() && QFileInfo(mapped).isDir()};
+        });
+    }
+}
+
+void RemoteAddTorrentDialog::browseMappedPath(RemoteFileSystemPathComboEdit *target,
+    RemoteFileSystemPathComboEdit::BrowseMode mode)
+{
+    using BrowseMode = RemoteFileSystemPathComboEdit::BrowseMode;
+    m_ui->savePath->refreshFilesystemBrowse();
+    m_ui->downloadPath->refreshFilesystemBrowse();
     const auto entries = m_pathStore.mappings(m_server.id);
-    if (entries.isEmpty())
+    const QPointer<Remote::RemoteSession> session(m_sessionForServer ? m_sessionForServer(m_server.id) : nullptr);
+    const QString current = resolveServerPath(target);
+    const QString mapped = Remote::PathMappingStore::toLocal(current, entries);
+    if (mode == BrowseMode::OpenMapped)
     {
-        QMessageBox::information(this, tr("No path mappings"),
-            tr("Configure a local NAS mount in Preferences → Servers first, "
-               "or type an absolute remote path manually."));
+        if (!mapped.isEmpty() && QFileInfo(mapped).isDir()
+            && !QDesktopServices::openUrl(QUrl::fromLocalFile(mapped)))
+            QMessageBox::warning(this, tr("Cannot open directory"), tr("The desktop could not open the mapped directory."));
         return;
     }
-    const QString local = QFileDialog::getExistingDirectory(
-        this, tr("Choose mapped local NAS directory"),
-        entries.constFirst().localRoot);
-    if (local.isEmpty()) return;
-    const QString remote = Remote::PathMappingStore::toRemote(local, entries);
-    if (remote.isEmpty())
+    QString remote;
+    if (mode == BrowseMode::Remote)
     {
-        QMessageBox::warning(this, tr("Unmapped local directory"),
-            tr("The chosen directory is not covered by a mapping for %1. "
-               "No save path has been changed.").arg(m_server.name));
-        return;
+        if (!session || !session->isConnected()) return;
+        RemoteFileDialog dialog(session.data(), m_server.name, m_server.id, m_settings,
+            current, RemoteFileDialog::Mode::Directory, this);
+        if (dialog.exec() != QDialog::Accepted) return;
+        remote = dialog.selectedPath();
     }
+    else if (mode == BrowseMode::Mounted)
+    {
+        if (entries.isEmpty()) return;
+        const QString local = QFileDialog::getExistingDirectory(
+            this, tr("Choose mapped local NAS directory"),
+            !mapped.isEmpty() && QFileInfo(mapped).isDir() ? mapped : entries.constFirst().localRoot);
+        if (local.isEmpty()) return;
+        remote = Remote::PathMappingStore::toRemote(local, entries);
+        if (remote.isEmpty())
+        {
+            QMessageBox::warning(this, tr("Unmapped local directory"),
+                tr("The chosen directory is not covered by a mapping for %1. No save path has been changed.").arg(m_server.name));
+            return;
+        }
+    }
+    else return;
+    // An API-selected or translated path is already remote; do not map it
+    // a second time even if a local mount happens to share the same prefix.
     target->setEditText(remote);
+    target->setProperty("explicitRemotePath", remote);
 }
 
 bool RemoteAddTorrentDialog::setLocalSaveDirectory(const QString &local)
@@ -583,6 +627,7 @@ bool RemoteAddTorrentDialog::setLocalSaveDirectory(const QString &local)
         local, m_pathStore.mappings(m_server.id));
     if (path.isEmpty()) return false;
     m_ui->savePath->setEditText(path);
+    m_ui->savePath->setProperty("explicitRemotePath", path);
     return true;
 }
 
@@ -593,12 +638,15 @@ bool RemoteAddTorrentDialog::setLocalIncompleteDirectory(const QString &local)
     if (path.isEmpty()) return false;
     m_ui->groupBoxDownloadPath->setChecked(true);
     m_ui->downloadPath->setEditText(path);
+    m_ui->downloadPath->setProperty("explicitRemotePath", path);
     return true;
 }
 
-QString RemoteAddTorrentDialog::resolveServerPath(const QString &text) const
+QString RemoteAddTorrentDialog::resolveServerPath(const RemoteFileSystemPathComboEdit *combo) const
 {
-    const QString value = text.trimmed();
+    const QString value = combo->currentText().trimmed();
+    if (combo->property("explicitRemotePath").toString() == value)
+        return value;
     if (value.isEmpty())
         return {};
     const QString mapped = Remote::PathMappingStore::toRemote(
@@ -609,16 +657,12 @@ QString RemoteAddTorrentDialog::resolveServerPath(const QString &text) const
 bool RemoteAddTorrentDialog::validateServerPath(RemoteFileSystemPathComboEdit *combo, QString *resolved,
                                                 QString *error) const
 {
-    *resolved = resolveServerPath(combo->currentText());
+    *resolved = resolveServerPath(combo);
     if (resolved->isEmpty()) return true;
-    if (!resolved->startsWith(QLatin1Char('/'))
-        || resolved->contains(QLatin1Char('\\'))
-        || resolved->contains(QLatin1Char('\n'))
-        || resolved->contains(QLatin1Char('\r')))
+    if (!RemoteFileDialog::isAbsoluteServerPath(*resolved))
     {
         if (error)
-            *error = tr("Enter an absolute POSIX path on %1, or use Browse "
-                        "with a configured local-to-remote mapping.").arg(m_server.name);
+            *error = tr("Enter an absolute server path on %1, or use Browse.").arg(m_server.name);
         return false;
     }
     return true;
@@ -630,10 +674,10 @@ Remote::AddTorrentOptions RemoteAddTorrentDialog::options() const
     result.autoTMM = m_ui->comboTMM->currentIndex() == 1;
     if (!result.autoTMM)
     {
-        result.savePath = resolveServerPath(m_ui->savePath->currentText());
+        result.savePath = resolveServerPath(m_ui->savePath);
         result.useDownloadPath = m_ui->groupBoxDownloadPath->isChecked();
         if (result.useDownloadPath)
-            result.downloadPath = resolveServerPath(m_ui->downloadPath->currentText());
+            result.downloadPath = resolveServerPath(m_ui->downloadPath);
     }
     result.category = m_ui->categoryComboBox->currentText().trimmed();
     result.tags = m_ui->tagsLineEdit->text().trimmed();
@@ -740,10 +784,10 @@ void RemoteAddTorrentDialog::accept()
     {
         // Unchecking Remember must clear any previously stored path;
         // otherwise a later dialog silently prefills an obsolete destination.
-        const QString remote = resolveServerPath(m_ui->savePath->currentText());
+        const QString remote = resolveServerPath(m_ui->savePath);
         rememberPath(remote, false);
         if (m_ui->groupBoxDownloadPath->isChecked())
-            rememberPath(resolveServerPath(m_ui->downloadPath->currentText()), true);
+            rememberPath(resolveServerPath(m_ui->downloadPath), true);
         if (!m_ui->checkBoxRememberLastSavePath->isChecked() || remote.isEmpty())
             m_settings.remove(savedPathKey());
         else

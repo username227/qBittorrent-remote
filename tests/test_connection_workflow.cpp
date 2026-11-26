@@ -9,6 +9,7 @@
 #include "gui/ServerPane.h"
 #include "gui/RemotePreferencesDialog.h"
 #include "gui/RemoteFileSystemPathComboEdit.h"
+#include "gui/RemoteFileDialog.h"
 #include "gui/RemoteSpeedLimitsDialog.h"
 #include "gui/MappedContentTreeWidget.h"
 #include "gui/TorrentModel.h"
@@ -625,6 +626,34 @@ public:
                             for (const auto &entry : entries)
                                 if (entry.toObject().value("id").toInt() > last) result.append(entry);
                             response = QJsonDocument(result).toJson(QJsonDocument::Compact);
+                        }
+                        else if (path.startsWith("/api/v2/app/getDirectoryContent?") && hasCookie)
+                        {
+                            m_commands.append({path, body});
+                            const QUrlQuery query(QString::fromLatin1(path.mid(path.indexOf('?') + 1)));
+                            const QString dir = query.queryItemValue("dirPath", QUrl::FullyDecoded);
+                            const bool dirs = query.queryItemValue("mode") == "dirs";
+                            QJsonArray entries;
+                            if (dir == "/browse" || dir == "/browse/Space & 100%")
+                            {
+                                if (dirs && dir == "/browse")
+                                {
+                                    if (m_modernResponses) entries.append(QJsonObject{{"name", "Space & 100%"}, {"type", "dir"}, {"last_modification_date", 1700000000}});
+                                    else entries.append("/browse/Space & 100%");
+                                }
+                                if (!dirs && dir != "/browse")
+                                {
+                                    if (m_modernResponses) entries.append(QJsonObject{{"name", "sample file.txt"}, {"type", "file"}, {"size", 4096}, {"last_modification_date", 1700000000}});
+                                    else entries.append("/browse/Space & 100%/sample file.txt");
+                                }
+                                response = QJsonDocument(entries).toJson(QJsonDocument::Compact);
+                            }
+                            else { code = 404; response = "Directory does not exist"; }
+                        }
+                        else if (path.startsWith("/api/v2/app/getFreeSpaceAtPath?") && hasCookie)
+                        {
+                            m_commands.append({path, body});
+                            response = "1073741824";
                         }
                         else if (path == "/api/v2/app/cookies" && hasCookie)
                         {
@@ -9413,6 +9442,137 @@ private slots:
         QFile saved(crossFile);
         QVERIFY(saved.open(QIODevice::ReadOnly));
         QCOMPARE(saved.readAll(), legacy.exportedTorrent());
+    }
+
+    void remoteBrowserNavigatesAuthenticatedServerPaths()
+    {
+        DemoQbittorrentServer legacy(true), modern(true);
+        modern.enableModernResponses();
+        QVERIFY(legacy.start() && modern.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath("browser.ini"), QSettings::IniFormat);
+        for (auto *server : {&legacy, &modern})
+        {
+            Remote::RemoteSession session;
+            const bool newer = server == &modern;
+            const QString id = newer ? "modern" : "legacy";
+            Remote::ServerProfile profile{id, id, server->url(), "demo", false, false};
+            QSignalSpy connected(&session, &Remote::RemoteSession::connected);
+            session.connectToServer(profile, "demo-password");
+            QTRY_COMPARE_WITH_TIMEOUT(connected.count(), 1, 6000);
+            RemoteFileDialog directory(&session, id, id, settings, "/browse",
+                RemoteFileDialog::Mode::Directory);
+            directory.show();
+            auto *tree = directory.findChild<QTreeWidget *>("remoteBrowserEntries");
+            auto *buttons = directory.findChild<QDialogButtonBox *>();
+            auto *path = directory.findChild<QLineEdit *>("remoteBrowserPath");
+            QVERIFY(tree && buttons && path);
+            QTRY_COMPARE_WITH_TIMEOUT(tree->topLevelItemCount(), 1, 6000);
+            QCOMPARE(tree->topLevelItem(0)->text(0), QStringLiteral("Space & 100%"));
+            tree->setCurrentItem(tree->topLevelItem(0));
+            tree->itemDoubleClicked(tree->currentItem(), 0);
+            QTRY_COMPARE(path->text(), QStringLiteral("/browse/Space & 100%"));
+            QTRY_VERIFY_WITH_TIMEOUT(buttons->button(QDialogButtonBox::Ok)->isEnabled(), 6000);
+            if (newer)
+                QTRY_VERIFY_WITH_TIMEOUT(!directory.findChild<QLabel *>("remoteBrowserFreeSpace")->text().isEmpty(), 6000);
+            buttons->button(QDialogButtonBox::Ok)->click();
+            QCOMPARE(directory.result(), int(QDialog::Accepted));
+            QCOMPARE(directory.selectedPath(), QStringLiteral("/browse/Space & 100%"));
+            RemoteFileDialog files(&session, id, id, settings, {},
+                RemoteFileDialog::Mode::File);
+            files.show();
+            auto *fileTree = files.findChild<QTreeWidget *>("remoteBrowserEntries");
+            auto *fileButtons = files.findChild<QDialogButtonBox *>();
+            QVERIFY(fileTree && fileButtons);
+            QTRY_COMPARE_WITH_TIMEOUT(fileTree->topLevelItemCount(), 1, 6000);
+            QCOMPARE(fileTree->topLevelItem(0)->text(0), QStringLiteral("sample file.txt"));
+            if (newer) QVERIFY(!fileTree->topLevelItem(0)->text(1).isEmpty());
+            else QVERIFY(fileTree->topLevelItem(0)->text(1).isEmpty());
+            fileTree->setCurrentItem(fileTree->topLevelItem(0));
+            QTRY_VERIFY(fileButtons->button(QDialogButtonBox::Ok)->isEnabled());
+            fileButtons->button(QDialogButtonBox::Ok)->click();
+            QCOMPARE(files.selectedPath(), QStringLiteral("/browse/Space & 100%/sample file.txt"));
+            RemoteFileDialog unavailable(&session, id, id, settings, "/missing", RemoteFileDialog::Mode::Directory);
+            unavailable.show();
+            auto *missingStatus = unavailable.findChild<QLabel *>("remoteBrowserStatus");
+            auto *missingButtons = unavailable.findChild<QDialogButtonBox *>();
+            QVERIFY(missingStatus && missingButtons);
+            QTRY_VERIFY_WITH_TIMEOUT(missingStatus->text().contains("Cannot reach the server"), 6000);
+            QVERIFY(!missingButtons->button(QDialogButtonBox::Ok)->isEnabled());
+            unavailable.reject();
+
+            // Exercise the actual Add Torrent split button, including reopening
+            // the dialog and keeping the other profile's default independent.
+            QVERIFY(Remote::PathMappingStore(settings).replace(id, {{temp.path(), QStringLiteral("/browse")}}));
+            const bool native = QApplication::testAttribute(Qt::AA_DontUseNativeDialogs);
+            QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, true);
+            const auto restoreNative = qScopeGuard([native] {
+                QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, native);
+            });
+            const auto checkBrowse = [&](QToolButton *button, QAction *action, bool expectRemote) {
+                bool sawRemote = false, sawMounted = false;
+                QTimer driver;
+                driver.setSingleShot(true);
+                connect(&driver, &QTimer::timeout, &driver, [&] {
+                    auto *modal = QApplication::activeModalWidget();
+                    sawRemote = qobject_cast<RemoteFileDialog *>(modal) != nullptr;
+                    sawMounted = qobject_cast<QFileDialog *>(modal) != nullptr;
+                    if (auto *dlg = qobject_cast<QDialog *>(modal)) dlg->reject();
+                    if (auto *popup = QApplication::activePopupWidget()) popup->close();
+                });
+                driver.start(0);
+                if (action) action->trigger();
+                else button->click();
+                driver.stop();
+                QCOMPARE(sawRemote, expectRemote);
+                QCOMPARE(sawMounted, !expectRemote);
+            };
+            const auto newAddDialog = [&] {
+                return std::make_unique<RemoteAddTorrentDialog>(settings, profile,
+                    RemoteAddTorrentDialog::Source::Links, QStringLiteral("magnet:?xt=urn:btih:0123456789012345678901234567890123456789"),
+                    QString(), QByteArray(), nullptr, QList<Remote::ServerProfile>{profile},
+                    [](const QString &) { return true; }, QList<Remote::TorrentUpload>{},
+                    [&](const QString &requested) { return requested == id ? &session : nullptr; });
+            };
+            {
+                auto add = newAddDialog();
+                auto *pathEdit = add->findChild<RemoteFileSystemPathComboEdit *>("savePath");
+                QVERIFY(pathEdit);
+                auto *button = pathEdit->findChild<QToolButton *>("browseFolderButton");
+                QVERIFY(button && button->menu());
+                QCOMPARE(button->popupMode(), QToolButton::MenuButtonPopup);
+                checkBrowse(button, nullptr, true);
+                if (!newer)
+                {
+                    auto *mounted = button->menu()->findChild<QAction *>("browseMountedFilesystem");
+                    QVERIFY(mounted && mounted->isEnabled());
+                    checkBrowse(button, mounted, false);
+                    checkBrowse(button, nullptr, false);
+                }
+            }
+            settings.sync();
+            {
+                auto add = newAddDialog();
+                auto *pathEdit = add->findChild<RemoteFileSystemPathComboEdit *>("savePath");
+                QVERIFY(pathEdit);
+                auto *button = pathEdit->findChild<QToolButton *>("browseFolderButton");
+                QVERIFY(button && button->menu());
+                checkBrowse(button, nullptr, newer);
+                if (!newer)
+                {
+                    auto *remote = button->menu()->findChild<QAction *>("browseRemoteFilesystem");
+                    QVERIFY(remote && remote->isEnabled());
+                    checkBrowse(button, remote, true);
+                    checkBrowse(button, nullptr, true);
+                    // Restore mounted preference so the modern iteration proves isolation.
+                    auto *mounted = button->menu()->findChild<QAction *>("browseMountedFilesystem");
+                    QVERIFY(mounted);
+                    checkBrowse(button, mounted, false);
+                }
+            }
+            QCOMPARE(server->commandsFor("/api/v2/torrents/add"), 0);
+        }
     }
 
     void torrentFileUploadPreservesBinaryMetadata()
