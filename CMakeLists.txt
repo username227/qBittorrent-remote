@@ -327,8 +327,9 @@ if(BUILD_TESTING)
         ipFilteringFollowsSelectedServer
     )
 
-    add_remote_workflow_group(remote_webui_preferences_workflow 60
-        webUIPreferencesFollowSelectedServer)
+    add_remote_workflow_group(remote_webui_preferences_workflow 90
+        webUIPreferencesFollowSelectedServer
+        directWebUIConnectionTransition)
     add_remote_workflow_group(remote_rss_preferences_workflow 60
         rssPreferencesFollowSelectedServer
         rssReaderAndRulesFollowSelectedServer

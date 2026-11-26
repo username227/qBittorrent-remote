@@ -2,6 +2,7 @@
 #pragma once
 
 #include "api/PathMappingStore.h"
+#include "api/ServerProfile.h"
 
 #include <QDialog>
 #include <QHash>
@@ -46,6 +47,8 @@ public:
 
 signals:
     void localBehaviorApplied();
+    void webUITransitionVerified(const QString &url, const QString &username,
+                                 const QString &password, const QString &fingerprint);
 
 private:
     void buildRemotePathsPage(const QString &preferredProfileId);
@@ -66,6 +69,9 @@ private:
     void bindWebUIControls();
     void refreshWebUIControls();
     bool validateWebUIChanges(const QJsonObject &changes);
+    void applyWebUITransition(const QJsonObject &changes);
+    void probeWebUITransition();
+    void webUITransitionFailed(const QString &reason);
     bool validateRSSChanges(const QJsonObject &changes);
     void bindBitTorrentPrivacyControls();
     void bindBitTorrentQueueingControls();
@@ -161,6 +167,16 @@ private:
     bool m_behaviorDirty = false;
     bool m_rssImageBaseline = false;
     QString m_webUISubnets;
+    Remote::ServerProfile m_webUIProfile, m_webUICandidate;
+    QJsonObject m_webUIBaseline, m_webUIExpected;
+    QString m_webUIPassword, m_webUIFingerprint;
+    bool m_webUIDirect = false;
+    bool m_webUITransitionInProgress = false;
+    bool m_webUIProbeStarted = false;
+    bool m_webUIPasswordChanged = false;
+    bool m_webUIBypassPossible = false;
+    bool m_webUIWriteAcknowledged = false;
+    QPointer<Remote::RemoteSession> m_webUIProbe;
     bool m_additionDirty = false;
     QStandardItemModel *m_watchedFoldersModel = nullptr;
     QJsonObject m_watchedFolders;

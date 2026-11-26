@@ -300,10 +300,8 @@ void RemoteSession::connectToServer(const ServerProfile &profile,
     request.setHeader(QNetworkRequest::ContentTypeHeader,
                       QStringLiteral("application/x-www-form-urlencoded"));
 
-    QUrlQuery form;
-    form.addQueryItem(QStringLiteral("username"), profile.username);
-    form.addQueryItem(QStringLiteral("password"), password);
-    const QByteArray body = form.toString(QUrl::FullyEncoded).toUtf8();
+    const QByteArray body = QByteArrayLiteral("username=") + QUrl::toPercentEncoding(profile.username)
+        + QByteArrayLiteral("&password=") + QUrl::toPercentEncoding(password);
     // No password is saved in a profile, certificate store or session object.
 
     QNetworkReply *reply = m_network.post(request, body);
