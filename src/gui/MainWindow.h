@@ -21,6 +21,7 @@ class QLabel;
 class QLineEdit;
 class QComboBox;
 class QPushButton;
+class QTimer;
 class HidableTabWidget;
 class ServerPane;
 class CompletionNotifier;
@@ -36,6 +37,7 @@ public:
     ~MainWindow() override;
     int fontPointSize() const noexcept { return m_fontPointSize; }
     void showForStartup();
+    void enqueueExternalOpen(const QStringList &arguments);
 
 private:
     struct SessionContext;
@@ -61,7 +63,8 @@ private:
     void connectToProfile(const Remote::ServerProfile &profile, const QString &password,
                           const Remote::ServerProfile &previousWebUIProfile = {}, bool preserveCredential = false);
     void disconnectCurrentServer();
-    void showConnectionDialog(const QString &profileId = {});
+    bool showConnectionDialog(const QString &profileId = {});
+    void processExternalOpen();
     QString disconnectedStatus(const SessionContext &connection) const;
     void updateServerTab(const std::shared_ptr<SessionContext> &connection);
     void disconnectConnection(const std::shared_ptr<SessionContext> &connection, const QString &reason);
@@ -112,6 +115,8 @@ private:
     bool m_wasMaximizedBeforeTray = false;
     QLineEdit *m_searchEdit = nullptr;
     QComboBox *m_searchBy = nullptr;
+    QList<QAction *> m_queueToolbarActions;
+    QAction *m_queueToolbarSeparator = nullptr;
     QAction *m_rssAction = nullptr;
     QAction *m_connectAction = nullptr;
     QAction *m_disconnectAction = nullptr;
@@ -124,6 +129,12 @@ private:
     int m_fontPointSize = 10;
     QString m_preferredServerId;
     bool m_restoringStartup = false;
+    bool m_startupComplete = false;
+    bool m_externalOpenBusy = false;
+    bool m_externalConnectionPrompted = false;
+    bool m_forceExternalAdditionDialog = false;
+    QList<QStringList> m_externalOpenQueue;
+    QTimer *m_externalOpenTimer = nullptr;
     std::function<void(const QString &)> m_addLinks;
     std::function<void(const QStringList &)> m_addTorrentFiles;
 };

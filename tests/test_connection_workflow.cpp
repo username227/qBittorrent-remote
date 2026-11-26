@@ -1,6 +1,8 @@
 #include "RemoteBuildVersion.h"
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/MainWindow.h"
+#include "app/SingleInstance.h"
+#include <QProcess>
 #include "gui/RemoteBanListDialog.h"
 #include <QToolButton>
 #include "gui/CompletionNotifier.h"
@@ -613,6 +615,29 @@ public:
                                 response = "Ok.";
                             }
                         }
+                        else if ((path.startsWith("/api/v2/log/main?") || path.startsWith("/api/v2/log/peers?")) && hasCookie)
+                        {
+                            m_commands.append({path, body});
+                            const QUrlQuery query(QString::fromLatin1(path.mid(path.indexOf('?') + 1)));
+                            const int last = query.queryItemValue("last_known_id").toInt();
+                            const auto entries = path.startsWith("/api/v2/log/main?") ? m_generalLog : m_peerLog;
+                            QJsonArray result;
+                            for (const auto &entry : entries)
+                                if (entry.toObject().value("id").toInt() > last) result.append(entry);
+                            response = QJsonDocument(result).toJson(QJsonDocument::Compact);
+                        }
+                        else if (path == "/api/v2/app/cookies" && hasCookie)
+                        {
+                            response = QJsonDocument(m_downloadCookies).toJson(QJsonDocument::Compact);
+                        }
+                        else if (path == "/api/v2/app/setCookies" && hasCookie)
+                        {
+                            m_commands.append({path, body});
+                            const QUrlQuery form(QString::fromUtf8(body));
+                            const auto json = QJsonDocument::fromJson(form.queryItemValue("cookies", QUrl::FullyDecoded).toUtf8());
+                            if (!json.isArray()) { code = 400; response = "Invalid"; }
+                            else { m_downloadCookies = json.array(); code = 204; }
+                        }
                         else if (m_sessionPauseDemo && hasCookie
                                  && (path == "/api/v2/transfer/pauseSession" || path == "/api/v2/transfer/resumeSession"))
                         {
@@ -1002,6 +1027,9 @@ public:
     void rejectPreferenceWrites(bool reject) { m_rejectPreferences = reject; }
     void ignorePreferenceWrites(bool ignore) { m_ignorePreferences = ignore; }
     bool trayAlternative() const { return m_trayAltMode; }
+    void setLogEntries(const QJsonArray &general, const QJsonArray &peers) { m_generalLog = general; m_peerLog = peers; }
+    void setDownloadCookies(const QJsonArray &cookies) { m_downloadCookies = cookies; }
+    QJsonArray downloadCookies() const { return m_downloadCookies; }
     void enableSessionPauseDemo() { m_sessionPauseDemo = true; }
     void setSessionPaused(bool paused) { m_sessionPaused = paused; }
     bool sessionPaused() const { return m_sessionPaused; }
@@ -1156,6 +1184,8 @@ private:
     QJsonObject m_statusRates;
     bool m_trayDemo = false;
     bool m_trayAltMode = false;
+    QJsonArray m_downloadCookies;
+    QJsonArray m_generalLog, m_peerLog;
     bool m_sessionPauseDemo = false;
     bool m_sessionPaused = false;
     QString m_trayConnectionStatus = QStringLiteral("connected");
@@ -8812,6 +8842,238 @@ private slots:
         QVERIFY(aboutChecked);
     }
 
+    void optionalTabCloseButtonsAndServerOrderStaySynchronized()
+    {
+        DemoQbittorrentServer alpha(true), beta(true);
+        QVERIFY(alpha.start() && beta.start());
+        QTemporaryDir tmp;
+        QVERIFY(tmp.isValid());
+        QSettings settings(tmp.filePath("tab-order.ini"), QSettings::IniFormat);
+        Remote::ProfileStore store(settings);
+        Remote::ServerProfile first{QString(), "First", alpha.url(), "demo", true, true};
+        Remote::ServerProfile second{QString(), "Second", beta.url(), "demo", true, true};
+        QVERIFY(store.save(first) && store.save(second));
+        DemoCredentialVault vault;
+        vault.data.insert(vault.keyFor(first), "demo-password");
+        vault.data.insert(vault.keyFor(second), "demo-password");
+        settings.setValue("Layout/ActiveServer", second.id);
+        settings.setValue("Layout/ShowRSSReader", true);
+        settings.setValue("Layout/ShowExecutionLog", true);
+        {
+            MainWindow window(nullptr, &settings, &vault);
+            window.show();
+            auto *tabs = window.findChild<QTabWidget *>("serverTabs");
+            QVERIFY(tabs && tabs->isMovable());
+            QTRY_COMPARE_WITH_TIMEOUT(tabs->count(), 2, 6000);
+            QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains("Connected to Second"), 6000);
+            QWidget *selected = tabs->currentWidget();
+            tabs->tabBar()->moveTab(1, 0);
+            QCOMPARE(tabs->widget(0), selected);
+            QCOMPARE(tabs->currentWidget(), selected);
+            QCOMPARE(settings.value("Layout/ServerTabOrder").toStringList(), QStringList({second.id, first.id}));
+            auto *rss = window.findChild<QAction *>("actionRemoteRSS");
+            auto *log = window.findChild<QAction *>("actionExecutionLogs");
+            auto *sections = selected->findChild<QTabWidget *>("serverSectionTabs");
+            QVERIFY(rss && log && sections);
+            QTRY_VERIFY_WITH_TIMEOUT(selected->findChild<QToolButton *>("rssTabCloseButton"), 6000);
+            QTRY_VERIFY_WITH_TIMEOUT(selected->findChild<QToolButton *>("logTabCloseButton"), 6000);
+            QVERIFY(!sections->tabBar()->tabButton(0, QTabBar::RightSide));
+            auto *pane = qobject_cast<ServerPane *>(selected);
+            QVERIFY(pane);
+            pane->showRss();
+            selected->findChild<QToolButton *>("rssTabCloseButton")->click();
+            QVERIFY(!rss->isChecked());
+            QVERIFY(pane->isTransfersSelected());
+            QVERIFY(!settings.value("Layout/ShowRSSReader").toBool());
+            pane->showLog();
+            selected->findChild<QToolButton *>("logTabCloseButton")->click();
+            QTRY_VERIFY(!log->isChecked());
+            QVERIFY(pane->isTransfersSelected());
+            QVERIFY(!settings.value("Layout/ShowExecutionLog").toBool());
+            QVERIFY(!sections->tabBar()->isVisible());
+            rss->setChecked(true);
+            log->setChecked(true);
+            QVERIFY(sections->tabBar()->isVisible());
+            QVERIFY(selected->findChild<QToolButton *>("rssTabCloseButton"));
+            QVERIFY(selected->findChild<QToolButton *>("logTabCloseButton"));
+            QVERIFY(window.close());
+        }
+        MainWindow reopened(nullptr, &settings, &vault);
+        reopened.show();
+        auto *tabs = reopened.findChild<QTabWidget *>("serverTabs");
+        QTRY_COMPARE_WITH_TIMEOUT(tabs->count(), 2, 6000);
+        QCOMPARE(tabs->tabText(0), QStringLiteral("Second"));
+        QCOMPARE(tabs->tabText(1), QStringLiteral("First"));
+        QTRY_VERIFY_WITH_TIMEOUT(reopened.statusBar()->currentMessage().contains("Connected to Second"), 6000);
+    }
+
+    void nativeExecutionLogUsesIndependentCursorsAndFilters()
+    {
+        DemoQbittorrentServer alpha(true), beta(true);
+        const auto msg = [](int id, int type, const QString &message) {
+            return QJsonObject{{"id", id}, {"type", type}, {"timestamp", 1700000000}, {"message", message}};
+        };
+        const QJsonObject peer{{"id", 0}, {"timestamp", 1700000000}, {"ip", "192.0.2.5"},
+            {"blocked", true}, {"reason", "test"}};
+        alpha.setLogEntries({msg(0, 1, "First normal"), msg(1, 4, "First warning")}, {peer});
+        beta.setLogEntries({msg(0, 2, "Second info")}, {});
+        QVERIFY(alpha.start() && beta.start());
+        QTemporaryDir tmp;
+        QSettings settings(tmp.filePath("log.ini"), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, alpha.url());
+        QTRY_VERIFY(window.statusBar()->currentMessage().contains("Connected to"));
+        auto *show = window.findChild<QAction *>("actionExecutionLogs");
+        auto *warnings = window.findChild<QAction *>("actionWarningMessages");
+        QVERIFY(show && warnings && !show->isChecked());
+        show->setChecked(true);
+        auto *tabs = window.findChild<QTabWidget *>("serverTabs");
+        QVERIFY(tabs);
+        auto *first = tabs->currentWidget();
+        auto *general = first->findChild<QListWidget *>("remoteGeneralLog");
+        auto *peers = first->findChild<QListWidget *>("remotePeerLog");
+        QVERIFY(general && peers);
+        QTRY_COMPARE_WITH_TIMEOUT(general->count(), 2, 6000);
+        QTRY_COMPARE_WITH_TIMEOUT(peers->count(), 1, 6000);
+        QVERIFY(general->item(0)->text().contains("First warning"));
+        QVERIFY(peers->item(0)->text().contains("192.0.2.5"));
+        warnings->setChecked(false);
+        QVERIFY(general->item(0)->isHidden());
+        warnings->setChecked(true);
+        QVERIFY(!general->item(0)->isHidden());
+        alpha.setLogEntries({msg(0, 1, "First normal"), msg(1, 4, "First warning"), msg(2, 8, "First critical")}, {peer});
+        QTRY_COMPARE_WITH_TIMEOUT(general->count(), 3, 6000);
+        QVERIFY(general->item(0)->text().contains("First critical"));
+        openConnectDialog(window, beta.url(), false, true, true, "Second");
+        QTRY_VERIFY(window.statusBar()->currentMessage().contains("Connected to Second"));
+        auto *second = qobject_cast<ServerPane *>(tabs->currentWidget());
+        QVERIFY(second && second != first);
+        second->showLog();
+        auto *secondLog = second->findChild<QListWidget *>("remoteGeneralLog");
+        QVERIFY(secondLog);
+        QTRY_COMPARE_WITH_TIMEOUT(secondLog->count(), 1, 6000);
+        QVERIFY(secondLog->item(0)->text().contains("Second info"));
+        QCOMPARE(general->count(), 3);
+        show->setChecked(false);
+        QVERIFY(!first->findChild<QListWidget *>("remoteGeneralLog"));
+        QVERIFY(!second->findChild<QListWidget *>("remoteGeneralLog"));
+    }
+
+    void nativeCookiesEditOnlySelectedServer()
+    {
+        DemoQbittorrentServer alpha(true), beta(true);
+        const QJsonArray initial{QJsonObject{{"domain", "example.test"}, {"path", "/"},
+            {"name", "test"}, {"value", "a+b&c%20"}, {"expirationDate", -1}}};
+        alpha.setDownloadCookies(initial);
+        beta.setDownloadCookies(initial);
+        QVERIFY(alpha.start() && beta.start());
+        QTemporaryDir tmp;
+        QSettings settings(tmp.filePath("cookies.ini"), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        auto *action = window.findChild<QAction *>("actionManageCookies");
+        QVERIFY(action && !action->isEnabled());
+        openConnectDialog(window, alpha.url());
+        QTRY_VERIFY(action->isEnabled());
+        openConnectDialog(window, beta.url(), false, true, true, "Second");
+        QTRY_VERIFY(window.statusBar()->currentMessage().contains("Connected to Second"));
+        for (bool save : {false, true})
+        {
+            bool edited = false;
+            QTimer::singleShot(0, &window, [&] {
+                auto *dlg = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+                QVERIFY(dlg);
+                const auto guard = qScopeGuard([dlg] { if (dlg->isVisible()) dlg->QDialog::reject(); });
+                QCOMPARE(dlg->objectName(), QStringLiteral("remoteCookiesDialog"));
+                auto *view = dlg->findChild<QTreeView *>("treeView");
+                auto *buttons = dlg->findChild<QDialogButtonBox *>("buttonBox");
+                QVERIFY(view && buttons);
+                auto *ok = buttons->button(QDialogButtonBox::Ok);
+                QTRY_VERIFY_WITH_TIMEOUT(ok->isEnabled(), 6000);
+                QCOMPARE(view->model()->rowCount(), 1);
+                QCOMPARE(view->model()->index(0,3).data().toString(), QStringLiteral("a+b&c%20"));
+                QVERIFY(view->model()->setData(view->model()->index(0,3), "new+&%25", Qt::EditRole));
+                if (save)
+                {
+                    ok->click();
+                    QTRY_VERIFY_WITH_TIMEOUT(!dlg->isVisible(), 6000);
+                }
+                else buttons->button(QDialogButtonBox::Cancel)->click();
+                edited = true;
+            });
+            action->trigger();
+            QVERIFY(edited);
+            QCOMPARE(beta.commandsFor("/api/v2/app/setCookies"), save ? 1 : 0);
+        }
+        QCOMPARE(alpha.downloadCookies(), initial);
+        QCOMPARE(alpha.commandsFor("/api/v2/app/setCookies"), 0);
+        QCOMPARE(beta.downloadCookies().first().toObject().value("value").toString(), QStringLiteral("new+&%25"));
+    }
+
+    void queueControlsFollowSelectedServerCapability()
+    {
+        DemoQbittorrentServer alpha(true), beta(true);
+        const QString hash = "0123456789abcdef0123456789abcdef01234567";
+        const auto snapshot = [&](bool enabled) {
+            return QJsonObject{{"server_state", QJsonObject{{"queueing", enabled}}},
+                {"torrents", QJsonObject{{hash, QJsonObject{{"name", "Test download"},
+                    {"progress", 0.5}, {"state", "downloading"}, {"priority", 1}}}}}};
+        };
+        alpha.setCompletionSnapshot(snapshot(true));
+        beta.setCompletionSnapshot(snapshot(false));
+        QVERIFY(alpha.start() && beta.start());
+        QTemporaryDir tmp;
+        QVERIFY(tmp.isValid());
+        QSettings settings(tmp.filePath("queue-controls.ini"), QSettings::IniFormat);
+        settings.setValue("Preferences/Advanced/RefreshInterval", 100);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        auto *menuAction = window.findChild<QAction *>("actionTopQueuePos");
+        auto *toolbarAction = window.findChild<QAction *>("actionTopQueuePosToolbar");
+        auto *separator = window.findChild<QAction *>("queueToolbarSeparator");
+        QVERIFY(menuAction && toolbarAction && separator);
+        QVERIFY(menuAction->isVisible() && !menuAction->isEnabled());
+        QVERIFY(!toolbarAction->isVisible() && !separator->isVisible());
+        openConnectDialog(window, alpha.url());
+        QTRY_VERIFY_WITH_TIMEOUT(toolbarAction->isVisible(), 6000);
+        QVERIFY(separator->isVisible());
+        auto *tabs = window.findChild<QTabWidget *>("serverTabs");
+        QVERIFY(tabs);
+        auto *first = qobject_cast<ServerPane *>(tabs->currentWidget());
+        QVERIFY(first);
+        const int column = first->model()->columnCount() - 1;
+        QVERIFY(!first->table()->isColumnHidden(column));
+        first->table()->selectRow(0);
+        QTRY_VERIFY(menuAction->isEnabled() && toolbarAction->isEnabled());
+        toolbarAction->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(alpha.commandsFor("/api/v2/torrents/topPrio"), 1, 6000);
+        openConnectDialog(window, beta.url(), false, true, true, "Second");
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains("Connected to Second"), 6000);
+        auto *second = qobject_cast<ServerPane *>(tabs->currentWidget());
+        QVERIFY(second && second != first);
+        QTRY_COMPARE(second->model()->rowCount(), 1);
+        second->table()->selectRow(0);
+        QVERIFY(second->table()->isColumnHidden(column));
+        QVERIFY(menuAction->isVisible() && !menuAction->isEnabled());
+        QVERIFY(!toolbarAction->isVisible() && !separator->isVisible());
+        menuAction->trigger();
+        QCOMPARE(beta.commandsFor("/api/v2/torrents/topPrio"), 0);
+        beta.queueCompletionPatch({{"server_state", QJsonObject{{"queueing", true}}}});
+        QTRY_VERIFY_WITH_TIMEOUT(toolbarAction->isVisible() && toolbarAction->isEnabled(), 6000);
+        QVERIFY(!second->table()->isColumnHidden(column));
+        beta.queueCompletionPatch({{"server_state", QJsonObject{{"queueing", false}}}});
+        QTRY_VERIFY_WITH_TIMEOUT(!toolbarAction->isVisible(), 6000);
+        QVERIFY(second->table()->isColumnHidden(column));
+        tabs->setCurrentWidget(first);
+        QVERIFY(toolbarAction->isVisible() && !first->table()->isColumnHidden(column));
+        QVERIFY(menuAction->isEnabled());
+        QCOMPARE(beta.commandsFor("/api/v2/torrents/topPrio"), 0);
+    }
+
     void nativeStatisticsTracksIndependentServerSnapshots()
     {
         DemoQbittorrentServer legacy(true), modern(true);
@@ -9319,6 +9581,77 @@ private slots:
         QCOMPARE(name.data(Qt::ForegroundRole).value<QColor>(), normal);
         QCOMPARE(paint(), normalBar);
         QCOMPARE(name.siblingAtColumn(3).data(Qt::UserRole).toString(), QStringLiteral("stoppedUP"));
+    }
+
+    void externalFileOpenReusesExistingWindowAndWaitsForAuthentication()
+    {
+        DemoQbittorrentServer server(true);
+        QVERIFY(server.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath("external-open.ini"), QSettings::IniFormat);
+        Remote::ProfileStore store(settings);
+        Remote::ServerProfile profile{QString(), "External open server", server.url(), "demo", true, true};
+        QVERIFY(store.save(profile));
+        DemoCredentialVault vault;
+        vault.data.insert(vault.keyFor(profile), "demo-password");
+
+        const auto createTorrent = [&](const QString &path, const QByteArray &name) {
+            const QByteArray metadata = QByteArrayLiteral("d4:infod6:lengthi100e4:name")
+                + QByteArray::number(name.size()) + ':' + name + QByteArrayLiteral("ee");
+            QFile file(path);
+            if (!file.open(QIODevice::WriteOnly) || file.write(metadata) != metadata.size()) return QByteArray();
+            return metadata;
+        };
+        const QString first = temp.filePath("cold launch.torrent");
+        const QString second = temp.filePath("second & percent %20.torrent");
+        const auto firstBytes = createTorrent(first, "first");
+        const auto secondBytes = createTorrent(second, "second");
+        QVERIFY(!firstBytes.isEmpty() && !secondBytes.isEmpty());
+
+        MainWindow window(nullptr, &settings, &vault);
+        DroppedTorrentUi driver;
+        qApp->installEventFilter(&driver);
+        const auto cleanup = qScopeGuard([&] { qApp->removeEventFilter(&driver); });
+        const QString instanceDirectory = temp.filePath("ipc");
+        SingleInstance primary(instanceDirectory);
+        QString error;
+        QCOMPARE(primary.start({}, [&window](const QStringList &args) { window.enqueueExternalOpen(args); }, error),
+                 SingleInstance::Result::Primary);
+
+        // Simulate an initial file-manager launch before auto-connect has run.
+        QStringList initial;
+        QVERIFY(SingleInstance::normalizeArguments({first}, initial, error));
+        window.enqueueExternalOpen(initial);
+        QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor("/api/v2/torrents/add"), 1, 10000);
+        QCOMPARE(driver.opened, 1);
+        QVERIFY(server.lastCommandBody("/api/v2/torrents/add").contains(firstBytes));
+
+        // A separate OS process sends a file URI, exits after acknowledgement,
+        // and the original authenticated window handles the actual addition.
+        window.hide();
+        QProcess secondary;
+        secondary.start(QCoreApplication::applicationFilePath(),
+            {"forward-launch", instanceDirectory, QUrl::fromLocalFile(second).toString(QUrl::FullyEncoded)});
+        QTRY_COMPARE_WITH_TIMEOUT(secondary.state(), QProcess::NotRunning, 12000);
+        QCOMPARE(secondary.exitStatus(), QProcess::NormalExit);
+        QCOMPARE(secondary.exitCode(), 0);
+        QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor("/api/v2/torrents/add"), 2, 10000);
+        QCOMPARE(driver.opened, 2);
+        QVERIFY(window.isVisible());
+        QVERIFY(server.lastCommandBody("/api/v2/torrents/add").contains(secondBytes));
+
+        const QString magnet = "magnet:?xt=urn:btih:fedcba9876543210fedcba9876543210fedcba98";
+        QProcess link;
+        link.start(QCoreApplication::applicationFilePath(), {"forward-launch", instanceDirectory, magnet});
+        QTRY_COMPARE_WITH_TIMEOUT(link.state(), QProcess::NotRunning, 12000);
+        QCOMPARE(link.exitCode(), 0);
+        QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor("/api/v2/torrents/add"), 3, 10000);
+        QCOMPARE(driver.opened, 3);
+        QCOMPARE(driver.links, 1);
+        QCOMPARE(QUrlQuery(QString::fromUtf8(server.lastCommandBody("/api/v2/torrents/add")))
+            .queryItemValue("urls", QUrl::FullyDecoded), magnet);
+        QVERIFY2(driver.unexpected.isEmpty(), qPrintable(driver.unexpected));
     }
 
     void userDropsTorrentFilesAndMagnetIntoNativeTransferView()
@@ -10549,6 +10882,7 @@ private slots:
     {
         DemoQbittorrentServer server(true);
         server.enableTorrentSyncDemo();
+        server.enableQueueingDemo();
         server.keepDemoTorrents();
         QVERIFY(server.start());
 

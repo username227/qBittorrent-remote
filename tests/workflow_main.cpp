@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include <cstdio>
 #include <cstring>
+#include <QCoreApplication>
+#include "app/SingleInstance.h"
 
 // Each suite retains its original QTEST_MAIN setup in its own translation
 // unit. Only one is invoked in a process, so globals, QApplication state,
@@ -17,6 +19,19 @@ int runTlsTrustWorkflow(int argc, char *argv[]);
 
 int main(int argc, char *argv[])
 {
+    // Test-only secondary process: exercise the very same IPC transport as
+    // the installed executable without touching real desktop settings.
+    if (argc >= 3 && std::strcmp(argv[1], "forward-launch") == 0)
+    {
+        QCoreApplication app(argc, argv);
+        const auto arguments = app.arguments();
+        QStringList normalized;
+        QString error;
+        if (!SingleInstance::normalizeArguments(arguments.mid(3), normalized, error))
+            return 2;
+        SingleInstance instance(arguments.at(2));
+        return instance.start(normalized, {}, error) == SingleInstance::Result::Forwarded ? 0 : 3;
+    }
     struct Suite
     {
         const char *name;

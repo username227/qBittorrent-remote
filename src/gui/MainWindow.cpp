@@ -12,6 +12,7 @@
 #include "gui/RemoteSpeedLimitsDialog.h"
 #include "gui/RemoteTorrentCreatorDialog.h"
 #include "gui/RemoteStatisticsDialog.h"
+#include "gui/RemoteCookiesDialog.h"
 #include "gui/RemoteAddTorrentDialog.h"
 #include "gui/RemoteTrackerEntriesDialog.h"
 #include "gui/RemoteTorrentContentLayoutDialog.h"
@@ -74,6 +75,7 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QPointer>
+#include <QShortcut>
 #include <QRegularExpression>
 #include <QSslCertificate>
 #include <QUrl>
@@ -85,6 +87,7 @@
 #include <QToolButton>
 #include <QWidget>
 #include <QSignalBlocker>
+#include <QScopedValueRollback>
 #include <QTimer>
 #include <QTabWidget>
 #include <QTabBar>
@@ -505,7 +508,16 @@ MainWindow::MainWindow(QWidget *parent, QSettings *settings,
     QTimer::singleShot(0, this, [this]() {
         m_restoringStartup = true;
         Remote::ProfileStore store(*m_settings);
-        for (const auto &profile : store.profiles())
+        auto profiles = store.profiles();
+        const QStringList order = m_settings->value(QStringLiteral("Layout/ServerTabOrder")).toStringList();
+        const auto rank = [&order](const Remote::ServerProfile &profile) {
+            const qsizetype index = order.indexOf(profile.id);
+            return index < 0 ? order.size() : index;
+        };
+        std::stable_sort(profiles.begin(), profiles.end(), [&rank](const auto &a, const auto &b) {
+            return rank(a) < rank(b);
+        });
+        for (const auto &profile : profiles)
             if (profile.autoConnect)
                 connectToProfile(profile, QString());
         m_restoringStartup = false;
@@ -517,6 +529,7 @@ MainWindow::MainWindow(QWidget *parent, QSettings *settings,
                 m_views->setCurrentWidget(connection->pane);
                 break;
             }
+        m_startupComplete = true;
         updateActiveUi();
     });
 }
@@ -553,6 +566,28 @@ void MainWindow::setupMainArea()
             [this](int) { updateActiveUi(); });
 
     auto *tabBar = m_views->tabBar();
+    m_views->setMovable(true);
+    connect(tabBar, &QTabBar::tabMoved, this, [this](int, int) {
+        // QTabWidget moves its pages with the tab. Derive session ordering
+        // by identity, not by the old index; callbacks retain their session.
+        QList<std::shared_ptr<SessionContext>> ordered;
+        QStringList ids;
+        for (int i = 0; i < m_views->count(); ++i)
+            for (const auto &connection : m_connections)
+                if (connection->pane == m_views->widget(i))
+                {
+                    ordered.append(connection);
+                    ids.append(connection->profile.id);
+                    break;
+                }
+        if (ordered.size() != m_connections.size()) return;
+        m_connections = ordered;
+        const auto previous = m_settings->value(QStringLiteral("Layout/ServerTabOrder")).toStringList();
+        for (const auto &id : previous)
+            if (!ids.contains(id)) ids.append(id);
+        m_settings->setValue(QStringLiteral("Layout/ServerTabOrder"), ids);
+        updateActiveUi();
+    });
     tabBar->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(tabBar, &QTabBar::customContextMenuRequested, this,
         [this, tabBar](const QPoint &position) {
@@ -682,6 +717,24 @@ void MainWindow::setupActions()
     })
         action->setEnabled(false);
 
+    // Independent toolbar proxies keep the original Edit menu actions visible.
+    const QList<QAction *> queueActions{m_ui->actionTopQueuePos, m_ui->actionIncreaseQueuePos,
+        m_ui->actionDecreaseQueuePos, m_ui->actionBottomQueuePos};
+    m_queueToolbarSeparator = m_ui->toolBar->insertSeparator(queueActions.first());
+    m_queueToolbarSeparator->setObjectName("queueToolbarSeparator");
+    m_queueToolbarSeparator->setVisible(false);
+    for (auto *action : queueActions)
+    {
+        auto *proxy = new QAction(action->icon(), action->text(), this);
+        proxy->setObjectName(action->objectName() + QStringLiteral("Toolbar"));
+        proxy->setToolTip(action->toolTip());
+        proxy->setEnabled(false);
+        proxy->setVisible(false);
+        m_ui->toolBar->insertAction(action, proxy);
+        m_ui->toolBar->removeAction(action);
+        connect(proxy, &QAction::triggered, action, &QAction::trigger);
+        m_queueToolbarActions.append(proxy);
+    }
     m_ui->actionLock->setVisible(false);
     m_ui->actionPauseSession->setVisible(true);
     m_ui->actionResumeSession->setVisible(false);
@@ -799,6 +852,51 @@ void MainWindow::setupActions()
                 server->pane->showRss();
         updateActiveUi();
     });
+    m_ui->menuLog->setIcon(upstreamIcon("help-contents"));
+    m_ui->menuView->addMenu(m_ui->menuLog);
+    m_ui->actionExecutionLogs->setChecked(m_settings->value("Layout/ShowExecutionLog", false).toBool());
+    const QList<QAction *> logTypes{m_ui->actionNormalMessages, m_ui->actionInformationMessages,
+        m_ui->actionWarningMessages, m_ui->actionCriticalMessages};
+    const auto applyLog = [this, logTypes] {
+        int mask = 0;
+        for (int i = 0; i < logTypes.size(); ++i)
+        {
+            if (logTypes[i]->isChecked()) mask |= (1 << i);
+            logTypes[i]->setEnabled(m_ui->actionExecutionLogs->isChecked());
+        }
+        m_settings->setValue("Layout/ExecutionLogTypes", mask);
+        for (const auto &server : m_connections)
+            server->pane->setLogAvailable(server->connected ? server->session : nullptr,
+                m_ui->actionExecutionLogs->isChecked(), mask);
+    };
+    const int logMask = m_settings->value("Layout/ExecutionLogTypes", 15).toInt();
+    for (int i = 0; i < logTypes.size(); ++i)
+        logTypes[i]->setChecked(logMask & (1 << i));
+    for (auto *action : logTypes)
+        connect(action, &QAction::toggled, this, applyLog);
+    connect(m_ui->actionExecutionLogs, &QAction::toggled, this, [this, applyLog](bool visible) {
+        m_settings->setValue("Layout/ShowExecutionLog", visible);
+        applyLog();
+        if (visible)
+            if (const auto server = activeConnection(); server && server->connected)
+                server->pane->showLog();
+        updateActiveUi();
+    });
+    applyLog();
+    auto *logShortcut = new QShortcut(QKeySequence(Qt::ALT | Qt::Key_4), this);
+    connect(logShortcut, &QShortcut::activated, this, [this] {
+        if (!m_ui->actionExecutionLogs->isChecked()) m_ui->actionExecutionLogs->setChecked(true);
+        if (const auto server = activeConnection(); server && server->connected) server->pane->showLog();
+    });
+    auto *transferShortcut = new QShortcut(QKeySequence(Qt::ALT | Qt::Key_1), this);
+    connect(transferShortcut, &QShortcut::activated, this, [this] {
+        if (const auto server = activeConnection()) server->pane->showTransfers();
+    });
+    auto *rssShortcut = new QShortcut(QKeySequence(Qt::ALT | Qt::Key_3), this);
+    connect(rssShortcut, &QShortcut::activated, this, [this] {
+        if (!m_rssAction->isChecked()) m_rssAction->setChecked(true);
+        if (const auto server = activeConnection(); server && server->connected) server->pane->showRss();
+    });
     m_ui->menuView->addSeparator();
 
     // Native modeless Statistics, one dialog bound to each authenticated session.
@@ -859,6 +957,17 @@ void MainWindow::setupActions()
                 seedTargets.append({candidate->profile, candidate->session});
         RemoteTorrentCreatorDialog dialog(*m_settings, server->profile, server->session, server->version, this, seedTargets);
         trackDialogGeometry(dialog, QStringLiteral("TorrentCreator"));
+        dialog.exec();
+    });
+    m_ui->menuOptions->addSeparator();
+    m_ui->menuOptions->addAction(m_ui->actionManageCookies);
+    m_ui->actionManageCookies->setEnabled(false);
+    m_ui->actionManageCookies->setIcon(upstreamIcon("browser-cookies"));
+    connect(m_ui->actionManageCookies, &QAction::triggered, this, [this] {
+        const auto server = activeConnection();
+        if (!server || !server->connected || !server->session) return;
+        RemoteCookiesDialog dialog(server->session, server->profile.name, *m_settings, this);
+        trackDialogGeometry(dialog, QStringLiteral("Cookies"));
         dialog.exec();
     });
     m_ui->menuOptions->addAction(m_ui->actionOptions);
@@ -1043,7 +1152,7 @@ void MainWindow::setupActions()
         const auto server = activeConnection();
         if (!server || !server->connected)
             return;
-        const bool showOptions = m_settings->value(
+        const bool showOptions = m_forceExternalAdditionDialog || m_settings->value(
             QStringLiteral("Preferences/Downloads/ShowAdditionDialog"), true).toBool();
         if (!showOptions)
         {
@@ -1174,7 +1283,7 @@ void MainWindow::setupActions()
 
         if (!containsConnection(server) || !server->connected) return;
         const bool batch = uploads.size() > 1;
-        const bool showOptions = m_settings->value(
+        const bool showOptions = m_forceExternalAdditionDialog || m_settings->value(
             QStringLiteral("Preferences/Downloads/ShowAdditionDialog"), true).toBool();
         const bool confirm = showOptions && m_settings->value(
             QStringLiteral("Preferences/Downloads/ConfirmMergeTrackers"), true).toBool();
@@ -1635,7 +1744,7 @@ QStringList MainWindow::selectedTorrentHashes() const
         return {};
 
     const ServerPane *pane = server->pane;
-    if (pane->isRssSelected()) return {};
+    if (!pane->isTransfersSelected()) return {};
     auto *selection = pane->table()->selectionModel();
     if (!selection)
         return {};
@@ -1665,6 +1774,7 @@ void MainWindow::updateTorrentActionState()
     m_ui->actionDownloadFromURL->setEnabled(ready);
     m_ui->actionCreateTorrent->setEnabled(ready);
     m_ui->actionStatistics->setEnabled(ready);
+    m_ui->actionManageCookies->setEnabled(ready);
     const auto sessionState = ready ? server->pane->serverState().value("session_state") : QJsonValue();
     const bool sessionSupported = ready && sessionState.isBool();
     const bool paused = sessionSupported && sessionState.toBool();
@@ -1675,12 +1785,25 @@ void MainWindow::updateTorrentActionState()
     m_ui->actionResumeSession->setVisible(paused);
     m_ui->actionResumeSession->setEnabled(sessionSupported && paused);
     m_ui->actionOpenDestinationFolder->setEnabled(selected);
-    for (QAction *action : {
-        m_ui->actionDelete, m_ui->actionStart, m_ui->actionStop,
-        m_ui->actionTopQueuePos, m_ui->actionIncreaseQueuePos,
-        m_ui->actionDecreaseQueuePos, m_ui->actionBottomQueuePos
-    })
+    for (QAction *action : {m_ui->actionDelete, m_ui->actionStart, m_ui->actionStop})
         action->setEnabled(selected);
+    const bool queueing = ready && server->pane->queueingEnabled();
+    bool incomplete = false;
+    if (queueing && selected)
+        for (const auto &hash : selectedTorrentHashes())
+        {
+            const auto progress = server->pane->model()->torrents().value(hash).value("progress");
+            if (progress.isDouble() && progress.toDouble() < 1.0) { incomplete = true; break; }
+        }
+    for (auto *action : {m_ui->actionTopQueuePos, m_ui->actionIncreaseQueuePos,
+                         m_ui->actionDecreaseQueuePos, m_ui->actionBottomQueuePos})
+        action->setEnabled(queueing && incomplete);
+    for (auto *action : m_queueToolbarActions)
+    {
+        action->setVisible(queueing);
+        action->setEnabled(queueing && incomplete);
+    }
+    if (m_queueToolbarSeparator) m_queueToolbarSeparator->setVisible(queueing);
 }
 
 std::shared_ptr<MainWindow::SessionContext> MainWindow::activeConnection() const
@@ -1997,6 +2120,107 @@ void MainWindow::showForStartup()
         show();
 }
 
+void MainWindow::enqueueExternalOpen(const QStringList &arguments)
+{
+    // Launching the application again restores the existing window, even
+    // when it was hidden in the tray. Never create another MainWindow.
+    if (!isVisible() || isMinimized())
+    {
+        if (m_wasMaximizedBeforeTray || windowState().testFlag(Qt::WindowMaximized))
+            showMaximized();
+        else
+            showNormal();
+    }
+    raise();
+    activateWindow();
+
+    // Preserve homogeneous batches in the order supplied by the launcher.
+    // The existing Add Torrent workflows retain metadata limits, server
+    // selection, duplicate safeguards and original-file deletion policy.
+    QStringList batch;
+    bool links = false;
+    for (const auto &argument : arguments)
+    {
+        const bool link = argument.startsWith(QStringLiteral("magnet:"), Qt::CaseInsensitive);
+        if (!batch.isEmpty() && link != links)
+        {
+            m_externalOpenQueue.append(batch);
+            batch.clear();
+        }
+        if (batch.isEmpty()) links = link;
+        batch.append(argument);
+    }
+    if (!batch.isEmpty()) m_externalOpenQueue.append(batch);
+    if (m_externalOpenQueue.isEmpty()) return;
+
+    if (!m_externalOpenTimer)
+    {
+        m_externalOpenTimer = new QTimer(this);
+        m_externalOpenTimer->setInterval(200);
+        connect(m_externalOpenTimer, &QTimer::timeout, this, &MainWindow::processExternalOpen);
+    }
+    if (!m_externalOpenTimer->isActive()) m_externalOpenTimer->start();
+}
+
+void MainWindow::processExternalOpen()
+{
+    if (m_externalOpenQueue.isEmpty())
+    {
+        if (m_externalOpenTimer) m_externalOpenTimer->stop();
+        return;
+    }
+    if (!m_startupComplete || m_externalOpenBusy || QApplication::activeModalWidget()
+        || QApplication::activePopupWidget() || m_forceExit)
+        return;
+    QScopedValueRollback<bool> busy(m_externalOpenBusy, true);
+    auto server = activeConnection();
+    bool fallback = false;
+    if (!server || !server->connected)
+    {
+        // Wait for the selected server's login rather than silently routing
+        // a file to a different instance during startup.
+        if (server && server->session) return;
+        for (const auto &candidate : m_connections)
+        {
+            if (candidate->connected)
+            {
+                server = candidate;
+                fallback = true;
+                break;
+            }
+        }
+        if (!server || !server->connected)
+        {
+            for (const auto &candidate : m_connections)
+                if (candidate->session) return;
+            if (m_externalConnectionPrompted)
+            {
+                statusBar()->showMessage(tr("Torrent opening is waiting for a server connection."));
+                return;
+            }
+            m_externalConnectionPrompted = true;
+            if (!showConnectionDialog())
+            {
+                // The user explicitly cancelled this batch, not the other
+                // requests that may have arrived while the dialog was open.
+                m_externalOpenQueue.removeFirst();
+                m_externalConnectionPrompted = false;
+            }
+            return;
+        }
+    }
+    m_externalConnectionPrompted = false;
+    if (fallback) m_views->setCurrentWidget(server->pane);
+    const QStringList arguments = m_externalOpenQueue.takeFirst();
+    // An offline selected server must never lead to a silent add on another
+    // server even if the user normally skips the Add Torrent dialog.
+    QScopedValueRollback<bool> forceDialog(m_forceExternalAdditionDialog, fallback);
+    if (arguments.first().startsWith(QStringLiteral("magnet:"), Qt::CaseInsensitive))
+        m_addLinks(arguments.join(QLatin1Char('\n')));
+    else
+        m_addTorrentFiles(arguments);
+}
+
 void MainWindow::changeEvent(QEvent *event)
 {
     if (event->type() == QEvent::WindowStateChange
@@ -2139,7 +2363,7 @@ void MainWindow::updateActiveUi()
     }
 
     const bool ready = connection && connection->connected;
-    const bool transfers = ready && pane && !pane->isRssSelected();
+    const bool transfers = ready && pane && pane->isTransfersSelected();
     m_searchEdit->setEnabled(transfers);
     m_searchBy->setEnabled(transfers);
     m_disconnectAction->setEnabled(connection && connection->session);
@@ -2252,10 +2476,12 @@ void MainWindow::disconnectConnection(const std::shared_ptr<SessionContext> &con
     connection->session = nullptr;
     connection->connected = false;
     connection->disconnectReason = reason;
+    connection->pane->setLogAvailable(nullptr, false, 15);
     if (connection->statistics) connection->statistics->close();
     connection->altSpeedModeKnown = false;
     connection->pendingOriginalDeletions.clear();
     connection->incompleteCompletionTimes.clear();
+    connection->pane->clearQueueCapability();
     connection->pane->setEnabled(false);
     QObject::disconnect(session, nullptr, this, nullptr);
     QObject::disconnect(session, nullptr, connection->pane, nullptr);
@@ -2346,7 +2572,7 @@ void MainWindow::observeTorrentCompletions(SessionContext &connection,
             m_settings->value(QStringLiteral("Preferences/Behavior/SoundTorrentCompletion"), false).toBool());
 }
 
-void MainWindow::showConnectionDialog(const QString &profileId)
+bool MainWindow::showConnectionDialog(const QString &profileId)
 {
     ConnectionDialog dialog(*m_settings, this, m_vault);
     if (!profileId.isEmpty())
@@ -2369,8 +2595,10 @@ void MainWindow::showConnectionDialog(const QString &profileId)
                 break;
             }
         });
-    if (dialog.exec() == QDialog::Accepted)
-        connectToProfile(dialog.selectedProfile(), dialog.password());
+    if (dialog.exec() != QDialog::Accepted)
+        return false;
+    connectToProfile(dialog.selectedProfile(), dialog.password());
+    return true;
 }
 
 void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
@@ -2441,6 +2669,13 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
     connect(connection->pane, &ServerPane::sectionChanged, this, [this, connection]() {
         if (activeConnection() == connection) updateActiveUi();
     });
+    connect(connection->pane, &ServerPane::rssCloseRequested, this, [this] {
+        m_rssAction->setChecked(false);
+    });
+    // Defer removal of the log page/button until its clicked signal returns.
+    connect(connection->pane, &ServerPane::logCloseRequested, this, [this] {
+        m_ui->actionExecutionLogs->setChecked(false);
+    }, Qt::QueuedConnection);
 
     // The user may choose separate double-click actions for downloads and
     // completed torrents. All actions use this exact remote session.
@@ -3106,6 +3341,7 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
         connect(model, &QAbstractItemModel::layoutChanged, this, updateCount);
     }
 
+    connection->pane->clearQueueCapability();
     connection->pane->setEnabled(false);
     const int tabIndex = m_views->insertTab(qBound(0, insertionIndex, m_views->count()),
         connection->pane, upstreamIcon("folder-remote"), profile.name);
@@ -3209,6 +3445,8 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
             connection->disconnectReason.clear();
             connection->pane->setEnabled(true);
             connection->pane->setRssAvailable(connection->session, m_rssAction && m_rssAction->isChecked());
+            connection->pane->setLogAvailable(connection->session, m_ui->actionExecutionLogs->isChecked(),
+                m_settings->value("Layout/ExecutionLogTypes", 15).toInt());
             updateServerTab(connection);
             connection->version = version;
             connection->apiVersion = apiVersion;

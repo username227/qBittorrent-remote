@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/ServerPane.h"
 #include "gui/RemoteRssDialog.h"
+#include "gui/RemoteExecutionLogWidget.h"
 #include "gui/FilterSidebar.h"
 #include "gui/TorrentModel.h"
 #include "gui/NaturalNameSort.h"
@@ -37,6 +38,7 @@
 #include <QVBoxLayout>
 #include <QTabWidget>
 #include <QTabBar>
+#include <QToolButton>
 
 #ifdef Q_OS_LINUX
 #include <QMouseEvent>
@@ -263,6 +265,8 @@ ServerPane::ServerPane(QWidget *parent) : QWidget(parent)
             QMenu menu(header);
             for (int column = 0; column < m_model->columnCount(); ++column)
             {
+                if (column == m_model->columnCount() - 1 && !queueingEnabled())
+                    continue;
                 QAction *action = menu.addAction(
                     m_model->headerData(column, Qt::Horizontal).toString());
                 action->setCheckable(true);
@@ -271,6 +275,8 @@ ServerPane::ServerPane(QWidget *parent) : QWidget(parent)
                     action->setEnabled(false);
                 connect(action, &QAction::toggled, m_table,
                     [this, column](bool checked) {
+                        if (column == m_model->columnCount() - 1)
+                            m_queueColumnWanted = checked;
                         m_table->setColumnHidden(column, !checked);
                     });
             }
@@ -369,7 +375,9 @@ void ServerPane::setRssAvailable(Remote::RemoteSession *session, bool visible)
         m_rssWidget->setLoadExternalImages(m_rssLoadExternalImages);
         if (m_layoutSettings && !m_layoutPrefix.isEmpty())
             m_rssWidget->restoreLayout(*m_layoutSettings, m_layoutPrefix);
-        m_sectionTabs->addTab(m_rssWidget, tr("RSS"));
+        const int index = m_logWidget ? m_sectionTabs->indexOf(m_logWidget) : m_sectionTabs->count();
+        m_sectionTabs->insertTab(index, m_rssWidget, tr("RSS"));
+        addSectionCloseButton(m_rssWidget, tr("RSS"), true);
     }
     if (m_rssWidget)
     {
@@ -377,7 +385,66 @@ void ServerPane::setRssAvailable(Remote::RemoteSession *session, bool visible)
             m_sectionTabs->setCurrentWidget(m_transfers);
         m_sectionTabs->setTabVisible(m_sectionTabs->indexOf(m_rssWidget), visible);
     }
-    m_sectionTabs->tabBar()->setVisible(visible && m_rssWidget);
+    updateSectionTabVisibility();
+}
+
+void ServerPane::addSectionCloseButton(QWidget *page, const QString &name, bool rss)
+{
+    auto *button = new QToolButton(m_sectionTabs->tabBar());
+    button->setObjectName(rss ? QStringLiteral("rssTabCloseButton") : QStringLiteral("logTabCloseButton"));
+    button->setText(QStringLiteral("×"));
+    button->setAccessibleName(tr("Close %1 tab").arg(name));
+    button->setToolTip(tr("Close %1 tab").arg(name));
+    button->setAutoRaise(true);
+    button->setFocusPolicy(Qt::NoFocus);
+    button->setStyleSheet(QStringLiteral("QToolButton { color: #e53935; font-weight: bold; }"));
+    m_sectionTabs->tabBar()->setTabButton(m_sectionTabs->indexOf(page), QTabBar::RightSide, button);
+    connect(button, &QToolButton::clicked, this, [this, rss] {
+        if (rss) emit rssCloseRequested();
+        else emit logCloseRequested();
+    });
+}
+
+void ServerPane::updateSectionTabVisibility()
+{
+    int visible = 0;
+    for (int i = 0; i < m_sectionTabs->count(); ++i)
+        if (m_sectionTabs->isTabVisible(i)) ++visible;
+    m_sectionTabs->tabBar()->setVisible(visible > 1);
+}
+
+void ServerPane::setLogAvailable(Remote::RemoteSession *session, bool visible, int types)
+{
+    if ((!session || !visible) && m_logWidget)
+    {
+        if (m_sectionTabs->currentWidget() == m_logWidget) showTransfers();
+        m_sectionTabs->removeTab(m_sectionTabs->indexOf(m_logWidget));
+        delete m_logWidget;
+        m_logWidget = nullptr;
+    }
+    if (visible && session && !m_logWidget)
+    {
+        m_logWidget = new RemoteExecutionLogWidget(session, m_sectionTabs);
+        m_sectionTabs->addTab(m_logWidget, tr("Execution Log"));
+        addSectionCloseButton(m_logWidget, tr("Execution Log"), false);
+    }
+    if (m_logWidget) m_logWidget->setMessageTypes(types);
+    updateSectionTabVisibility();
+}
+
+void ServerPane::showLog()
+{
+    if (m_logWidget) m_sectionTabs->setCurrentWidget(m_logWidget);
+}
+
+void ServerPane::showTransfers()
+{
+    m_sectionTabs->setCurrentWidget(m_transfers);
+}
+
+bool ServerPane::isTransfersSelected() const
+{
+    return m_sectionTabs->currentWidget() == m_transfers;
 }
 
 void ServerPane::setSpeedGraphsEnabled(bool enabled)
@@ -403,6 +470,22 @@ bool ServerPane::isRssSelected() const
     return m_rssWidget && m_sectionTabs->currentWidget() == m_rssWidget;
 }
 
+void ServerPane::updateQueueColumn()
+{
+    // Queue Position is the last model column. Keep the user's independent
+    // visibility preference rather than saving a capability-forced hide.
+    const int column = m_model->columnCount() - 1;
+    const bool hidden = !queueingEnabled() || !m_queueColumnWanted;
+    if (m_table->isColumnHidden(column) != hidden)
+        m_table->setColumnHidden(column, hidden);
+}
+
+void ServerPane::clearQueueCapability()
+{
+    m_serverState.remove(QStringLiteral("queueing"));
+    updateQueueColumn();
+}
+
 void ServerPane::applySync(const QJsonObject &payload)
 {
     if (payload.value(QStringLiteral("full_update")).toBool())
@@ -411,6 +494,7 @@ void ServerPane::applySync(const QJsonObject &payload)
     const QJsonObject changes = payload.value(QStringLiteral("server_state")).toObject();
     for (auto it = changes.constBegin(); it != changes.constEnd(); ++it)
         m_serverState.insert(it.key(), it.value());
+    updateQueueColumn();
 
     // /sync/maindata sends incremental changes for categories, tags and
     // tracker-to-hash memberships, not complete lists on every request.
@@ -1100,6 +1184,7 @@ void ServerPane::saveLayout(QSettings &settings, const QString &profileId) const
 
     settings.setValue(root + QStringLiteral("/torrentHeader"),
                       m_table->horizontalHeader()->saveState());
+    settings.setValue(root + QStringLiteral("/queueColumnWanted"), m_queueColumnWanted);
     // Existing layouts saved a non-resizable Name column. Mark layouts saved
     // after the migration so a user's future manual narrow width is honored.
     settings.setValue(root + QStringLiteral("/nameColumnResizableV1"), true);
@@ -1160,6 +1245,9 @@ void ServerPane::restoreLayout(QSettings &settings, const QString &profileId)
             && (order == Qt::AscendingOrder || order == Qt::DescendingOrder))
             m_table->sortByColumn(col, order);
     }
+
+    m_queueColumnWanted = settings.value(root + QStringLiteral("/queueColumnWanted"), true).toBool();
+    updateQueueColumn();
 
     // QHeaderView::restoreState can bring back the old Stretch resize mode
     // and the minuscule Name column stored by affected Windows versions.
