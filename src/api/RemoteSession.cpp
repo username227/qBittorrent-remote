@@ -635,6 +635,82 @@ QByteArray rssForm(const QMap<QString, QString> &params)
 }
 }
 
+void RemoteSession::createTorrentTask(const QMap<QString, QString> &params,
+                                     PreferencesResult received, PreferencesError rejected)
+{
+    if (!m_connected || !m_address)
+    {
+        if (rejected) rejected(tr("The selected server is not connected."));
+        return;
+    }
+    QueuedOperation request;
+    request.endpoint = QStringLiteral("api/v2/torrentcreator/addTask");
+    request.body = rssForm(params);
+    request.contentType = QByteArrayLiteral("application/x-www-form-urlencoded");
+    request.description = tr("Create torrent on server");
+    request.jsonObjectRequest = true;
+    request.jsonObjectPost = true;
+    request.reportOperation = false;
+    request.onJsonObject = std::move(received);
+    request.onRejected = std::move(rejected);
+    m_operations.enqueue(std::move(request));
+    pumpOperations();
+}
+
+void RemoteSession::requestTorrentCreationStatus(const QString &taskId,
+                                                ArrayResult received, PreferencesError rejected)
+{
+    if (!m_connected || !m_address)
+    {
+        if (rejected) rejected(tr("The selected server is not connected."));
+        return;
+    }
+    QueuedOperation request;
+    request.endpoint = QStringLiteral("api/v2/torrentcreator/status");
+    if (!taskId.isEmpty()) request.endpoint += QStringLiteral("?taskID=") + QString::fromLatin1(QUrl::toPercentEncoding(taskId));
+    request.description = tr("Read torrent creation status");
+    request.jsonArrayRequest = true;
+    request.reportOperation = false;
+    request.onJsonArray = std::move(received);
+    request.onRejected = std::move(rejected);
+    m_operations.enqueue(std::move(request));
+    pumpOperations();
+}
+
+void RemoteSession::downloadCreatedTorrent(const QString &taskId,
+                                           BytesResult received, PreferencesError rejected)
+{
+    if (!m_connected || !m_address || taskId.isEmpty())
+    {
+        if (rejected) rejected(tr("The torrent creation task is unavailable."));
+        return;
+    }
+    QueuedOperation request;
+    request.endpoint = QStringLiteral("api/v2/torrentcreator/torrentFile?taskID=")
+        + QString::fromLatin1(QUrl::toPercentEncoding(taskId));
+    request.description = tr("Retrieve created torrent");
+    request.bytesRequest = true;
+    request.reportOperation = false;
+    request.onBytes = std::move(received);
+    request.onRejected = std::move(rejected);
+    m_operations.enqueue(std::move(request));
+    pumpOperations();
+}
+
+void RemoteSession::deleteTorrentCreationTask(const QString &taskId,
+                                               std::function<void()> accepted, PreferencesError rejected)
+{
+    if (taskId.isEmpty())
+    {
+        if (rejected) rejected(tr("No torrent creation task was selected."));
+        return;
+    }
+    queueOperation(QStringLiteral("api/v2/torrentcreator/deleteTask"),
+        rssForm({{QStringLiteral("taskID"), taskId}}),
+        QByteArrayLiteral("application/x-www-form-urlencoded"), tr("Remove torrent creation task"),
+        true, std::move(accepted), std::move(rejected), false);
+}
+
 void RemoteSession::requestRss(const QString &action, const QMap<QString, QString> &params,
                                PreferencesResult received, PreferencesError rejected)
 {
@@ -712,12 +788,12 @@ void RemoteSession::pumpOperations()
 
     const QueuedOperation operation = m_operations.dequeue();
     QNetworkRequest request = requestFor(operation.endpoint);
-    if (!operation.detailsRequest && !operation.exportRequest && !operation.jsonArrayRequest
+    if (!operation.detailsRequest && !operation.exportRequest && !operation.jsonArrayRequest && !operation.bytesRequest
         && (!operation.jsonObjectRequest || operation.jsonObjectPost))
         request.setHeader(QNetworkRequest::ContentTypeHeader,
                           QString::fromLatin1(operation.contentType));
     QNetworkReply *reply = (operation.detailsRequest || operation.exportRequest
-                            || operation.jsonArrayRequest || (operation.jsonObjectRequest && !operation.jsonObjectPost))
+                            || operation.bytesRequest || operation.jsonArrayRequest || (operation.jsonObjectRequest && !operation.jsonObjectPost))
         ? m_network.get(request) : m_network.post(request, operation.body);
     armReply(reply);
     connect(reply, &QNetworkReply::finished, this, [this, reply, operation]() {
@@ -733,13 +809,21 @@ void RemoteSession::pumpOperations()
                 else
                     emit torrentExportReceived(operation.exportHash, response);
             }
+            else if (operation.bytesRequest)
+            {
+                if (response.isEmpty() || response.size() > 32 * 1024 * 1024)
+                {
+                    if (operation.onRejected) operation.onRejected(tr("Invalid or oversized torrent file returned by the server."));
+                }
+                else if (operation.onBytes) operation.onBytes(response);
+            }
             else if (operation.jsonArrayRequest)
             {
                 QJsonParseError error;
                 const auto json = QJsonDocument::fromJson(response, &error);
                 if (error.error != QJsonParseError::NoError || !json.isArray())
                 {
-                    if (operation.onRejected) operation.onRejected(tr("Invalid network list returned by the server."));
+                    if (operation.onRejected) operation.onRejected(tr("Invalid list returned by the server."));
                 }
                 else if (operation.onJsonArray) operation.onJsonArray(json.array());
             }
@@ -753,6 +837,8 @@ void RemoteSession::pumpOperations()
                         ? tr("Invalid build information returned by the server.")
                         : operation.endpoint.startsWith(QLatin1String("api/v2/rss/"))
                             ? tr("Invalid RSS data returned by the server.")
+                            : operation.endpoint.startsWith(QLatin1String("api/v2/torrentcreator/"))
+                                ? tr("Invalid torrent creation response returned by the server.")
                             : operation.jsonObjectPost
                                 ? tr("Invalid API key response returned by the server.")
                                 : tr("Invalid preferences returned by the server.");
@@ -817,7 +903,7 @@ void RemoteSession::pumpOperations()
                 if (operation.onRejected)
                     operation.onRejected(reason);
             }
-        }, !operation.detailsRequest && !operation.exportRequest && !operation.jsonObjectRequest && !operation.jsonArrayRequest);
+        }, !operation.detailsRequest && !operation.exportRequest && !operation.jsonObjectRequest && !operation.jsonArrayRequest && !operation.bytesRequest);
         // Continue the queue even when an individual command was rejected.
         if (m_connected && !m_pendingReply)
             QTimer::singleShot(0, this, &RemoteSession::pumpOperations);
