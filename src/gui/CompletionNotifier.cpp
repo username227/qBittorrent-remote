@@ -44,6 +44,17 @@ void CompletionNotifier::deliver(const QString &server, const QStringList &names
         emit soundRequested();
 }
 
+void CompletionNotifier::deliverAdded(const QString &server, const QStringList &names)
+{
+    if (names.isEmpty()) return;
+    const QString title = names.size() == 1
+        ? tr("Torrent added — %1").arg(server)
+        : tr("%n torrent(s) added — %1", nullptr, names.size()).arg(server);
+    QString body = names.mid(0, 3).join(QLatin1Char('\n'));
+    if (names.size() > 3) body += tr("\n…and %n more", nullptr, names.size() - 3);
+    emit notificationRequested(title, body);
+}
+
 void CompletionNotifier::showDesktopNotification(const QString &title, const QString &body)
 {
 #ifdef QBT_REMOTE_WITH_DBUS
@@ -60,7 +71,7 @@ void CompletionNotifier::showDesktopNotification(const QString &title, const QSt
         const QVariantMap hints{{QStringLiteral("suppress-sound"), true}};
         message << QStringLiteral("qBittorrent Remote") << uint(0)
                 << QStringLiteral("dialog-information") << title << body.toHtmlEscaped()
-                << QStringList{} << hints << int(-1);
+                << QStringList{} << hints << m_timeoutMs;
         auto *watcher = new QDBusPendingCallWatcher(bus.asyncCall(message, 5000), this);
         connect(watcher, &QDBusPendingCallWatcher::finished, this,
             [this, title, body](QDBusPendingCallWatcher *finished) {
@@ -79,9 +90,10 @@ void CompletionNotifier::showTrayNotification(const QString &title, const QStrin
 {
     if (!QSystemTrayIcon::isSystemTrayAvailable() || !QSystemTrayIcon::supportsMessages())
         return;
+    const int duration = m_timeoutMs < 0 ? 5000 : m_timeoutMs;
     if (m_tray && m_tray->isVisible())
     {
-        m_tray->showMessage(title, body, QSystemTrayIcon::Information, 5000);
+        m_tray->showMessage(title, body, QSystemTrayIcon::Information, duration);
         return;
     }
     // Windows/other tray-based notification implementations require a
@@ -96,8 +108,8 @@ void CompletionNotifier::showTrayNotification(const QString &title, const QStrin
         connect(m_hideTrayTimer, &QTimer::timeout, m_temporaryTray, &QSystemTrayIcon::hide);
     }
     m_temporaryTray->show();
-    m_temporaryTray->showMessage(title, body, QSystemTrayIcon::Information, 5000);
-    m_hideTrayTimer->start(10000);
+    m_temporaryTray->showMessage(title, body, QSystemTrayIcon::Information, duration);
+    m_hideTrayTimer->start(qMax(10000, duration));
 }
 
 void CompletionNotifier::playCompletionSound()

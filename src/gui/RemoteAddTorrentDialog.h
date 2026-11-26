@@ -74,6 +74,9 @@ private:
     bool validateServerPath(RemoteFileSystemPathComboEdit *combo, QString *resolved, QString *error) const;
     QString resolveServerPath(const QString &text) const;
     QString savedPathKey() const;
+    QString pathHistoryKey(bool incomplete) const;
+    void populatePathChoices();
+    void rememberPath(const QString &path, bool incomplete);
     void done(int result) override;
 
     QSettings &m_settings;

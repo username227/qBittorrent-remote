@@ -941,8 +941,10 @@ void TorrentDetailsWidget::displayPeers(const QJsonObject &reply)
     {
         const QJsonObject p = it.value().toObject();
         const double progress = p.value(QStringLiteral("progress")).toDouble(-1);
+        const QString host = p.value(QStringLiteral("host_name")).toString();
+        const QString peerAddress = host.isEmpty() ? it.key() : QStringLiteral("%1 (%2)").arg(host, it.key());
         const QStringList values {
-            it.key(), p.value(QStringLiteral("country_code")).toString(),
+            peerAddress, p.value(QStringLiteral("country_code")).toString(),
             p.value(QStringLiteral("client")).toString(),
             progress < 0 ? QStringLiteral("—")
                          : ProgressDisplay::percent(progress),
@@ -954,6 +956,8 @@ void TorrentDetailsWidget::displayPeers(const QJsonObject &reply)
         for (int col = 0; col < values.size(); ++col)
         {
             auto *item = new SortablePeerItem(values.at(col));
+            if (col == 0 && !host.isEmpty()) item->setToolTip(it.key());
+            if (col == 1) item->setToolTip(p.value(QStringLiteral("country")).toString());
             const QJsonValue raw = col == 3 ? p.value(QStringLiteral("progress"))
                 : col == 4 ? p.value(QStringLiteral("dl_speed"))
                 : col == 5 ? p.value(QStringLiteral("up_speed")) : QJsonValue();

@@ -51,6 +51,7 @@ public:
     explicit PropTabBar(QWidget *parent = nullptr);
 
     int currentIndex() const;
+    void setSpeedTabVisible(bool visible);
 
 signals:
     void tabChanged(int index);
@@ -62,4 +63,5 @@ public slots:
 private:
     QButtonGroup *m_btnGroup = nullptr;
     int m_currentIndex = -1;
+    bool m_speedTabVisible = true;
 };

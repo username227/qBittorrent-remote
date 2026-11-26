@@ -50,6 +50,7 @@ public:
 
     void setRssAvailable(Remote::RemoteSession *session, bool visible);
     void setRssLoadExternalImages(bool enabled);
+    void setSpeedGraphsEnabled(bool enabled);
     void showRss();
     bool isRssSelected() const;
     void applySync(const QJsonObject &payload);
@@ -117,6 +118,7 @@ private:
     QString m_selectedHash;
     TorrentDetailsWidget *m_details = nullptr;
     PropTabBar *m_detailTabs = nullptr;
+    bool m_speedGraphsEnabled = true;
     QTimer m_detailsRefresh;
     QSplitter *m_outerSplitter = nullptr;
     QSplitter *m_detailsSplitter = nullptr;

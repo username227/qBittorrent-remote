@@ -68,7 +68,8 @@ RemoteAddTorrentDialog::RemoteAddTorrentDialog(QSettings &settings,
                                                std::function<bool(const QString &)> serverIsConnected,
                                                QList<Remote::TorrentUpload> batchFiles,
                                                std::function<Remote::RemoteSession *(const QString &)> sessionForServer)
-    : QDialog(parent)
+    : QDialog(settings.value(QStringLiteral("Preferences/Advanced/AttachAddTorrentDialog"), true).toBool()
+              ? parent : nullptr)
     , m_settings(settings)
     , m_server(server)
     , m_pathStore(settings)
@@ -82,6 +83,8 @@ RemoteAddTorrentDialog::RemoteAddTorrentDialog(QSettings &settings,
     , m_sessionForServer(std::move(sessionForServer))
 {
     m_ui->setupUi(this);
+    if (!settings.value(QStringLiteral("Preferences/Advanced/AttachAddTorrentDialog"), true).toBool())
+        setWindowFlags(Qt::Window);
     setObjectName(QStringLiteral("remoteAddTorrentDialog"));
     setWindowTitle(tr("Add Torrent — %1").arg(server.name));
     setMinimumSize(700, 480);
@@ -166,15 +169,7 @@ void RemoteAddTorrentDialog::clearTargetFields()
     // Switching even *back* to a former server does not restore old inputs.
     // Each destination needs an explicit new choice, or can remain empty
     // when the user intends to use that server's own default path.
-    m_ui->savePath->comboBox()->clear();
-    m_ui->downloadPath->comboBox()->clear();
-    for (const auto &entry : m_pathStore.mappings(m_server.id))
-    {
-        m_ui->savePath->addItem(entry.remoteRoot);
-        m_ui->downloadPath->addItem(entry.remoteRoot);
-    }
-    m_ui->savePath->setCurrentIndex(-1);
-    m_ui->downloadPath->setCurrentIndex(-1);
+    populatePathChoices();
     m_ui->savePath->setEditText(QString());
     m_ui->downloadPath->setEditText(QString());
     m_ui->categoryComboBox->setEditText(QString());
@@ -248,16 +243,7 @@ void RemoteAddTorrentDialog::setupPaths()
     m_ui->downloadPath->lineEdit()->setPlaceholderText(
         tr("Remote incomplete-download directory"));
 
-    const auto mappings = m_pathStore.mappings(m_server.id);
-    // Offer known remote destinations; browsing a local mounted share
-    // translates them. A locally mounted path is NEVER submitted directly.
-    for (const auto &entry : mappings)
-    {
-        m_ui->savePath->addItem(entry.remoteRoot);
-        m_ui->downloadPath->addItem(entry.remoteRoot);
-    }
-    m_ui->savePath->setCurrentIndex(-1);
-    m_ui->downloadPath->setCurrentIndex(-1);
+    populatePathChoices();
     const QString remembered = m_settings.value(savedPathKey()).toString();
     if (!remembered.isEmpty())
     {
@@ -531,6 +517,41 @@ QString RemoteAddTorrentDialog::savedPathKey() const
     return QStringLiteral("AddTorrent/LastRemoteSavePath/") + hash;
 }
 
+QString RemoteAddTorrentDialog::pathHistoryKey(bool incomplete) const
+{
+    return QStringLiteral("AddTorrent/RemotePathHistory/")
+        + savedPathKey().section(QLatin1Char('/'), -1)
+        + (incomplete ? QStringLiteral("/Incomplete") : QStringLiteral("/Save"));
+}
+
+void RemoteAddTorrentDialog::populatePathChoices()
+{
+    const int length = qBound(0, m_settings.value(QStringLiteral("Preferences/Advanced/SavePathHistoryLength"), 8).toInt(), 99);
+    const auto fill = [&](RemoteFileSystemPathComboEdit *combo, bool incomplete) {
+        combo->comboBox()->clear();
+        QStringList paths = m_settings.value(pathHistoryKey(incomplete)).toStringList().mid(0, length);
+        for (const auto &entry : m_pathStore.mappings(m_server.id))
+            if (!paths.contains(entry.remoteRoot)) paths.append(entry.remoteRoot);
+        for (const auto &path : paths) combo->addItem(path);
+        combo->setCurrentIndex(-1);
+        combo->setEditText(QString());
+    };
+    fill(m_ui->savePath, false);
+    fill(m_ui->downloadPath, true);
+}
+
+void RemoteAddTorrentDialog::rememberPath(const QString &path, bool incomplete)
+{
+    const int length = qBound(0, m_settings.value(QStringLiteral("Preferences/Advanced/SavePathHistoryLength"), 8).toInt(), 99);
+    const QString key = pathHistoryKey(incomplete);
+    if (length == 0) { m_settings.remove(key); return; }
+    if (path.isEmpty()) return;
+    QStringList history = m_settings.value(key).toStringList();
+    history.removeAll(path);
+    history.prepend(path);
+    m_settings.setValue(key, history.mid(0, length));
+}
+
 void RemoteAddTorrentDialog::browseMappedPath(RemoteFileSystemPathComboEdit *target)
 {
     const auto entries = m_pathStore.mappings(m_server.id);
@@ -720,6 +741,9 @@ void RemoteAddTorrentDialog::accept()
         // Unchecking Remember must clear any previously stored path;
         // otherwise a later dialog silently prefills an obsolete destination.
         const QString remote = resolveServerPath(m_ui->savePath->currentText());
+        rememberPath(remote, false);
+        if (m_ui->groupBoxDownloadPath->isChecked())
+            rememberPath(resolveServerPath(m_ui->downloadPath->currentText()), true);
         if (!m_ui->checkBoxRememberLastSavePath->isChecked() || remote.isEmpty())
             m_settings.remove(savedPathKey());
         else
