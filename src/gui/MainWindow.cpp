@@ -10,6 +10,7 @@
 #include "gui/RemoteCategoryDialog.h"
 #include "gui/RemoteSpeedLimitsDialog.h"
 #include "gui/RemoteTorrentCreatorDialog.h"
+#include "gui/RemoteStatisticsDialog.h"
 #include "gui/RemoteAddTorrentDialog.h"
 #include "gui/RemoteTrackerEntriesDialog.h"
 #include "gui/RemoteTorrentContentLayoutDialog.h"
@@ -386,6 +387,7 @@ struct MainWindow::SessionContext
     QString disconnectReason;
     bool altSpeedModeKnown = false;
     bool altSpeedMode = false;
+    QPointer<RemoteStatisticsDialog> statistics;
     QList<PendingOriginalDeletion> pendingOriginalDeletions;
     QHash<QString, qint64> incompleteCompletionTimes;
 };
@@ -651,6 +653,7 @@ void MainWindow::setupActions()
         {m_ui->actionDecreaseQueuePos, "go-down"},
         {m_ui->actionBottomQueuePos, "go-bottom"},
         {m_ui->actionCreateTorrent, "torrent-creator"},
+        {m_ui->actionStatistics, "view-statistics"},
         {m_ui->actionOptions, "configure"},
         {m_ui->actionSetGlobalSpeedLimits, "speedometer"},
         {m_ui->actionExit, "application-exit"},
@@ -669,7 +672,7 @@ void MainWindow::setupActions()
         m_ui->actionDelete, m_ui->actionStart, m_ui->actionStop,
         m_ui->actionOpenDestinationFolder, m_ui->actionTopQueuePos,
         m_ui->actionIncreaseQueuePos, m_ui->actionDecreaseQueuePos,
-        m_ui->actionBottomQueuePos, m_ui->actionCreateTorrent,
+        m_ui->actionBottomQueuePos, m_ui->actionCreateTorrent, m_ui->actionStatistics,
         m_ui->actionOptions, m_ui->actionUseAlternativeSpeedLimits,
         m_ui->actionSetGlobalSpeedLimits
     })
@@ -750,6 +753,28 @@ void MainWindow::setupActions()
             if (const auto server = activeConnection(); server && server->connected)
                 server->pane->showRss();
         updateActiveUi();
+    });
+    m_ui->menuView->addSeparator();
+
+    // Native modeless Statistics, one dialog bound to each authenticated session.
+    m_ui->menuView->addAction(m_ui->actionStatistics);
+    m_ui->actionStatistics->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_I));
+    connect(m_ui->actionStatistics, &QAction::triggered, this, [this] {
+        const auto server = activeConnection();
+        if (!server || !server->connected || !server->session) return;
+        if (server->statistics)
+        {
+            server->statistics->showNormal();
+            server->statistics->raise();
+            server->statistics->activateWindow();
+            return;
+        }
+        auto *dialog = new RemoteStatisticsDialog(server->profile.name, server->session,
+            server->pane->serverState(), this);
+        server->statistics = dialog;
+        dialog->setAttribute(Qt::WA_DeleteOnClose);
+        trackDialogGeometry(*dialog, QStringLiteral("Statistics"));
+        dialog->show();
     });
     m_ui->menuView->addSeparator();
 
@@ -1577,6 +1602,7 @@ void MainWindow::updateTorrentActionState()
     m_ui->actionOpen->setEnabled(ready);
     m_ui->actionDownloadFromURL->setEnabled(ready);
     m_ui->actionCreateTorrent->setEnabled(ready);
+    m_ui->actionStatistics->setEnabled(ready);
     m_ui->actionOpenDestinationFolder->setEnabled(selected);
     for (QAction *action : {
         m_ui->actionDelete, m_ui->actionStart, m_ui->actionStop,
@@ -2116,6 +2142,7 @@ void MainWindow::updateServerTab(const std::shared_ptr<SessionContext> &connecti
     if (index < 0)
         return;
     m_views->setTabText(index, connection->profile.name);
+    if (connection->statistics) connection->statistics->setServerName(connection->profile.name);
     const bool offline = !connection->session;
     m_views->setTabIcon(index, upstreamIcon(offline ? "disconnected" : "folder-remote"));
     m_views->setTabToolTip(index, offline ? disconnectedStatus(*connection).toHtmlEscaped()
@@ -2135,6 +2162,7 @@ void MainWindow::disconnectConnection(const std::shared_ptr<SessionContext> &con
     connection->session = nullptr;
     connection->connected = false;
     connection->disconnectReason = reason;
+    if (connection->statistics) connection->statistics->close();
     connection->altSpeedModeKnown = false;
     connection->pendingOriginalDeletions.clear();
     connection->incompleteCompletionTimes.clear();
@@ -3143,6 +3171,8 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
                     }
             }
             connection->pane->applySync(payload);
+            if (connection->statistics)
+                connection->statistics->updateStatistics(connection->pane->serverState());
             if (!added.isEmpty()) m_completionNotifier->deliverAdded(connection->profile.name, added);
             observeTorrentCompletions(*connection, payload);
             // No extra polling and no deletion from another server's data.

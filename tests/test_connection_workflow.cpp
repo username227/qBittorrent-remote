@@ -12,6 +12,7 @@
 #include "gui/ConnectionDialog.h"
 #include "gui/RemoteAddTorrentDialog.h"
 #include "gui/RemoteTorrentCreatorDialog.h"
+#include "gui/RemoteStatisticsDialog.h"
 #include <QTextEdit>
 #include "gui/RemoteTrackerEntriesDialog.h"
 #include "gui/RemoteTorrentContentLayoutDialog.h"
@@ -8708,6 +8709,96 @@ private slots:
         QTRY_COMPARE(tabs->count(), 1);
         QCOMPARE(tabs->tabText(0), QStringLiteral("Red seedbox"));
         QVERIFY(!tabs->widget(0)->isEnabled());
+    }
+
+    void nativeStatisticsTracksIndependentServerSnapshots()
+    {
+        DemoQbittorrentServer legacy(true), modern(true);
+        modern.enableModernResponses();
+        legacy.setBuildInfo({{"libtorrent", "1.2.20.0"}});
+        modern.setBuildInfo({{"libtorrent", "2.1.0.0"}});
+        const QJsonObject first{
+            {"alltime_ul", 4096}, {"alltime_dl", 1024}, {"global_ratio", "4.00"},
+            {"total_wasted_session", 64}, {"total_peer_connections", 8},
+            {"read_cache_hits", "12.50"}, {"total_buffers_size", 16384},
+            {"write_cache_overload", "25.00"}, {"read_cache_overload", "0"},
+            {"queued_io_jobs", 3}, {"average_time_queue", 12}, {"total_queued_size", 2048},
+            {"request_latency", 17}, {"queued_tracker_announces", 5}
+        };
+        QJsonObject second = first;
+        second.insert("alltime_ul", 8192);
+        second.insert("total_peer_connections", 0);
+        second.insert("queued_tracker_announces", 99);
+        legacy.setCompletionSnapshot({{"server_state", first}});
+        modern.setCompletionSnapshot({{"server_state", second}});
+        QVERIFY(legacy.start() && modern.start());
+        QTemporaryDir tmp;
+        QVERIFY(tmp.isValid());
+        QSettings settings(tmp.filePath("statistics.ini"), QSettings::IniFormat);
+        settings.setValue("Preferences/Advanced/RefreshInterval", 100);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        auto *action = window.findChild<QAction *>("actionStatistics");
+        QVERIFY(action && !action->isEnabled() && !action->icon().isNull());
+        openConnectDialog(window, legacy.url());
+        QTRY_VERIFY_WITH_TIMEOUT(action->isEnabled(), 6000);
+        openConnectDialog(window, modern.url(), false, true, true, "Modern");
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains("v5.3.0"), 6000);
+        auto *tabs = window.findChild<QTabWidget *>("serverTabs");
+        QVERIFY(tabs);
+        tabs->setCurrentIndex(0);
+        action->trigger();
+        auto *alpha = window.findChild<RemoteStatisticsDialog *>();
+        QVERIFY(alpha && alpha->isVisible() && !alpha->isModal());
+        const auto label = [](RemoteStatisticsDialog *dialog, const char *name) {
+            return dialog->findChild<QLabel *>(QLatin1String(name));
+        };
+        QTRY_COMPARE_WITH_TIMEOUT(label(alpha, "labelPeers")->text(), QStringLiteral("8"), 6000);
+        QTRY_VERIFY_WITH_TIMEOUT(label(alpha, "labelCacheHits")->isVisible(), 6000);
+        QCOMPARE(label(alpha, "labelAlltimeUL")->text(), QLocale().toString(4.0, 'f', 2) + " KiB");
+        QCOMPARE(label(alpha, "labelGlobalRatio")->text(), QLocale().toString(4.0, 'f', 2));
+        QCOMPARE(label(alpha, "labelCacheHits")->text(), QLocale().toString(12.5, 'f', 2) + "%");
+        QCOMPARE(label(alpha, "labelWaste")->text(), QStringLiteral("64 B"));
+        QCOMPARE(label(alpha, "labelTotalBuf")->text(), QLocale().toString(16.0, 'f', 2) + " KiB");
+        QCOMPARE(label(alpha, "labelWriteStarve")->text(), QLocale().toString(25.0, 'f', 2) + "%");
+        QCOMPARE(label(alpha, "labelReadStarve")->text(), QStringLiteral("0%"));
+        QCOMPARE(label(alpha, "labelQueuedJobs")->text(), QStringLiteral("3"));
+        QCOMPARE(label(alpha, "labelJobsTime")->text(), QStringLiteral("12 μs"));
+        QCOMPARE(label(alpha, "labelQueuedBytes")->text(), QLocale().toString(2.0, 'f', 2) + " KiB");
+        QCOMPARE(label(alpha, "labelRequestLatency")->text(), QStringLiteral("17 μs"));
+        QCOMPARE(label(alpha, "labelQueuedTrackerAnnounces")->text(), QStringLiteral("5"));
+        action->trigger();
+        QCOMPARE(window.findChildren<RemoteStatisticsDialog *>().size(), 1);
+        tabs->setCurrentIndex(1);
+        action->trigger();
+        RemoteStatisticsDialog *beta = nullptr;
+        for (auto *dialog : window.findChildren<RemoteStatisticsDialog *>())
+            if (dialog != alpha) beta = dialog;
+        QVERIFY(beta && beta->isVisible());
+        QVERIFY(beta->windowTitle().contains("Modern"));
+        QTRY_COMPARE_WITH_TIMEOUT(label(beta, "labelPeers")->text(), QStringLiteral("0"), 6000);
+        QCOMPARE(label(beta, "labelQueuedTrackerAnnounces")->text(), QStringLiteral("99"));
+        QVERIFY(!label(beta, "labelCacheHits")->isVisible());
+        legacy.queueCompletionPatch({{"server_state", QJsonObject{{"queued_tracker_announces", 6}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(label(alpha, "labelQueuedTrackerAnnounces")->text(), QStringLiteral("6"), 6000);
+        QCOMPARE(label(alpha, "labelPeers")->text(), QStringLiteral("8"));
+        QCOMPARE(label(beta, "labelQueuedTrackerAnnounces")->text(), QStringLiteral("99"));
+        modern.queueCompletionPatch({{"full_update", true}, {"server_state", QJsonObject{{"total_peer_connections", 2}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(label(beta, "labelPeers")->text(), QStringLiteral("2"), 6000);
+        QCOMPARE(label(beta, "labelQueuedTrackerAnnounces")->text(), QStringLiteral("—"));
+        QCOMPARE(label(alpha, "labelQueuedTrackerAnnounces")->text(), QStringLiteral("6"));
+        // Closing one server closes only its statistics window.
+        auto *disconnect = window.findChild<QAction *>("disconnectServer");
+        QVERIFY(disconnect && disconnect->isEnabled());
+        disconnect->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(window.findChildren<RemoteStatisticsDialog *>().size(), 1, 6000);
+        QVERIFY(alpha->isVisible());
+        QVERIFY(!action->isEnabled());
+        tabs->setCurrentIndex(0);
+        QVERIFY(action->isEnabled());
+        alpha->close();
+        QTRY_COMPARE(window.findChildren<RemoteStatisticsDialog *>().size(), 0);
     }
 
     void nativeTorrentCreatorUsesSelectedRemoteServer()
