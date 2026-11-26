@@ -94,6 +94,8 @@ public:
                          bool deleteFiles = false);
     void renameTorrent(const QString &hash, const QString &name);
     void setTorrentComment(const QString &hash, const QString &comment);
+    void addTorrentPeers(const QString &hash, const QStringList &peers);
+    void banTorrentPeers(const QString &hash, const QStringList &peers);
     void setTorrentLocation(const QStringList &hashes, const QString &remotePath);
     void setTorrentCategory(const QStringList &hashes, const QString &category);
     void createAndAssignTorrentCategory(const QStringList &hashes, const QString &category);
@@ -185,6 +187,7 @@ signals:
     void torrentTrackersChanged(const QString &hash);
     void trackerTierEditFinished(const QString &hash);
     void torrentCommentEditFinished(const QString &hash);
+    void torrentPeerActionFinished(const QString &hash, const QString &message);
     // Identifies the exact edit for bulk progress and rejected requests.
     void torrentTrackerEditFinished(const QString &hash, const QString &oldUrl,
                                     bool success, const QString &reason);
@@ -261,6 +264,8 @@ private:
     bool m_detailAvailability = false;
     quint64 m_detailGeneration = 0;
     int m_peerRid = 0;
+    bool m_peerPrivacyKnown = false;
+    bool m_peerPrivate = true;
     qint64 m_syncRid = 0;
     QTimer m_syncTimer;
 };

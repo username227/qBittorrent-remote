@@ -39,11 +39,14 @@ public:
     void finishTrackerTierEdit(const QString &hash);
     void setCommentEditingSupported(bool supported);
     void finishCommentEdit(const QString &hash);
+    void finishPeerAction(const QString &hash, const QString &message);
 
 signals:
     void filePriorityRequested(const QString &hash, const QList<int> &ids, int priority);
     void trackerTiersRequested(const QString &hash, const QJsonObject &tiers);
     void commentEditRequested(const QString &hash, const QString &comment);
+    void addPeersRequested(const QString &hash, const QStringList &peers);
+    void banPeersRequested(const QString &hash, const QStringList &peers);
 
 private:
     void displayGeneral(const QJsonObject &properties);
@@ -55,6 +58,10 @@ private:
     void changeTrackerTiers(int delta);
     void displayPeers(const QJsonObject &peers);
     void copySelectedPeers();
+    QStringList selectedPeerEndpoints() const;
+    bool canAddPeers() const;
+    void addPeers();
+    void banSelectedPeers();
     void displayWebSeeds(const QJsonArray &sources);
     void displayFiles(const QJsonArray &files);
     void chooseFilePriorities(int priority, bool allFiles);
@@ -66,6 +73,8 @@ private:
     QTreeWidget *m_trackers = nullptr;
     QTableWidget *m_peers = nullptr;
     QJsonObject m_peerRecords;
+    QJsonValue m_peerPrivacy;
+    QString m_pendingPeerHash;
     SpeedGraphWidget *m_speedGraph = nullptr;
     RemotePiecesBar *m_progressBar = nullptr;
     RemotePiecesBar *m_availabilityBar = nullptr;

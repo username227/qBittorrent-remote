@@ -25,6 +25,7 @@
 #include "gui/upstream/proptabbar.h"
 #include "api/CredentialVault.h"
 #include "api/RemoteSession.h"
+#include "api/PeerEndpoint.h"
 #include "api/TorrentMetadataReader.h"
 #include "api/PathMappingStore.h"
 
@@ -425,12 +426,11 @@ public:
                                 response = R"DEMO({"save_path":"/share/NAS/torrents","comment":"Get it at https://example.test/files?id=7&part=2 and <b>plain markup</b>; javascript:alert(1)","total_downloaded":1048576,"total_uploaded":2048,"total_size":1048576,"time_elapsed":3600,"eta":0,"share_ratio":1.25,"pieces_num":4,"piece_size":262144,"pieces_have":2,"availability":2.5,"seeds":2,"peers":1})DEMO";
                                 const auto hash = QUrlQuery(QString::fromLatin1(
                                     path.mid(path.indexOf('?') + 1))).queryItemValue(QStringLiteral("hash"));
+                                auto properties = QJsonDocument::fromJson(response).object();
+                                properties.insert(QStringLiteral("private"), hash.endsWith(QLatin1Char('2')));
                                 if (m_torrentComments.contains(hash))
-                                {
-                                    auto properties = QJsonDocument::fromJson(response).object();
                                     properties.insert(QStringLiteral("comment"), m_torrentComments.value(hash));
-                                    response = QJsonDocument(properties).toJson(QJsonDocument::Compact);
-                                }
+                                response = QJsonDocument(properties).toJson(QJsonDocument::Compact);
                             }
                             else if (path.startsWith("/api/v2/torrents/trackers?"))
                             {
@@ -473,6 +473,27 @@ public:
                                 response = R"([{"url":"https://mirror.example/file.iso"}])";
                             else
                                 response = R"([{"index":0,"name":"data/file-one.bin","size":512,"progress":1,"priority":1},{"index":1,"name":"data/file-two.bin","size":512,"progress":0.5,"priority":6}])";
+                        }
+                        else if ((path == "/api/v2/torrents/addPeers" || path == "/api/v2/transfer/banPeers")
+                                 && hasCookie && fields.value(0) == "POST")
+                        {
+                            m_commands.append({path, body});
+                            const QUrlQuery form(QString::fromUtf8(body));
+                            const auto hash = form.queryItemValue(QStringLiteral("hashes"), QUrl::FullyDecoded);
+                            const auto peers = form.queryItemValue(QStringLiteral("peers"), QUrl::FullyDecoded).split(QLatin1Char('|'));
+                            if (m_rejectCommands || Remote::normalizedPeerEndpoints(peers).isEmpty())
+                            {
+                                code = 400;
+                                response = "Invalid peers";
+                            }
+                            else if (path == "/api/v2/torrents/addPeers")
+                            {
+                                response = QJsonDocument(QJsonObject{{hash, QJsonObject{
+                                    {"added", 1}, {"failed", static_cast<int>(peers.size()) - 1}}}})
+                                    .toJson(QJsonDocument::Compact);
+                            }
+                            else
+                                code = 204;
                         }
                         else if (path == "/api/v2/torrents/setComment" && hasCookie && fields.value(0) == "POST")
                         {
@@ -8997,6 +9018,7 @@ private slots:
         QCOMPARE(peers->item(0, 2)->text(), QStringLiteral("qBittorrent"));
         QCOMPARE(peers->columnCount(), 15);
         QCOMPARE(peers->item(0, 8)->data(Qt::UserRole).toInt(), 61413);
+        QCOMPARE(peers->item(0, 8)->text(), QStringLiteral("61413"));
         QCOMPARE(peers->item(0, 9)->data(Qt::UserRole).toInt(), 1048576);
         peers->selectRow(0);
         auto *peerItem = peers->item(0, 0);
@@ -9010,6 +9032,115 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(server.detailsFor("/api/v2/sync/torrentPeers?") > previousPeerQueries, 6000);
         QTRY_VERIFY_WITH_TIMEOUT(server.lastDetailRequest().endsWith("&rid=2"), 6000);
         QCOMPARE(peers->rowCount(), 1);
+
+        // Inspect and drive the real Peers context menu and dialogs.
+        const auto addEndpoint = QByteArrayLiteral("/api/v2/torrents/addPeers");
+        const auto banEndpoint = QByteArrayLiteral("/api/v2/transfer/banPeers");
+        QCOMPARE(Remote::normalizedPeerEndpoint(QStringLiteral("[2001:db8::1]:6881")),
+            QStringLiteral("[2001:db8::1]:6881"));
+        QVERIFY(Remote::normalizedPeerEndpoint(QStringLiteral("2001:db8::1:6881")).isEmpty());
+        QVERIFY(Remote::normalizedPeerEndpoint(QStringLiteral("192.0.2.1:65536")).isEmpty());
+        QVERIFY(Remote::normalizedPeerEndpoint(QStringLiteral("example.test:80")).isEmpty());
+
+        bool menuSeen = false, enabled = false, dialogSeen = false;
+        QString resultText;
+        QTimer driver;
+        driver.setInterval(20);
+        connect(&driver, &QTimer::timeout, &window, [&]() {
+            if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget()))
+            {
+                if (!box->standardButtons().testFlag(QMessageBox::Yes))
+                {
+                    resultText = box->text();
+                    box->button(QMessageBox::Ok)->click();
+                }
+            }
+        });
+        auto menuAction = [&](const QString &name, bool accept, bool inspectOnly) {
+            menuSeen = enabled = dialogSeen = false;
+            resultText.clear();
+            bool timedOut = false;
+            QTimer watchdog;
+            watchdog.setSingleShot(true);
+            connect(&watchdog, &QTimer::timeout, &window, [&]() {
+                timedOut = true;
+                if (auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget()))
+                    dialog->reject();
+                if (auto *menu = QApplication::activePopupWidget()) menu->close();
+            });
+            watchdog.start(6000);
+            QTimer::singleShot(0, &window, [&]() {
+                auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+                if (!menu) return;
+                menuSeen = true;
+                for (auto *action : menu->actions())
+                {
+                    if (action->objectName() != name) continue;
+                    enabled = action->isEnabled();
+                    if (enabled && !inspectOnly)
+                    {
+                        // A separate queued callback answers the nested modal
+                        // loop; a repeating timer cannot reenter its own slot.
+                        QTimer::singleShot(0, &window, [&]() {
+                            if (auto *input = qobject_cast<QInputDialog *>(QApplication::activeModalWidget()))
+                            {
+                                dialogSeen = true;
+                                input->setTextValue(QStringLiteral("192.0.2.9:6881\n[2001:db8::1]:6882"));
+                                if (accept) input->accept(); else input->reject();
+                            }
+                            else if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget()))
+                            {
+                                dialogSeen = true;
+                                auto *button = box->button(accept ? QMessageBox::Yes : QMessageBox::No);
+                                if (button) button->click(); else box->reject();
+                            }
+                        });
+                        action->trigger();
+                    }
+                    break;
+                }
+                menu->close();
+            });
+            driver.start();
+            QVERIFY(QMetaObject::invokeMethod(peers, "customContextMenuRequested", Qt::DirectConnection,
+                Q_ARG(QPoint, QPoint(10, 10))));
+            QVERIFY2(!timedOut, "Peer menu or modal dialog timed out.");
+        };
+        menuAction(QStringLiteral("addTorrentPeers"), false, false);
+        QVERIFY(menuSeen && enabled && dialogSeen);
+        QCOMPARE(server.commandsFor(addEndpoint), 0);
+        driver.stop();
+        menuAction(QStringLiteral("addTorrentPeers"), true, false);
+        QVERIFY(menuSeen && enabled && dialogSeen);
+        QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor(addEndpoint), 1, 6000);
+        QTRY_VERIFY_WITH_TIMEOUT(resultText.contains("added: 1; failed: 1"), 6000);
+        driver.stop();
+        const QUrlQuery added(QString::fromUtf8(server.lastCommandBody(addEndpoint)));
+        QCOMPARE(added.queryItemValue(QStringLiteral("hashes")), torrentHash);
+        QCOMPARE(added.queryItemValue(QStringLiteral("peers"), QUrl::FullyDecoded),
+            QStringLiteral("192.0.2.9:6881|[2001:db8::1]:6882"));
+
+        peers->selectRow(0);
+        menuAction(QStringLiteral("banTorrentPeers"), false, false);
+        QVERIFY(menuSeen && enabled && dialogSeen);
+        QCOMPARE(server.commandsFor(banEndpoint), 0);
+        driver.stop();
+        menuAction(QStringLiteral("banTorrentPeers"), true, false);
+        QVERIFY(menuSeen && enabled && dialogSeen);
+        QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor(banEndpoint), 1, 6000);
+        QTRY_VERIFY_WITH_TIMEOUT(resultText.contains("ban accepted"), 6000);
+        driver.stop();
+        QCOMPARE(QUrlQuery(QString::fromUtf8(server.lastCommandBody(banEndpoint)))
+            .queryItemValue(QStringLiteral("peers"), QUrl::FullyDecoded), QStringLiteral("192.0.2.1:61413"));
+
+        // The other torrent has authoritative private metadata.
+        table->selectRow(partialRow);
+        QTRY_COMPARE_WITH_TIMEOUT(peers->rowCount(), 1, 6000);
+        menuAction(QStringLiteral("addTorrentPeers"), false, true);
+        QVERIFY(menuSeen && !enabled);
+        driver.stop();
+        QCOMPARE(server.commandsFor(addEndpoint), 1);
+        table->selectRow(targetRow);
 
         tabBar->setCurrentIndex(3);
         auto *sources = window.findChild<QListWidget *>(QStringLiteral("torrentWebSeeds"));

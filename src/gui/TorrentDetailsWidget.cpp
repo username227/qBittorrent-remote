@@ -4,6 +4,7 @@
 #include "gui/MappedContentTreeWidget.h"
 #include "gui/NaturalNameSort.h"
 #include "gui/ProgressDisplay.h"
+#include "api/PeerEndpoint.h"
 #include "ui_remotepropertieswidget.h"
 #include "gui/upstream/progressbarpainter.h"
 
@@ -18,6 +19,7 @@
 #include <QDialogButtonBox>
 #include <QPlainTextEdit>
 #include <QMessageBox>
+#include <QInputDialog>
 #include <QFileInfo>
 #include <QIcon>
 #include <QItemSelectionModel>
@@ -655,15 +657,30 @@ TorrentDetailsWidget::TorrentDetailsWidget(QWidget *parent)
     m_peers->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_peers, &QWidget::customContextMenuRequested, this, [this](const QPoint &pos) {
         QMenu menu(this);
+        auto *add = menu.addAction(QIcon(QStringLiteral(":/icons/peers-add.svg")), tr("Add peers..."));
+        add->setObjectName(QStringLiteral("addTorrentPeers"));
+        add->setEnabled(canAddPeers());
+        add->setToolTip(tr("Requires a non-private torrent that is not queued or checking."));
+        connect(add, &QAction::triggered, this, &TorrentDetailsWidget::addPeers);
         auto *copy = menu.addAction(QIcon(QStringLiteral(":/icons/edit-copy.svg")), tr("Copy IP:port"));
         copy->setObjectName(QStringLiteral("copySelectedPeers"));
         copy->setEnabled(!m_peers->selectionModel()->selectedRows().isEmpty());
         connect(copy, &QAction::triggered, this, &TorrentDetailsWidget::copySelectedPeers);
+        menu.addSeparator();
+        auto *ban = menu.addAction(QIcon(QStringLiteral(":/icons/peers-remove.svg")), tr("Ban peer permanently"));
+        ban->setObjectName(QStringLiteral("banTorrentPeers"));
+        ban->setEnabled(!m_hash.isEmpty() && m_pendingPeerHash.isEmpty()
+            && !selectedPeerEndpoints().isEmpty());
+        connect(ban, &QAction::triggered, this, &TorrentDetailsWidget::banSelectedPeers);
+        menu.setToolTipsVisible(true);
         menu.exec(m_peers->viewport()->mapToGlobal(pos));
     });
     auto *copyShortcut = new QShortcut(QKeySequence::Copy, m_peers);
     copyShortcut->setContext(Qt::WidgetShortcut);
     connect(copyShortcut, &QShortcut::activated, this, &TorrentDetailsWidget::copySelectedPeers);
+    auto *banShortcut = new QShortcut(QKeySequence::Delete, m_peers);
+    banShortcut->setContext(Qt::WidgetShortcut);
+    connect(banShortcut, &QShortcut::activated, this, &TorrentDetailsWidget::banSelectedPeers);
     auto *header = m_peers->horizontalHeader();
     header->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(header, &QWidget::customContextMenuRequested, this, [this, header](const QPoint &pos) {
@@ -857,6 +874,7 @@ void TorrentDetailsWidget::showTab(int tab)
         return;
     if (m_currentTab != tab && tab == 1)
         m_trackerTiersKnown = false;
+    if (m_currentTab != tab) m_peerPrivacy = QJsonValue();
     m_currentTab = tab;
     m_ui->stackedProperties->setCurrentIndex(tab);
     updateCommentEditor();
@@ -907,6 +925,7 @@ void TorrentDetailsWidget::resetPages()
     m_trackerTiersKnown = false;
     m_trackers->clear();
     updateTrackerTierButtons();
+    m_peerPrivacy = QJsonValue();
     m_peerRecords = {};
     m_peers->setRowCount(0);
     m_ui->listWebSeeds->clear();
@@ -1225,6 +1244,75 @@ void TorrentDetailsWidget::displayTrackers(const QJsonArray &trackers)
     updateTrackerTierButtons();
 }
 
+QStringList TorrentDetailsWidget::selectedPeerEndpoints() const
+{
+    QStringList raw;
+    for (const auto &index : m_peers->selectionModel()->selectedRows())
+        if (const auto *item = m_peers->item(index.row(), 0))
+            raw.append(item->data(Qt::UserRole + 1).toString());
+    return Remote::normalizedPeerEndpoints(raw);
+}
+
+bool TorrentDetailsWidget::canAddPeers() const
+{
+    const QString state = m_summary.value(QStringLiteral("state")).toString();
+    return m_currentTab == 2 && !m_hash.isEmpty() && m_pendingPeerHash.isEmpty()
+        && m_peerPrivacy.isBool() && !m_peerPrivacy.toBool()
+        && !state.isEmpty() && !state.startsWith(QLatin1String("checking"))
+        && !state.startsWith(QLatin1String("queued"));
+}
+
+void TorrentDetailsWidget::addPeers()
+{
+    if (!canAddPeers()) return;
+    const QString hash = m_hash;
+    bool ok = false;
+    const QString text = QInputDialog::getMultiLineText(this, tr("Add peers"),
+        tr("Enter numeric IP:port or [IPv6]:port addresses, one per line:"), {}, &ok);
+    if (!ok || hash != m_hash || !canAddPeers()) return;
+    const auto entries = text.split(QRegularExpression(QStringLiteral("[\\s,;|]+")), Qt::SkipEmptyParts);
+    if (entries.isEmpty()) return;
+    const auto endpoints = Remote::normalizedPeerEndpoints(entries);
+    if (endpoints.isEmpty())
+    {
+        QMessageBox::warning(this, tr("Add peers"), tr("One or more peer addresses are invalid."));
+        return;
+    }
+    m_pendingPeerHash = hash;
+    emit addPeersRequested(hash, endpoints);
+}
+
+void TorrentDetailsWidget::banSelectedPeers()
+{
+    if (m_currentTab != 2 || m_hash.isEmpty() || !m_pendingPeerHash.isEmpty()) return;
+    const QString hash = m_hash;
+    const auto endpoints = selectedPeerEndpoints();
+    if (endpoints.isEmpty()) return;
+    QMessageBox confirm(QMessageBox::Question, tr("Ban peer permanently"),
+        tr("Permanently ban the selected peer IP addresses on this server? This affects all torrents on this server."),
+        QMessageBox::Yes | QMessageBox::No, this);
+    confirm.setTextFormat(Qt::PlainText);
+    confirm.setInformativeText(endpoints.join(QLatin1Char('\n')));
+    confirm.setDefaultButton(QMessageBox::No);
+    if (confirm.exec() != QMessageBox::Yes || m_hash != hash || m_currentTab != 2
+        || !m_pendingPeerHash.isEmpty()) return;
+    m_pendingPeerHash = hash;
+    emit banPeersRequested(hash, endpoints);
+}
+
+void TorrentDetailsWidget::finishPeerAction(const QString &hash, const QString &message)
+{
+    if (m_pendingPeerHash != hash) return;
+    m_pendingPeerHash.clear();
+    if (m_hash == hash && isVisible() && !message.isEmpty())
+    {
+        auto *notice = new QMessageBox(QMessageBox::Information, tr("Peers"), message,
+            QMessageBox::Ok, this);
+        notice->setAttribute(Qt::WA_DeleteOnClose);
+        notice->open();
+    }
+}
+
 void TorrentDetailsWidget::copySelectedPeers()
 {
     QStringList addresses;
@@ -1290,7 +1378,8 @@ void TorrentDetailsWidget::displayPeers(const QJsonObject &reply)
             speedText(p.value(QStringLiteral("up_speed"))),
             p.value(QStringLiteral("flags")).toString(),
             p.value(QStringLiteral("connection")).toString(),
-            numberText(p.value(QStringLiteral("port"))),
+            p.value(QStringLiteral("port")).isDouble()
+                ? QString::number(p.value(QStringLiteral("port")).toInt()) : QStringLiteral("—"),
             sizeText(p.value(QStringLiteral("downloaded"))),
             sizeText(p.value(QStringLiteral("uploaded"))),
             percentage(p.value(QStringLiteral("relevance"))),
@@ -1687,6 +1776,11 @@ void TorrentDetailsWidget::displayDetails(const QString &hash, int tab,
                                          const QJsonValue &data)
 {
     if (hash != m_hash) return;
+    if (tab == 8)
+    {
+        if (m_currentTab == 2) m_peerPrivacy = data.toObject().value(QStringLiteral("private"));
+        return;
+    }
     if (tab == 6 || tab == 7)
     {
         if (m_currentTab != 0 || !isVisible()) return;
@@ -1716,6 +1810,11 @@ void TorrentDetailsWidget::displayDetails(const QString &hash, int tab,
 void TorrentDetailsWidget::displayError(const QString &hash, int tab, const QString &reason)
 {
     if (hash != m_hash) return;
+    if (tab == 8)
+    {
+        m_peerPrivacy = QJsonValue();
+        return;
+    }
     if (tab == 6 || tab == 7)
     {
         if (m_currentTab != 0 || !isVisible()) return;
