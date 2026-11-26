@@ -1,9 +1,6 @@
 name: Windows UCRT64 installer and CTest
 
 on:
-  push:
-    branches:
-      - 'feature/**'
   pull_request:
     branches:
       - master
