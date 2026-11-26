@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/MainWindow.h"
+#include "app/SingleInstance.h"
 #include "RemoteBuildVersion.h"
 
 #include <QApplication>
+#include <QMessageBox>
+#include <QStandardPaths>
 
 int main(int argc, char *argv[])
 {
@@ -15,8 +18,34 @@ int main(int argc, char *argv[])
 #endif
     app.setOrganizationName(QStringLiteral("qBittorrent Remote"));
 
-    MainWindow window;
-    window.showForStartup();
+    QStringList arguments;
+    QString error;
+    if (!SingleInstance::normalizeArguments(app.arguments().mid(1), arguments, error))
+    {
+        QMessageBox::warning(nullptr, QObject::tr("Cannot open torrent"), error);
+        return 1;
+    }
+    SingleInstance instance(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation));
+    MainWindow *mainWindow = nullptr;
+    QList<QStringList> earlyRequests;
+    const auto role = instance.start(arguments, [&](const QStringList &args) {
+        if (mainWindow) mainWindow->enqueueExternalOpen(args);
+        else earlyRequests.append(args);
+    }, error);
+    if (role == SingleInstance::Result::Forwarded) return 0;
+    if (role == SingleInstance::Result::Error)
+    {
+        QMessageBox::warning(nullptr, QObject::tr("qBittorrent Remote"), error);
+        return 1;
+    }
 
-    return app.exec();
+    MainWindow window;
+    mainWindow = &window;
+    window.showForStartup();
+    if (!arguments.isEmpty()) window.enqueueExternalOpen(arguments);
+    for (const auto &request : earlyRequests) window.enqueueExternalOpen(request);
+    earlyRequests.clear();
+    const int result = app.exec();
+    mainWindow = nullptr;
+    return result;
 }

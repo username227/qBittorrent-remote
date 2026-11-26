@@ -87,6 +87,7 @@
 #include <QToolButton>
 #include <QWidget>
 #include <QSignalBlocker>
+#include <QScopedValueRollback>
 #include <QTimer>
 #include <QTabWidget>
 #include <QTabBar>
@@ -528,6 +529,7 @@ MainWindow::MainWindow(QWidget *parent, QSettings *settings,
                 m_views->setCurrentWidget(connection->pane);
                 break;
             }
+        m_startupComplete = true;
         updateActiveUi();
     });
 }
@@ -1150,7 +1152,7 @@ void MainWindow::setupActions()
         const auto server = activeConnection();
         if (!server || !server->connected)
             return;
-        const bool showOptions = m_settings->value(
+        const bool showOptions = m_forceExternalAdditionDialog || m_settings->value(
             QStringLiteral("Preferences/Downloads/ShowAdditionDialog"), true).toBool();
         if (!showOptions)
         {
@@ -1281,7 +1283,7 @@ void MainWindow::setupActions()
 
         if (!containsConnection(server) || !server->connected) return;
         const bool batch = uploads.size() > 1;
-        const bool showOptions = m_settings->value(
+        const bool showOptions = m_forceExternalAdditionDialog || m_settings->value(
             QStringLiteral("Preferences/Downloads/ShowAdditionDialog"), true).toBool();
         const bool confirm = showOptions && m_settings->value(
             QStringLiteral("Preferences/Downloads/ConfirmMergeTrackers"), true).toBool();
@@ -2118,6 +2120,107 @@ void MainWindow::showForStartup()
         show();
 }
 
+void MainWindow::enqueueExternalOpen(const QStringList &arguments)
+{
+    // Launching the application again restores the existing window, even
+    // when it was hidden in the tray. Never create another MainWindow.
+    if (!isVisible() || isMinimized())
+    {
+        if (m_wasMaximizedBeforeTray || windowState().testFlag(Qt::WindowMaximized))
+            showMaximized();
+        else
+            showNormal();
+    }
+    raise();
+    activateWindow();
+
+    // Preserve homogeneous batches in the order supplied by the launcher.
+    // The existing Add Torrent workflows retain metadata limits, server
+    // selection, duplicate safeguards and original-file deletion policy.
+    QStringList batch;
+    bool links = false;
+    for (const auto &argument : arguments)
+    {
+        const bool link = argument.startsWith(QStringLiteral("magnet:"), Qt::CaseInsensitive);
+        if (!batch.isEmpty() && link != links)
+        {
+            m_externalOpenQueue.append(batch);
+            batch.clear();
+        }
+        if (batch.isEmpty()) links = link;
+        batch.append(argument);
+    }
+    if (!batch.isEmpty()) m_externalOpenQueue.append(batch);
+    if (m_externalOpenQueue.isEmpty()) return;
+
+    if (!m_externalOpenTimer)
+    {
+        m_externalOpenTimer = new QTimer(this);
+        m_externalOpenTimer->setInterval(200);
+        connect(m_externalOpenTimer, &QTimer::timeout, this, &MainWindow::processExternalOpen);
+    }
+    if (!m_externalOpenTimer->isActive()) m_externalOpenTimer->start();
+}
+
+void MainWindow::processExternalOpen()
+{
+    if (m_externalOpenQueue.isEmpty())
+    {
+        if (m_externalOpenTimer) m_externalOpenTimer->stop();
+        return;
+    }
+    if (!m_startupComplete || m_externalOpenBusy || QApplication::activeModalWidget()
+        || QApplication::activePopupWidget() || m_forceExit)
+        return;
+    QScopedValueRollback<bool> busy(m_externalOpenBusy, true);
+    auto server = activeConnection();
+    bool fallback = false;
+    if (!server || !server->connected)
+    {
+        // Wait for the selected server's login rather than silently routing
+        // a file to a different instance during startup.
+        if (server && server->session) return;
+        for (const auto &candidate : m_connections)
+        {
+            if (candidate->connected)
+            {
+                server = candidate;
+                fallback = true;
+                break;
+            }
+        }
+        if (!server || !server->connected)
+        {
+            for (const auto &candidate : m_connections)
+                if (candidate->session) return;
+            if (m_externalConnectionPrompted)
+            {
+                statusBar()->showMessage(tr("Torrent opening is waiting for a server connection."));
+                return;
+            }
+            m_externalConnectionPrompted = true;
+            if (!showConnectionDialog())
+            {
+                // The user explicitly cancelled this batch, not the other
+                // requests that may have arrived while the dialog was open.
+                m_externalOpenQueue.removeFirst();
+                m_externalConnectionPrompted = false;
+            }
+            return;
+        }
+    }
+    m_externalConnectionPrompted = false;
+    if (fallback) m_views->setCurrentWidget(server->pane);
+    const QStringList arguments = m_externalOpenQueue.takeFirst();
+    // An offline selected server must never lead to a silent add on another
+    // server even if the user normally skips the Add Torrent dialog.
+    QScopedValueRollback<bool> forceDialog(m_forceExternalAdditionDialog, fallback);
+    if (arguments.first().startsWith(QStringLiteral("magnet:"), Qt::CaseInsensitive))
+        m_addLinks(arguments.join(QLatin1Char('\n')));
+    else
+        m_addTorrentFiles(arguments);
+}
+
 void MainWindow::changeEvent(QEvent *event)
 {
     if (event->type() == QEvent::WindowStateChange
@@ -2469,7 +2572,7 @@ void MainWindow::observeTorrentCompletions(SessionContext &connection,
             m_settings->value(QStringLiteral("Preferences/Behavior/SoundTorrentCompletion"), false).toBool());
 }
 
-void MainWindow::showConnectionDialog(const QString &profileId)
+bool MainWindow::showConnectionDialog(const QString &profileId)
 {
     ConnectionDialog dialog(*m_settings, this, m_vault);
     if (!profileId.isEmpty())
@@ -2492,8 +2595,10 @@ void MainWindow::showConnectionDialog(const QString &profileId)
                 break;
             }
         });
-    if (dialog.exec() == QDialog::Accepted)
-        connectToProfile(dialog.selectedProfile(), dialog.password());
+    if (dialog.exec() != QDialog::Accepted)
+        return false;
+    connectToProfile(dialog.selectedProfile(), dialog.password());
+    return true;
 }
 
 void MainWindow::connectToProfile(const Remote::ServerProfile &profile,

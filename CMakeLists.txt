@@ -64,6 +64,8 @@ else()
 endif()
 
 add_library(qbittorrent_remote_core STATIC
+    src/app/SingleInstance.cpp
+    src/app/SingleInstance.h
     src/api/ServerAddress.cpp
     src/api/ServerAddress.h
     src/api/ServerProfile.cpp
@@ -305,6 +307,7 @@ if(BUILD_TESTING)
     add_remote_workflow_group(remote_torrent_addition_workflow 75
         torrentFileUploadPreservesBinaryMetadata
         userDropsTorrentFilesAndMagnetIntoNativeTransferView
+        externalFileOpenReusesExistingWindowAndWaitsForAuthentication
         userCanSelectSevenTorrentFilesAndUploadOneAuthenticatedBatch
         duplicateTorrentOffersTrackerMergeThroughNativeGui
         privateTorrentsNeverOfferOrSendTrackerMerge
