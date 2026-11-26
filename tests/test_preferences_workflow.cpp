@@ -293,7 +293,19 @@ private slots:
         QVERIFY(!advanced->horizontalHeader()->highlightSections());
         QCOMPARE(advanced->item(0, 0)->text(), QStringLiteral("qBittorrent Section"));
         QCOMPARE(advanced->item(35, 0)->text(), QStringLiteral("libtorrent Section"));
-        QCOMPARE(advanced->item(advanced->rowCount() - 1, 0)->text(), QStringLiteral("I2P outbound length variance"));
+        QCOMPARE(advanced->item(advanced->rowCount() - 1, 0)->data(Qt::UserRole).toString(), QStringLiteral("I2P outbound length variance"));
+        // An embedded label paints over the table delegate. Any nonempty
+        // DisplayRole would draw the setting twice through that widget.
+        for (int r = 0; r < advanced->rowCount(); ++r)
+        {
+            if (r == 0 || r == 35) continue;
+            QVERIFY(advanced->item(r, 0));
+            QVERIFY(advanced->item(r, 0)->data(Qt::DisplayRole).toString().isEmpty());
+            QVERIFY(!advanced->item(r, 0)->data(Qt::UserRole).toString().isEmpty());
+            auto *label = qobject_cast<QLabel *>(advanced->cellWidget(r, 0));
+            QVERIFY(label);
+            QCOMPARE(label->font().weight(), QFont::Normal);
+        }
         QVERIFY(qobject_cast<QLabel *>(advanced->cellWidget(0, 1))->openExternalLinks());
         QVERIFY(qobject_cast<QLabel *>(advanced->cellWidget(35, 1))->openExternalLinks());
         auto *threads = advanced->findChild<QSpinBox *>("advanced_ASYNC_IO_THREADS");

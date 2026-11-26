@@ -79,10 +79,10 @@ public:
         : QLabel(parent), m_name(name), m_url(url), m_editor(editor)
     {
         QFont normal = parent->font();
-        normal.setBold(false);
+        normal.setWeight(QFont::Normal);
         setFont(normal);
         setWordWrap(true);
-        setMargin(4);
+        setMargin(1);
         setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
         setTextFormat(Qt::RichText);
         setOpenExternalLinks(true);
@@ -142,14 +142,14 @@ public:
             m_updatePending = false;
             for (int row = 0; row < rowCount(); ++row)
             {
-                int height = fontMetrics().height() + 10;
+                int height = fontMetrics().height() + 5;
                 for (int col = 0; col < columnCount(); ++col)
                     if (auto *widget = cellWidget(row, col))
                     {
                         const int width = qMax(1, columnWidth(col) - 2);
                         const int hint = widget->hasHeightForWidth()
                             ? widget->heightForWidth(width) : widget->sizeHint().height();
-                        height = qMax(height, hint + 4);
+                        height = qMax(height, hint + 1);
                     }
                 if (rowHeight(row) != height) setRowHeight(row, height);
             }
@@ -2755,14 +2755,18 @@ void RemotePreferencesDialog::buildAdvancedPage()
             .arg(QString::fromLatin1(url), tr("Open documentation")), table);
         link->setOpenExternalLinks(true);
         link->setTextInteractionFlags(Qt::LinksAccessibleByMouse | Qt::LinksAccessibleByKeyboard);
-        link->setMargin(4);
+        link->setMargin(1);
         table->setCellWidget(index, 1, link);
     };
     const auto row = [this, table, unavailable](const char *id, const QString &label,
                                                 QWidget *editor, const char *url = nullptr) {
         const int index = table->rowCount();
         table->insertRow(index);
-        auto *item = new QTableWidgetItem(label);
+        // A transparent cell widget does not suppress the delegate's text.
+        // Store metadata outside DisplayRole so the QLabel is the sole
+        // renderer of the setting name (including wrapped lines).
+        auto *item = new QTableWidgetItem;
+        item->setData(Qt::UserRole, label);
         item->setFlags(Qt::ItemIsEnabled);
         item->setToolTip(label);
         table->setItem(index, 0, item);
