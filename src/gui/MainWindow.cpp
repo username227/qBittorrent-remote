@@ -682,6 +682,24 @@ void MainWindow::setupActions()
     })
         action->setEnabled(false);
 
+    // Independent toolbar proxies keep the original Edit menu actions visible.
+    const QList<QAction *> queueActions{m_ui->actionTopQueuePos, m_ui->actionIncreaseQueuePos,
+        m_ui->actionDecreaseQueuePos, m_ui->actionBottomQueuePos};
+    m_queueToolbarSeparator = m_ui->toolBar->insertSeparator(queueActions.first());
+    m_queueToolbarSeparator->setObjectName("queueToolbarSeparator");
+    m_queueToolbarSeparator->setVisible(false);
+    for (auto *action : queueActions)
+    {
+        auto *proxy = new QAction(action->icon(), action->text(), this);
+        proxy->setObjectName(action->objectName() + QStringLiteral("Toolbar"));
+        proxy->setToolTip(action->toolTip());
+        proxy->setEnabled(false);
+        proxy->setVisible(false);
+        m_ui->toolBar->insertAction(action, proxy);
+        m_ui->toolBar->removeAction(action);
+        connect(proxy, &QAction::triggered, action, &QAction::trigger);
+        m_queueToolbarActions.append(proxy);
+    }
     m_ui->actionLock->setVisible(false);
     m_ui->actionPauseSession->setVisible(true);
     m_ui->actionResumeSession->setVisible(false);
@@ -1675,12 +1693,25 @@ void MainWindow::updateTorrentActionState()
     m_ui->actionResumeSession->setVisible(paused);
     m_ui->actionResumeSession->setEnabled(sessionSupported && paused);
     m_ui->actionOpenDestinationFolder->setEnabled(selected);
-    for (QAction *action : {
-        m_ui->actionDelete, m_ui->actionStart, m_ui->actionStop,
-        m_ui->actionTopQueuePos, m_ui->actionIncreaseQueuePos,
-        m_ui->actionDecreaseQueuePos, m_ui->actionBottomQueuePos
-    })
+    for (QAction *action : {m_ui->actionDelete, m_ui->actionStart, m_ui->actionStop})
         action->setEnabled(selected);
+    const bool queueing = ready && server->pane->queueingEnabled();
+    bool incomplete = false;
+    if (queueing && selected)
+        for (const auto &hash : selectedTorrentHashes())
+        {
+            const auto progress = server->pane->model()->torrents().value(hash).value("progress");
+            if (progress.isDouble() && progress.toDouble() < 1.0) { incomplete = true; break; }
+        }
+    for (auto *action : {m_ui->actionTopQueuePos, m_ui->actionIncreaseQueuePos,
+                         m_ui->actionDecreaseQueuePos, m_ui->actionBottomQueuePos})
+        action->setEnabled(queueing && incomplete);
+    for (auto *action : m_queueToolbarActions)
+    {
+        action->setVisible(queueing);
+        action->setEnabled(queueing && incomplete);
+    }
+    if (m_queueToolbarSeparator) m_queueToolbarSeparator->setVisible(queueing);
 }
 
 std::shared_ptr<MainWindow::SessionContext> MainWindow::activeConnection() const
@@ -2256,6 +2287,7 @@ void MainWindow::disconnectConnection(const std::shared_ptr<SessionContext> &con
     connection->altSpeedModeKnown = false;
     connection->pendingOriginalDeletions.clear();
     connection->incompleteCompletionTimes.clear();
+    connection->pane->clearQueueCapability();
     connection->pane->setEnabled(false);
     QObject::disconnect(session, nullptr, this, nullptr);
     QObject::disconnect(session, nullptr, connection->pane, nullptr);
@@ -3106,6 +3138,7 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
         connect(model, &QAbstractItemModel::layoutChanged, this, updateCount);
     }
 
+    connection->pane->clearQueueCapability();
     connection->pane->setEnabled(false);
     const int tabIndex = m_views->insertTab(qBound(0, insertionIndex, m_views->count()),
         connection->pane, upstreamIcon("folder-remote"), profile.name);

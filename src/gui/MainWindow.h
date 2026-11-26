@@ -112,6 +112,8 @@ private:
     bool m_wasMaximizedBeforeTray = false;
     QLineEdit *m_searchEdit = nullptr;
     QComboBox *m_searchBy = nullptr;
+    QList<QAction *> m_queueToolbarActions;
+    QAction *m_queueToolbarSeparator = nullptr;
     QAction *m_rssAction = nullptr;
     QAction *m_connectAction = nullptr;
     QAction *m_disconnectAction = nullptr;

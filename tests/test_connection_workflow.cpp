@@ -8812,6 +8812,67 @@ private slots:
         QVERIFY(aboutChecked);
     }
 
+    void queueControlsFollowSelectedServerCapability()
+    {
+        DemoQbittorrentServer alpha(true), beta(true);
+        const QString hash = "0123456789abcdef0123456789abcdef01234567";
+        const auto snapshot = [&](bool enabled) {
+            return QJsonObject{{"server_state", QJsonObject{{"queueing", enabled}}},
+                {"torrents", QJsonObject{{hash, QJsonObject{{"name", "Test download"},
+                    {"progress", 0.5}, {"state", "downloading"}, {"priority", 1}}}}}};
+        };
+        alpha.setCompletionSnapshot(snapshot(true));
+        beta.setCompletionSnapshot(snapshot(false));
+        QVERIFY(alpha.start() && beta.start());
+        QTemporaryDir tmp;
+        QVERIFY(tmp.isValid());
+        QSettings settings(tmp.filePath("queue-controls.ini"), QSettings::IniFormat);
+        settings.setValue("Preferences/Advanced/RefreshInterval", 100);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        auto *menuAction = window.findChild<QAction *>("actionTopQueuePos");
+        auto *toolbarAction = window.findChild<QAction *>("actionTopQueuePosToolbar");
+        auto *separator = window.findChild<QAction *>("queueToolbarSeparator");
+        QVERIFY(menuAction && toolbarAction && separator);
+        QVERIFY(menuAction->isVisible() && !menuAction->isEnabled());
+        QVERIFY(!toolbarAction->isVisible() && !separator->isVisible());
+        openConnectDialog(window, alpha.url());
+        QTRY_VERIFY_WITH_TIMEOUT(toolbarAction->isVisible(), 6000);
+        QVERIFY(separator->isVisible());
+        auto *tabs = window.findChild<QTabWidget *>("serverTabs");
+        QVERIFY(tabs);
+        auto *first = qobject_cast<ServerPane *>(tabs->currentWidget());
+        QVERIFY(first);
+        const int column = first->model()->columnCount() - 1;
+        QVERIFY(!first->table()->isColumnHidden(column));
+        first->table()->selectRow(0);
+        QTRY_VERIFY(menuAction->isEnabled() && toolbarAction->isEnabled());
+        toolbarAction->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(alpha.commandsFor("/api/v2/torrents/topPrio"), 1, 6000);
+        openConnectDialog(window, beta.url(), false, true, true, "Second");
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains("Connected to Second"), 6000);
+        auto *second = qobject_cast<ServerPane *>(tabs->currentWidget());
+        QVERIFY(second && second != first);
+        QTRY_COMPARE(second->model()->rowCount(), 1);
+        second->table()->selectRow(0);
+        QVERIFY(second->table()->isColumnHidden(column));
+        QVERIFY(menuAction->isVisible() && !menuAction->isEnabled());
+        QVERIFY(!toolbarAction->isVisible() && !separator->isVisible());
+        menuAction->trigger();
+        QCOMPARE(beta.commandsFor("/api/v2/torrents/topPrio"), 0);
+        beta.queueCompletionPatch({{"server_state", QJsonObject{{"queueing", true}}}});
+        QTRY_VERIFY_WITH_TIMEOUT(toolbarAction->isVisible() && toolbarAction->isEnabled(), 6000);
+        QVERIFY(!second->table()->isColumnHidden(column));
+        beta.queueCompletionPatch({{"server_state", QJsonObject{{"queueing", false}}}});
+        QTRY_VERIFY_WITH_TIMEOUT(!toolbarAction->isVisible(), 6000);
+        QVERIFY(second->table()->isColumnHidden(column));
+        tabs->setCurrentWidget(first);
+        QVERIFY(toolbarAction->isVisible() && !first->table()->isColumnHidden(column));
+        QVERIFY(menuAction->isEnabled());
+        QCOMPARE(beta.commandsFor("/api/v2/torrents/topPrio"), 0);
+    }
+
     void nativeStatisticsTracksIndependentServerSnapshots()
     {
         DemoQbittorrentServer legacy(true), modern(true);

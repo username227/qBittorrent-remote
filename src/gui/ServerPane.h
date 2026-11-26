@@ -47,6 +47,8 @@ public:
     const QHash<QString, QSet<QString>> &trackerDefinitions() const { return m_trackers; }
     bool hasFullSync() const { return m_hasFullSync; }
     const QJsonObject &serverState() const noexcept { return m_serverState; }
+    bool queueingEnabled() const { return m_serverState.value(QStringLiteral("queueing")).toBool(); }
+    void clearQueueCapability();
     QSortFilterProxyModel *proxy() const noexcept { return m_proxy; }
 
     void setRssAvailable(Remote::RemoteSession *session, bool visible);
@@ -98,6 +100,8 @@ private:
     void showTorrentContextMenu(const QPoint &position);
     void updateSelectedTorrent();
     void requestSelectedDetails();
+    void updateQueueColumn();
+    bool m_queueColumnWanted = true;
     QSettings *m_layoutSettings = nullptr;
     QString m_layoutPrefix;
     QTabWidget *m_sectionTabs = nullptr;

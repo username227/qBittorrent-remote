@@ -263,6 +263,8 @@ ServerPane::ServerPane(QWidget *parent) : QWidget(parent)
             QMenu menu(header);
             for (int column = 0; column < m_model->columnCount(); ++column)
             {
+                if (column == m_model->columnCount() - 1 && !queueingEnabled())
+                    continue;
                 QAction *action = menu.addAction(
                     m_model->headerData(column, Qt::Horizontal).toString());
                 action->setCheckable(true);
@@ -271,6 +273,8 @@ ServerPane::ServerPane(QWidget *parent) : QWidget(parent)
                     action->setEnabled(false);
                 connect(action, &QAction::toggled, m_table,
                     [this, column](bool checked) {
+                        if (column == m_model->columnCount() - 1)
+                            m_queueColumnWanted = checked;
                         m_table->setColumnHidden(column, !checked);
                     });
             }
@@ -403,6 +407,22 @@ bool ServerPane::isRssSelected() const
     return m_rssWidget && m_sectionTabs->currentWidget() == m_rssWidget;
 }
 
+void ServerPane::updateQueueColumn()
+{
+    // Queue Position is the last model column. Keep the user's independent
+    // visibility preference rather than saving a capability-forced hide.
+    const int column = m_model->columnCount() - 1;
+    const bool hidden = !queueingEnabled() || !m_queueColumnWanted;
+    if (m_table->isColumnHidden(column) != hidden)
+        m_table->setColumnHidden(column, hidden);
+}
+
+void ServerPane::clearQueueCapability()
+{
+    m_serverState.remove(QStringLiteral("queueing"));
+    updateQueueColumn();
+}
+
 void ServerPane::applySync(const QJsonObject &payload)
 {
     if (payload.value(QStringLiteral("full_update")).toBool())
@@ -411,6 +431,7 @@ void ServerPane::applySync(const QJsonObject &payload)
     const QJsonObject changes = payload.value(QStringLiteral("server_state")).toObject();
     for (auto it = changes.constBegin(); it != changes.constEnd(); ++it)
         m_serverState.insert(it.key(), it.value());
+    updateQueueColumn();
 
     // /sync/maindata sends incremental changes for categories, tags and
     // tracker-to-hash memberships, not complete lists on every request.
@@ -1100,6 +1121,7 @@ void ServerPane::saveLayout(QSettings &settings, const QString &profileId) const
 
     settings.setValue(root + QStringLiteral("/torrentHeader"),
                       m_table->horizontalHeader()->saveState());
+    settings.setValue(root + QStringLiteral("/queueColumnWanted"), m_queueColumnWanted);
     // Existing layouts saved a non-resizable Name column. Mark layouts saved
     // after the migration so a user's future manual narrow width is honored.
     settings.setValue(root + QStringLiteral("/nameColumnResizableV1"), true);
@@ -1160,6 +1182,9 @@ void ServerPane::restoreLayout(QSettings &settings, const QString &profileId)
             && (order == Qt::AscendingOrder || order == Qt::DescendingOrder))
             m_table->sortByColumn(col, order);
     }
+
+    m_queueColumnWanted = settings.value(root + QStringLiteral("/queueColumnWanted"), true).toBool();
+    updateQueueColumn();
 
     // QHeaderView::restoreState can bring back the old Stretch resize mode
     // and the minuscule Name column stored by affected Windows versions.

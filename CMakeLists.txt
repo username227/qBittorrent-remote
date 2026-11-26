@@ -269,6 +269,7 @@ if(BUILD_TESTING)
         simultaneousServersHaveIndependentTabsAndKeepPolling
         nativeStatisticsTracksIndependentServerSnapshots
         nativeMenuActionsFollowServerSessionState
+        queueControlsFollowSelectedServerCapability
     )
 
     add_remote_workflow_group(remote_tray_and_status_workflow 60
