@@ -28,6 +28,7 @@ public:
     void showTab(int tab);
     int currentTab() const noexcept { return m_currentTab; }
     void setSelection(const QString &hash, const QJsonObject &summary = {});
+    void setDateFormat(const QString &pattern);
     void displayDetails(const QString &hash, int tab, const QJsonValue &data);
     void displayError(const QString &hash, int tab, const QString &reason);
     void appendRates(double downloadBytesPerSec, double uploadBytesPerSec);
@@ -65,5 +66,7 @@ private:
     bool m_trackerTierSupported = false;
     bool m_trackerTiersKnown = false;
     QJsonObject m_summary;
+    QJsonObject m_lastGeneral;
+    QString m_dateFormat;
     int m_currentTab = 0;
 };

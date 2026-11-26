@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/TorrentDetailsWidget.h"
+#include "gui/DatePresentation.h"
 #include "gui/MappedContentTreeWidget.h"
 #include "gui/NaturalNameSort.h"
 #include "gui/ProgressDisplay.h"
@@ -78,12 +79,9 @@ QString speedText(const QJsonValue &value)
     return value.isDouble() ? bytesText(value.toDouble(), true) : QStringLiteral("—");
 }
 
-QString dateText(const QJsonValue &value)
+QString dateText(const QJsonValue &value, const QString &pattern)
 {
-    if (!value.isDouble() || value.toInteger() <= 0)
-        return QStringLiteral("—");
-    return QLocale().toString(QDateTime::fromSecsSinceEpoch(value.toInteger()),
-                              QLocale::ShortFormat);
+    return DatePresentation::format(value.toInteger(), pattern);
 }
 
 QString durationText(const QJsonValue &value)
@@ -735,6 +733,7 @@ void TorrentDetailsWidget::setSelection(const QString &hash, const QJsonObject &
     if (m_hash != hash)
     {
         m_hash = hash;
+        m_lastGeneral = {};
         resetPages();
     }
     m_summary = summary;
@@ -753,8 +752,16 @@ void TorrentDetailsWidget::setSelection(const QString &hash, const QJsonObject &
              summary.value(QStringLiteral("save_path")).toString(QStringLiteral("—")));
 }
 
+void TorrentDetailsWidget::setDateFormat(const QString &pattern)
+{
+    if (m_dateFormat == pattern) return;
+    m_dateFormat = pattern;
+    if (!m_lastGeneral.isEmpty()) displayGeneral(m_lastGeneral);
+}
+
 void TorrentDetailsWidget::displayGeneral(const QJsonObject &p)
 {
+    m_lastGeneral = p;
     setValue("labelElapsedVal", durationText(p.value(QStringLiteral("time_elapsed"))));
     setValue("labelETAVal", durationText(p.value(QStringLiteral("eta"))));
     setValue("labelConnectionsVal", numberText(p.value(QStringLiteral("nb_connections"))));
@@ -770,15 +777,15 @@ void TorrentDetailsWidget::displayGeneral(const QJsonObject &p)
     if (const auto v = p.value(QStringLiteral("share_ratio")); v.isDouble())
         setValue("labelShareRatioVal", QLocale().toString(v.toDouble(), 'f', 2));
     setValue("labelReannounceInVal", durationText(p.value(QStringLiteral("reannounce"))));
-    setValue("labelLastSeenCompleteVal", dateText(p.value(QStringLiteral("last_seen"))));
+    setValue("labelLastSeenCompleteVal", dateText(p.value(QStringLiteral("last_seen")), m_dateFormat));
     if (const auto v = p.value(QStringLiteral("popularity")); v.isDouble())
         setValue("labelPopularityVal", QLocale().toString(v.toDouble(), 'f', 2));
     setValue("labelTotalSizeVal", sizeText(p.value(QStringLiteral("total_size"))));
     setValue("labelTotalPiecesVal", numberText(p.value(QStringLiteral("pieces_num"))));
     setValue("labelCreatedByVal", p.value(QStringLiteral("created_by")).toString(QStringLiteral("—")));
-    setValue("labelAddedOnVal", dateText(p.value(QStringLiteral("addition_date"))));
-    setValue("labelCompletedOnVal", dateText(p.value(QStringLiteral("completion_date"))));
-    setValue("labelCreatedOnVal", dateText(p.value(QStringLiteral("creation_date"))));
+    setValue("labelAddedOnVal", dateText(p.value(QStringLiteral("addition_date")), m_dateFormat));
+    setValue("labelCompletedOnVal", dateText(p.value(QStringLiteral("completion_date")), m_dateFormat));
+    setValue("labelCreatedOnVal", dateText(p.value(QStringLiteral("creation_date")), m_dateFormat));
     if (const auto v = p.value(QStringLiteral("is_private")); v.isBool())
         setValue("labelPrivateVal", v.toBool() ? tr("Yes") : tr("No"));
     setValue("labelSavePathVal",

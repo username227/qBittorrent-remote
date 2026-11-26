@@ -1899,12 +1899,16 @@ void MainWindow::applyLocalBehaviorPreferences()
     const bool hideZeroStatus = m_settings->value(
         QStringLiteral("Preferences/Behavior/HideZeroStatusFilters"), false).toBool();
     const bool rssImages = m_settings->value(QStringLiteral("Preferences/RSS/LoadExternalImages"), false).toBool();
+    const bool fullTrackerUrl = m_settings->value(QStringLiteral("Preferences/Behavior/FullTrackerURL"), false).toBool();
+    const QString dateFormat = m_settings->value(QStringLiteral("Preferences/Behavior/DateFormat")).toString();
     const auto apply = [alternating, hideZero, mode, hideZeroStatus,
-                        stateColors, progressColor, separateTracker, contentDrag, rssImages, speedGraphs](ServerPane *pane) {
+                        stateColors, progressColor, separateTracker, contentDrag, rssImages, speedGraphs,
+                        fullTrackerUrl, dateFormat](ServerPane *pane) {
         if (!pane)
             return;
         pane->table()->setAlternatingRowColors(alternating);
         pane->model()->setHideZeroValues(hideZero, mode);
+        pane->setPresentation(fullTrackerUrl, dateFormat);
         pane->sidebar()->setHideZeroStatusFilters(hideZeroStatus);
         pane->model()->setUseStateColors(stateColors);
         pane->setProgressFollowsStateColors(progressColor);
@@ -2735,6 +2739,9 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
     auto connection = std::make_shared<SessionContext>();
     connection->profile = profile;
     connection->pane = new ServerPane(m_views);
+    connection->pane->setPresentation(
+        m_settings->value(QStringLiteral("Preferences/Behavior/FullTrackerURL"), false).toBool(),
+        m_settings->value(QStringLiteral("Preferences/Behavior/DateFormat")).toString());
     connection->pane->setSpeedGraphsEnabled(m_settings->value(QStringLiteral("Preferences/Advanced/EnableSpeedGraphs"), true).toBool());
     connection->pane->setRssLoadExternalImages(m_settings->value(QStringLiteral("Preferences/RSS/LoadExternalImages"), false).toBool());
     connection->pane->setContentDragEnabled(m_settings->value(
