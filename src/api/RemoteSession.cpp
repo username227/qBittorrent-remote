@@ -11,6 +11,7 @@
 #include <QJsonDocument>
 #include <QJsonParseError>
 #include <QHostAddress>
+#include "api/PeerEndpoint.h"
 #include <QNetworkCookieJar>
 #include <QSslConfiguration>
 #include <QUrlQuery>
@@ -293,6 +294,8 @@ void RemoteSession::connectToServer(const ServerProfile &profile,
     m_detailPage = -1;
     m_detailAvailability = false;
     m_peerRid = 0;
+    m_peerPrivacyKnown = false;
+    m_peerPrivate = true;
     m_syncRid = 0;
     m_address = ServerAddress::parse(profile.url);
     if (!m_address)
@@ -981,6 +984,8 @@ void RemoteSession::pumpOperations()
                             ? tr("Invalid RSS data returned by the server.")
                             : operation.endpoint.startsWith(QLatin1String("api/v2/torrentcreator/"))
                                 ? tr("Invalid torrent creation response returned by the server.")
+                            : operation.endpoint == QLatin1String("api/v2/torrents/addPeers")
+                                ? tr("Invalid peer-addition response returned by the server.")
                             : operation.jsonObjectPost
                                 ? tr("Invalid API key response returned by the server.")
                                 : tr("Invalid preferences returned by the server.");
@@ -1004,15 +1009,22 @@ void RemoteSession::pumpOperations()
                 if (operation.detailGeneration != m_detailGeneration) return;
                 QJsonParseError error;
                 const QJsonDocument json = QJsonDocument::fromJson(response, &error);
-                const bool expectsObject = (operation.detailTab == 0 || operation.detailTab == 2);
+                const bool expectsObject = (operation.detailTab == 0 || operation.detailTab == 2 || operation.detailTab == 8);
                 if (error.error != QJsonParseError::NoError
                     || (expectsObject && !json.isObject())
                     || (!expectsObject && !json.isArray()))
                 {
                     if (operation.detailTab == 2) m_peerRid = 0;
+                    if (operation.detailTab == 8) m_peerPrivacyKnown = false;
                     emit torrentDetailsFailed(operation.detailHash, operation.detailTab,
                                               tr("Unexpected torrent-details response."));
                     return;
+                }
+                if (operation.detailTab == 8)
+                {
+                    const auto privacy = json.object().value(QStringLiteral("private"));
+                    m_peerPrivacyKnown = privacy.isBool();
+                    m_peerPrivate = !m_peerPrivacyKnown || privacy.toBool();
                 }
                 if (operation.detailTab == 2)
                 {
@@ -1063,6 +1075,7 @@ void RemoteSession::pumpOperations()
                 if (operation.detailGeneration == m_detailGeneration)
                 {
                     if (operation.detailTab == 2) m_peerRid = 0;
+                    if (operation.detailTab == 8) m_peerPrivacyKnown = false;
                     emit torrentDetailsFailed(operation.detailHash, operation.detailTab, reason);
                 }
             }
@@ -1108,6 +1121,8 @@ void RemoteSession::requestTorrentDetails(const QString &hash, int tab, bool ava
     {
         ++m_detailGeneration;
         m_peerRid = 0;
+        m_peerPrivacyKnown = false;
+        m_peerPrivate = true;
         m_detailHash = selected;
         m_detailPage = page;
         m_detailAvailability = availability;
@@ -1133,6 +1148,8 @@ void RemoteSession::requestTorrentDetails(const QString &hash, int tab, bool ava
         request.detailGeneration = m_detailGeneration;
         m_operations.enqueue(std::move(request));
     };
+    if (tab == 2 && !m_peerPrivacyKnown)
+        enqueue(QStringLiteral("torrents/properties"), 8);
     enqueue(endpoints.at(tab), tab);
     if (tab == 0)
     {
@@ -1624,6 +1641,62 @@ void RemoteSession::toggleTorrentMode(const QStringList &hashes, bool sequential
         form.toString(QUrl::FullyEncoded).toUtf8(),
         QByteArrayLiteral("application/x-www-form-urlencoded"),
         sequential ? tr("Download in sequential order") : tr("Download first and last pieces first"), true);
+}
+
+void RemoteSession::addTorrentPeers(const QString &hash, const QStringList &peers)
+{
+    const auto endpoints = normalizedPeerEndpoints(peers);
+    const auto reject = [this, hash](const QString &reason) {
+        emit torrentPeerActionFinished(hash, {});
+        emit operationFailed(tr("Add peers"), reason);
+    };
+    if (!m_connected || !m_address || hash.isEmpty() || hash != m_detailHash
+        || m_detailPage != 2 || !m_peerPrivacyKnown || m_peerPrivate || endpoints.isEmpty())
+    {
+        reject(tr("Peer addition requires a selected non-private torrent and valid IP:port addresses."));
+        return;
+    }
+    QueuedOperation request {};
+    request.endpoint = QStringLiteral("api/v2/torrents/addPeers");
+    request.contentType = QByteArrayLiteral("application/x-www-form-urlencoded");
+    request.body = QByteArrayLiteral("hashes=") + QUrl::toPercentEncoding(hash)
+        + QByteArrayLiteral("&peers=") + QUrl::toPercentEncoding(endpoints.join(QLatin1Char('|')));
+    request.description = tr("Add peers");
+    request.jsonObjectRequest = true;
+    request.jsonObjectPost = true;
+    request.reportOperation = false;
+    request.onRejected = reject;
+    request.onJsonObject = [this, hash, count = endpoints.size(), reject](const QJsonObject &result) {
+        const auto entry = result.value(hash).toObject();
+        const int added = entry.value(QStringLiteral("added")).toInt(-1);
+        const int failed = entry.value(QStringLiteral("failed")).toInt(-1);
+        if (added < 0 || failed < 0 || static_cast<qint64>(added) + failed != count)
+        {
+            reject(tr("The server did not return valid peer-addition results."));
+            return;
+        }
+        emit torrentPeerActionFinished(hash, tr("Peers added: %1; failed: %2.").arg(added).arg(failed));
+    };
+    m_operations.enqueue(std::move(request));
+    pumpOperations();
+}
+
+void RemoteSession::banTorrentPeers(const QString &hash, const QStringList &peers)
+{
+    const auto endpoints = normalizedPeerEndpoints(peers);
+    if (!m_connected || hash.isEmpty() || hash != m_detailHash
+        || m_detailPage != 2 || endpoints.isEmpty())
+    {
+        emit torrentPeerActionFinished(hash, {});
+        emit operationFailed(tr("Ban peers"), tr("Invalid peer selection."));
+        return;
+    }
+    const QByteArray body = QByteArrayLiteral("peers=")
+        + QUrl::toPercentEncoding(endpoints.join(QLatin1Char('|')));
+    queueOperation(QStringLiteral("api/v2/transfer/banPeers"), body,
+        QByteArrayLiteral("application/x-www-form-urlencoded"), tr("Ban peers"), true,
+        [this, hash]() { emit torrentPeerActionFinished(hash, tr("Peer ban accepted by the server.")); },
+        [this, hash](const QString &) { emit torrentPeerActionFinished(hash, {}); });
 }
 
 void RemoteSession::setTorrentComment(const QString &hash, const QString &comment)

@@ -82,6 +82,7 @@ public:
     void finishTrackerTierEdit(const QString &hash);
     void setCommentEditingSupported(bool supported);
     void finishCommentEdit(const QString &hash);
+    void finishPeerAction(const QString &hash, const QString &message);
     void refreshFontMetrics();
     void saveLayout(QSettings &settings, const QString &profileId) const;
     void restoreLayout(QSettings &settings, const QString &profileId);
@@ -106,6 +107,8 @@ signals:
     void filePriorityRequested(const QString &hash, const QList<int> &ids, int priority);
     void trackerTiersRequested(const QString &hash, const QJsonObject &tiers);
     void commentEditRequested(const QString &hash, const QString &comment);
+    void addPeersRequested(const QString &hash, const QStringList &peers);
+    void banPeersRequested(const QString &hash, const QStringList &peers);
 
 private:
     void showTorrentContextMenu(const QPoint &position);
