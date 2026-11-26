@@ -117,6 +117,8 @@ public:
     void deleteWebUIAPIKey(std::function<void()> accepted, PreferencesError failed);
     void requestBuildInfo(PreferencesResult received, PreferencesError failed);
     using ArrayResult = std::function<void(const QJsonArray &)>;
+    void requestCookies(ArrayResult received, PreferencesError failed);
+    void setCookies(const QJsonArray &cookies, std::function<void()> accepted, PreferencesError failed);
     void requestNetworkInterfaces(ArrayResult received, PreferencesError failed);
     void requestNetworkAddresses(const QString &iface, ArrayResult received, PreferencesError failed);
     using BytesResult = std::function<void(const QByteArray &)>;

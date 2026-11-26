@@ -594,6 +594,33 @@ void RemoteSession::requestBuildInfo(PreferencesResult received, PreferencesErro
     pumpOperations();
 }
 
+void RemoteSession::requestCookies(ArrayResult received, PreferencesError rejected)
+{
+    if (!m_connected || !m_address)
+    {
+        if (rejected) rejected(tr("The selected server is not connected."));
+        return;
+    }
+    QueuedOperation request;
+    request.endpoint = QStringLiteral("api/v2/app/cookies");
+    request.description = tr("Read remote download cookies");
+    request.jsonArrayRequest = true;
+    request.reportOperation = false;
+    request.onJsonArray = std::move(received);
+    request.onRejected = std::move(rejected);
+    m_operations.enqueue(std::move(request));
+    pumpOperations();
+}
+
+void RemoteSession::setCookies(const QJsonArray &cookies, std::function<void()> accepted, PreferencesError rejected)
+{
+    const QByteArray body = QByteArrayLiteral("cookies=") + QUrl::toPercentEncoding(
+        QString::fromUtf8(QJsonDocument(cookies).toJson(QJsonDocument::Compact)));
+    queueOperation(QStringLiteral("api/v2/app/setCookies"), body,
+        QByteArrayLiteral("application/x-www-form-urlencoded"), tr("Update remote download cookies"),
+        true, std::move(accepted), std::move(rejected), false);
+}
+
 void RemoteSession::requestNetworkInterfaces(ArrayResult received, PreferencesError rejected)
 {
     if (!m_connected || !m_address)

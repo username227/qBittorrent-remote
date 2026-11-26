@@ -12,6 +12,7 @@
 #include "gui/RemoteSpeedLimitsDialog.h"
 #include "gui/RemoteTorrentCreatorDialog.h"
 #include "gui/RemoteStatisticsDialog.h"
+#include "gui/RemoteCookiesDialog.h"
 #include "gui/RemoteAddTorrentDialog.h"
 #include "gui/RemoteTrackerEntriesDialog.h"
 #include "gui/RemoteTorrentContentLayoutDialog.h"
@@ -879,6 +880,17 @@ void MainWindow::setupActions()
         trackDialogGeometry(dialog, QStringLiteral("TorrentCreator"));
         dialog.exec();
     });
+    m_ui->menuOptions->addSeparator();
+    m_ui->menuOptions->addAction(m_ui->actionManageCookies);
+    m_ui->actionManageCookies->setEnabled(false);
+    m_ui->actionManageCookies->setIcon(upstreamIcon("browser-cookies"));
+    connect(m_ui->actionManageCookies, &QAction::triggered, this, [this] {
+        const auto server = activeConnection();
+        if (!server || !server->connected || !server->session) return;
+        RemoteCookiesDialog dialog(server->session, server->profile.name, *m_settings, this);
+        trackDialogGeometry(dialog, QStringLiteral("Cookies"));
+        dialog.exec();
+    });
     m_ui->menuOptions->addAction(m_ui->actionOptions);
     m_ui->actionOptions->setEnabled(true);
     m_ui->actionOptions->setText(tr("Preferences..."));
@@ -1683,6 +1695,7 @@ void MainWindow::updateTorrentActionState()
     m_ui->actionDownloadFromURL->setEnabled(ready);
     m_ui->actionCreateTorrent->setEnabled(ready);
     m_ui->actionStatistics->setEnabled(ready);
+    m_ui->actionManageCookies->setEnabled(ready);
     const auto sessionState = ready ? server->pane->serverState().value("session_state") : QJsonValue();
     const bool sessionSupported = ready && sessionState.isBool();
     const bool paused = sessionSupported && sessionState.toBool();

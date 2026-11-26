@@ -117,6 +117,9 @@ add_library(qbittorrent_remote_gui STATIC
     src/gui/RemoteStatisticsDialog.cpp
     src/gui/RemoteStatisticsDialog.h
     src/gui/remotestatisticsdialog.ui
+    src/gui/RemoteCookiesDialog.cpp
+    src/gui/RemoteCookiesDialog.h
+    src/gui/remotecookiesdialog.ui
     src/gui/RemoteTrackerEntriesDialog.cpp
     src/gui/RemoteTrackerEntriesDialog.h
     src/gui/RemoteTorrentContentLayoutDialog.cpp
@@ -270,6 +273,7 @@ if(BUILD_TESTING)
         nativeStatisticsTracksIndependentServerSnapshots
         nativeMenuActionsFollowServerSessionState
         queueControlsFollowSelectedServerCapability
+        nativeCookiesEditOnlySelectedServer
     )
 
     add_remote_workflow_group(remote_tray_and_status_workflow 60

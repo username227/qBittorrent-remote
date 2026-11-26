@@ -613,6 +613,18 @@ public:
                                 response = "Ok.";
                             }
                         }
+                        else if (path == "/api/v2/app/cookies" && hasCookie)
+                        {
+                            response = QJsonDocument(m_downloadCookies).toJson(QJsonDocument::Compact);
+                        }
+                        else if (path == "/api/v2/app/setCookies" && hasCookie)
+                        {
+                            m_commands.append({path, body});
+                            const QUrlQuery form(QString::fromUtf8(body));
+                            const auto json = QJsonDocument::fromJson(form.queryItemValue("cookies", QUrl::FullyDecoded).toUtf8());
+                            if (!json.isArray()) { code = 400; response = "Invalid"; }
+                            else { m_downloadCookies = json.array(); code = 204; }
+                        }
                         else if (m_sessionPauseDemo && hasCookie
                                  && (path == "/api/v2/transfer/pauseSession" || path == "/api/v2/transfer/resumeSession"))
                         {
@@ -1002,6 +1014,8 @@ public:
     void rejectPreferenceWrites(bool reject) { m_rejectPreferences = reject; }
     void ignorePreferenceWrites(bool ignore) { m_ignorePreferences = ignore; }
     bool trayAlternative() const { return m_trayAltMode; }
+    void setDownloadCookies(const QJsonArray &cookies) { m_downloadCookies = cookies; }
+    QJsonArray downloadCookies() const { return m_downloadCookies; }
     void enableSessionPauseDemo() { m_sessionPauseDemo = true; }
     void setSessionPaused(bool paused) { m_sessionPaused = paused; }
     bool sessionPaused() const { return m_sessionPaused; }
@@ -1156,6 +1170,7 @@ private:
     QJsonObject m_statusRates;
     bool m_trayDemo = false;
     bool m_trayAltMode = false;
+    QJsonArray m_downloadCookies;
     bool m_sessionPauseDemo = false;
     bool m_sessionPaused = false;
     QString m_trayConnectionStatus = QStringLiteral("connected");
@@ -8810,6 +8825,58 @@ private slots:
         });
         about->trigger();
         QVERIFY(aboutChecked);
+    }
+
+    void nativeCookiesEditOnlySelectedServer()
+    {
+        DemoQbittorrentServer alpha(true), beta(true);
+        const QJsonArray initial{QJsonObject{{"domain", "example.test"}, {"path", "/"},
+            {"name", "test"}, {"value", "a+b&c%20"}, {"expirationDate", -1}}};
+        alpha.setDownloadCookies(initial);
+        beta.setDownloadCookies(initial);
+        QVERIFY(alpha.start() && beta.start());
+        QTemporaryDir tmp;
+        QSettings settings(tmp.filePath("cookies.ini"), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        auto *action = window.findChild<QAction *>("actionManageCookies");
+        QVERIFY(action && !action->isEnabled());
+        openConnectDialog(window, alpha.url());
+        QTRY_VERIFY(action->isEnabled());
+        openConnectDialog(window, beta.url(), false, true, true, "Second");
+        QTRY_VERIFY(window.statusBar()->currentMessage().contains("Connected to Second"));
+        for (bool save : {false, true})
+        {
+            bool edited = false;
+            QTimer::singleShot(0, &window, [&] {
+                auto *dlg = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+                QVERIFY(dlg);
+                const auto guard = qScopeGuard([dlg] { if (dlg->isVisible()) dlg->QDialog::reject(); });
+                QCOMPARE(dlg->objectName(), QStringLiteral("remoteCookiesDialog"));
+                auto *view = dlg->findChild<QTreeView *>("treeView");
+                auto *buttons = dlg->findChild<QDialogButtonBox *>("buttonBox");
+                QVERIFY(view && buttons);
+                auto *ok = buttons->button(QDialogButtonBox::Ok);
+                QTRY_VERIFY_WITH_TIMEOUT(ok->isEnabled(), 6000);
+                QCOMPARE(view->model()->rowCount(), 1);
+                QCOMPARE(view->model()->index(0,3).data().toString(), QStringLiteral("a+b&c%20"));
+                QVERIFY(view->model()->setData(view->model()->index(0,3), "new+&%25", Qt::EditRole));
+                if (save)
+                {
+                    ok->click();
+                    QTRY_VERIFY_WITH_TIMEOUT(!dlg->isVisible(), 6000);
+                }
+                else buttons->button(QDialogButtonBox::Cancel)->click();
+                edited = true;
+            });
+            action->trigger();
+            QVERIFY(edited);
+            QCOMPARE(beta.commandsFor("/api/v2/app/setCookies"), save ? 1 : 0);
+        }
+        QCOMPARE(alpha.downloadCookies(), initial);
+        QCOMPARE(alpha.commandsFor("/api/v2/app/setCookies"), 0);
+        QCOMPARE(beta.downloadCookies().first().toObject().value("value").toString(), QStringLiteral("new+&%25"));
     }
 
     void queueControlsFollowSelectedServerCapability()
