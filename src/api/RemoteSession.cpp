@@ -23,6 +23,18 @@
 
 namespace
 {
+// qBittorrent 5.2 changed editTracker's original URL parameter from
+// origUrl to url. Use the same request for every URL edit, including
+// private tracker replacement and rollback, and encode form values once.
+QByteArray trackerUrlEditBody(bool modern, const QString &hash,
+                              const QString &original, const QString &replacement)
+{
+    return QByteArrayLiteral("hash=") + QUrl::toPercentEncoding(hash)
+        + (modern ? QByteArrayLiteral("&url=") : QByteArrayLiteral("&origUrl="))
+        + QUrl::toPercentEncoding(original)
+        + QByteArrayLiteral("&newUrl=") + QUrl::toPercentEncoding(replacement);
+}
+
 // Only issuer trust and endpoint-name errors are eligible for explicit
 // endpoint-scoped certificate pinning. Expiry, revocation, invalid
 // signatures, weak keys and all other reported errors remain fatal.
@@ -1956,12 +1968,8 @@ void RemoteSession::editTorrentTracker(const QString &hash, const QString &oldUr
         emit operationFailed(tr("Edit torrent tracker"), tr("Invalid hash or tracker URL."));
         return;
     }
-    QUrlQuery form;
-    form.addQueryItem(QStringLiteral("hash"), hash);
-    form.addQueryItem(m_selectedTrackerReannounce ? QStringLiteral("url") : QStringLiteral("origUrl"), oldUrl);
-    form.addQueryItem(QStringLiteral("newUrl"), newUrl);
     queueOperation(QStringLiteral("api/v2/torrents/editTracker"),
-                   form.toString(QUrl::FullyEncoded).toUtf8(),
+                   trackerUrlEditBody(m_selectedTrackerReannounce, hash, oldUrl, newUrl),
                    QByteArrayLiteral("application/x-www-form-urlencoded"),
                    tr("Edit torrent tracker"), true,
                    [this, hash, oldUrl]() {
@@ -2040,9 +2048,7 @@ void RemoteSession::changeDetailTrackers(const QString &hash, TrackerDetailActio
         break;
     case TrackerDetailAction::Edit:
         endpoint = QStringLiteral("editTracker");
-        body += (m_selectedTrackerReannounce ? QByteArrayLiteral("&url=") : QByteArrayLiteral("&origUrl="))
-            + QUrl::toPercentEncoding(unique.first()) + QByteArrayLiteral("&newUrl=")
-            + QUrl::toPercentEncoding(replacement);
+        body = trackerUrlEditBody(m_selectedTrackerReannounce, hash, unique.first(), replacement);
         break;
     case TrackerDetailAction::Remove:
     case TrackerDetailAction::ReannounceSelected:
@@ -2296,24 +2302,16 @@ void RemoteSession::replaceTorrentTrackers(const QString &hash,
             }
         if (!removed.isEmpty() && !added.isEmpty())
         {
-            QUrlQuery edit;
-            edit.addQueryItem(QStringLiteral("hash"), hash);
-            edit.addQueryItem(QStringLiteral("url"), removed);
-            edit.addQueryItem(QStringLiteral("newUrl"), added);
             queueOperation(QStringLiteral("api/v2/torrents/editTracker"),
-                edit.toString(QUrl::FullyEncoded).toUtf8(),
+                trackerUrlEditBody(m_selectedTrackerReannounce, hash, removed, added),
                 QByteArrayLiteral("application/x-www-form-urlencoded"),
                 tr("Replace private torrent tracker"), true,
                 [this, hash, existing, removed, added, removeThenAdd]() {
                     QStringList currentlyOnServer = existing;
                     currentlyOnServer.replace(currentlyOnServer.indexOf(removed), added);
                     const auto undoEdit = [this, hash, removed, added]() {
-                        QUrlQuery undo;
-                        undo.addQueryItem(QStringLiteral("hash"), hash);
-                        undo.addQueryItem(QStringLiteral("url"), added);
-                        undo.addQueryItem(QStringLiteral("newUrl"), removed);
                         queueOperation(QStringLiteral("api/v2/torrents/editTracker"),
-                            undo.toString(QUrl::FullyEncoded).toUtf8(),
+                            trackerUrlEditBody(m_selectedTrackerReannounce, hash, added, removed),
                             QByteArrayLiteral("application/x-www-form-urlencoded"),
                             tr("Restore original private tracker"), true);
                     };
