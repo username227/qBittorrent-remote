@@ -474,6 +474,54 @@
       "regression_tests": [
         "test_torrent_serializer_inventory_covers_release_lock"
       ]
+    },
+    {
+      "id": "torrent-metric-backend-review",
+      "scope": "Selected numeric and duration getter definitions across all 68 stable releases",
+      "status": "source-reviewed-partial",
+      "findings": "44 implementation blobs; numeric getter variants and per-release mapping recorded in torrent-metric-backend-review.json. Elapsed and reannounce durations no longer inherit ETA infinity cap; General properties rate limits respect unlimited sentinel. Metadata, configured/effective share-limit helpers, transitive libtorrent behavior and populated live verification still pending.",
+      "evidence": [
+        {
+          "release": "4.3.1",
+          "path": "src/base/bittorrent/torrenthandle.cpp",
+          "blob": "05671f9382379be5377c0083a11aede0bd425c8d",
+          "commit": "587688634561b17229a6f5951478cbdd5ae0c128"
+        },
+        {
+          "release": "4.1.0",
+          "path": "src/base/types.h",
+          "blob": "bd18b1a40e1e09f4cee19e09053cbef78cb30138",
+          "commit": "e9ed621178af841114a045887c5ce1e6b50cb366"
+        },
+        {
+          "release": "5.3.1",
+          "path": "src/base/types.h",
+          "blob": "daf9d77cceb1d389cea96dd76deb870094a4f0e8",
+          "commit": "f3cfbccd42dc07e7aa174b525f6d6dfd2d0595a0"
+        },
+        {
+          "release": "4.1.0",
+          "path": "src/webui/api/torrentscontroller.cpp",
+          "blob": "e4bd35d786a1b7ebb76a357483e90424b4ef8143",
+          "commit": "e9ed621178af841114a045887c5ce1e6b50cb366"
+        },
+        {
+          "release": "5.3.1",
+          "path": "src/webui/api/torrentscontroller.cpp",
+          "blob": "3bcc486ea07d312c821071c89500e5f3070c2bcc",
+          "commit": "f3cfbccd42dc07e7aa174b525f6d6dfd2d0595a0"
+        },
+        {
+          "release": "5.3.1",
+          "path": "src/gui/transferlistmodel.cpp",
+          "blob": "0d4ff80e59d3121feb48a1fb322c7b9b93f8c94f",
+          "commit": "f3cfbccd42dc07e7aa174b525f6d6dfd2d0595a0"
+        }
+      ],
+      "regression_tests": [
+        "historicalTorrentNumericPresentation",
+        "test_torrent_metric_backend_review_covers_release_lock"
+      ]
     }
   ],
   "adjacent_status": [
