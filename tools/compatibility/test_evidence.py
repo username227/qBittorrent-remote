@@ -132,6 +132,51 @@ class EvidenceTests(unittest.TestCase):
             self.assertEqual(r["country_disabled"], "explicit-empty-values" if v >= (5, 2, 0) else "omitted")
             self.assertTrue(r["show_flags"])
 
+    def test_torrent_serializer_inventory_covers_release_lock(self):
+        lock = json.loads((ROOT / "releases.lock.json").read_text(encoding="utf-8"))
+        review = json.loads((ROOT / "torrent-serializer-review.json").read_text(encoding="utf-8"))
+        rows, revisions = review["releases"], review["revisions"]
+        self.assertEqual(review["status"], "lexical-source-inventory")
+        self.assertEqual([(r["version"], r["commit"]) for r in rows],
+                         [(r["version"], r["commit"]) for r in lock["releases"]])
+        self.assertEqual(len(revisions), 19)
+        self.assertEqual(len({(r["cpp_blob"], r["header_blob"]) for r in revisions}), len(revisions))
+        previous, union, visited, first_seen = set(), set(), set(), {}
+        for row in rows:
+            i = row["revision"]
+            self.assertTrue(0 <= i < len(revisions))
+            rev = revisions[i]
+            if i not in visited:
+                self.assertEqual(rev["first_release"], row["version"])
+            visited.add(i)
+            for name in ("cpp_blob", "header_blob"):
+                self.assertRegex(rev[name], r"^[0-9a-f]{40}$")
+            fields = rev["fields"]
+            keys = {f["key"] for f in fields}
+            self.assertEqual(len(keys), len(fields))
+            for field in fields:
+                self.assertTrue(field["assignments"])
+                self.assertTrue(all("KEY_TORRENT_" in a for a in field["assignments"]))
+            self.assertEqual(row["added"], sorted(keys - previous))
+            self.assertEqual(row["removed"], sorted(previous - keys))
+            for key in keys:
+                first_seen.setdefault(key, row["version"])
+            previous = keys
+            union.update(keys)
+        self.assertEqual(visited, set(range(len(revisions))))
+        self.assertEqual(review["counts"], {"releases": len(rows),
+                         "adjacent_pairs": len(rows) - 1, "revisions": len(revisions),
+                         "distinct_fields": len(union)})
+        self.assertEqual((len(revisions[0]["fields"]), len(revisions[-1]["fields"])), (42, 67))
+        for key, boundary in (("availability", "4.2.0"), ("trackers_count", "4.3.0"),
+                              ("content_path", "4.3.1"), ("seeding_time", "4.3.4"),
+                              ("infohash_v1", "4.4.0"), ("infohash_v2", "4.4.0"),
+                              ("download_path", "4.4.0"), ("inactive_seeding_time_limit", "4.6.0"),
+                              ("private", "5.0.0"), ("reannounce", "5.0.0"),
+                              ("creation_date", "5.2.0"), ("share_limit_action", "5.2.0"),
+                              ("share_limits_mode", "5.3.0")):
+            self.assertEqual(first_seen[key], boundary, key)
+
     def test_empty_4_1_0_live_evidence(self):
         evidence = json.loads((ROOT / "evidence/qbt-4.1.0-baseline.json").read_text(encoding="utf-8"))
         self.assertEqual(evidence["expected_daemon"], "4.1.0")
