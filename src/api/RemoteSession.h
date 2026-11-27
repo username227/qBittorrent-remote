@@ -153,6 +153,8 @@ public:
                         std::function<void()> accepted = {}, PreferencesError rejected = {});
     void renameTorrentContent(const QString &hash, const QString &oldPath,
                               const QString &newPath);
+    void renameTorrentContentItem(const QString &hash, const QString &oldPath,
+                                  const QString &newPath, bool folder);
     void addTorrentUrls(const QString &urls);
     void addTorrentUrls(const QString &urls, const AddTorrentOptions &options);
     void addTorrentFile(const QString &filename, const QByteArray &contents);

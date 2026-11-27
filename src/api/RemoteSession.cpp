@@ -1495,13 +1495,20 @@ void RemoteSession::requestTorrentExport(const QString &hash)
 void RemoteSession::renameTorrentContent(const QString &hash, const QString &oldPath,
                                          const QString &newPath)
 {
+    renameTorrentContentItem(hash, oldPath, newPath, false);
+}
+
+void RemoteSession::renameTorrentContentItem(const QString &hash, const QString &oldPath,
+                                             const QString &newPath, bool folder)
+{
+    const QString description = folder ? tr("Rename torrent folder") : tr("Rename torrent file");
     static const QRegularExpression validHash(
         QStringLiteral("^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$"));
     const auto validRelative = [](const QString &path) {
         if (path.isEmpty() || path.startsWith(QLatin1Char('/'))
             || path.contains(QLatin1Char('\\'))
             || path.contains(QLatin1Char('\r'))
-            || path.contains(QLatin1Char('\n')))
+            || path.contains(QLatin1Char('\n')) || path.contains(QChar(0)))
             return false;
         const QStringList parts = path.split(QLatin1Char('/'));
         return std::all_of(parts.cbegin(), parts.cend(), [](const QString &part) {
@@ -1512,18 +1519,18 @@ void RemoteSession::renameTorrentContent(const QString &hash, const QString &old
     if (!validHash.match(hash).hasMatch() || !validRelative(oldPath)
         || !validRelative(newPath))
     {
-        emit operationFailed(tr("Rename torrent file"), tr("Invalid torrent or file path."));
+        emit operationFailed(description, tr("Invalid torrent or content path."));
         emit torrentContentRenameFinished(hash, oldPath, false, tr("Invalid file path."));
         return;
     }
-    QUrlQuery form;
-    form.addQueryItem(QStringLiteral("hash"), hash);
-    form.addQueryItem(QStringLiteral("oldPath"), oldPath);
-    form.addQueryItem(QStringLiteral("newPath"), newPath);
-    queueOperation(QStringLiteral("api/v2/torrents/renameFile"),
-        form.toString(QUrl::FullyEncoded).toUtf8(),
+    const QByteArray form = QByteArrayLiteral("hash=") + QUrl::toPercentEncoding(hash)
+        + QByteArrayLiteral("&oldPath=") + QUrl::toPercentEncoding(oldPath)
+        + QByteArrayLiteral("&newPath=") + QUrl::toPercentEncoding(newPath);
+    queueOperation(folder ? QStringLiteral("api/v2/torrents/renameFolder")
+                          : QStringLiteral("api/v2/torrents/renameFile"),
+        form,
         QByteArrayLiteral("application/x-www-form-urlencoded"),
-        tr("Rename torrent file"), true,
+        description, true,
         [this, hash, oldPath]() {
             emit torrentContentRenameFinished(hash, oldPath, true, {});
         },
