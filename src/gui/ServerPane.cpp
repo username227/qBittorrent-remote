@@ -1382,6 +1382,7 @@ void ServerPane::saveLayout(QSettings &settings, const QString &profileId) const
     };
     saveHeader("torrentTrackers", "trackerHeader");
     saveHeader("torrentContent", "contentHeader");
+    settings.setValue(root + QStringLiteral("/contentFilterFormat"), m_details->contentFilterFormat());
 
     if (auto *peers = m_details->findChild<QTableWidget *>(QStringLiteral("torrentPeers")))
         settings.setValue(root + QStringLiteral("/peerHeaderV2"),
@@ -1457,6 +1458,14 @@ void ServerPane::restoreLayout(QSettings &settings, const QString &profileId)
     };
     restoreHeader("torrentTrackers", "trackerHeader");
     restoreHeader("torrentContent", "contentHeader");
+    if (auto *content = m_details->findChild<QTreeWidget *>(QStringLiteral("torrentContent")))
+    {
+        content->header()->setFirstSectionMovable(true);
+        content->header()->setSectionResizeMode(QHeaderView::Interactive);
+        content->setColumnHidden(0, false);
+    }
+    m_details->setContentFilterFormat(settings.value(root + QStringLiteral("/contentFilterFormat"),
+        QStringLiteral("wildcards")).toString());
     if (auto *peers = m_details->findChild<QTableWidget *>(QStringLiteral("torrentPeers")))
     {
         const QByteArray data =

@@ -39,6 +39,8 @@ public:
     void setContentPathMappings(const QList<Remote::PathMapping> &mappings);
     void setContentDragEnabled(bool enabled);
     void setContentInteraction(bool doubleClickRename, bool openByEnter);
+    QString contentFilterFormat() const { return m_contentFilterFormat; }
+    void setContentFilterFormat(const QString &format);
     void setTrackerTierEditingSupported(bool supported);
     void setSelectedTrackerReannounceSupported(bool supported);
     void finishTrackerTierEdit(const QString &hash);
@@ -101,6 +103,7 @@ private:
     QList<QList<int>> selectedContentPriorityGroups() const;
     void chooseFilePrioritiesByOrder(const QList<QList<int>> &groups);
     void updateFileFolders();
+    void applyContentFilter(bool adjustExpansion);
     void resetPages();
     void setValue(const char *labelObjectName, const QString &text);
 
@@ -117,6 +120,7 @@ private:
     bool m_contentKnown = false;
     bool m_contentRenameDialogOpen = false;
     bool m_contentDoubleClickRename = false;
+    QString m_contentFilterFormat = QStringLiteral("wildcards");
     bool m_webSeedsKnown = false;
     SpeedGraphWidget *m_speedGraph = nullptr;
     RemotePiecesBar *m_progressBar = nullptr;

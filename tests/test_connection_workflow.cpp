@@ -9682,6 +9682,68 @@ private slots:
         QVERIFY(!fileTwo->isHidden());
         filter->clear();
         QVERIFY(!fileOne->isHidden());
+        filter->setText(QStringLiteral("FILE-t?o.*"));
+        QVERIFY(fileOne->isHidden());
+        QVERIFY(!fileTwo->isHidden());
+        const auto chooseFormat = [&](const QString &format) {
+            bool found = false;
+            QTimer::singleShot(0, &window, [&]() {
+                auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+                if (!menu) return;
+                for (auto *action : menu->actions())
+                {
+                    if (!action->menu()) continue;
+                    for (auto *sub : action->menu()->actions())
+                        if (sub->objectName() == QStringLiteral("contentFilter_") + format)
+                        { found = true; sub->trigger(); }
+                }
+                menu->close();
+            });
+            QVERIFY(QMetaObject::invokeMethod(filter, "customContextMenuRequested",
+                Qt::DirectConnection, Q_ARG(QPoint, QPoint(5, 5))));
+            QVERIFY(found);
+        };
+        chooseFormat(QStringLiteral("regex"));
+        filter->setText(QStringLiteral("^file-one[.]bin$"));
+        QVERIFY(!fileOne->isHidden() && fileTwo->isHidden());
+        filter->setText(QStringLiteral("["));
+        QVERIFY(fileOne->isHidden() && fileTwo->isHidden());
+        QVERIFY(!filter->toolTip().isEmpty());
+        chooseFormat(QStringLiteral("plain"));
+        filter->setText(QStringLiteral("file-two"));
+        QVERIFY(fileOne->isHidden() && !fileTwo->isHidden());
+        filter->clear();
+        QVERIFY(!fileOne->isHidden() && !fileTwo->isHidden());
+        chooseFormat(QStringLiteral("wildcards"));
+
+        auto *contentHeader = contents->header();
+        const auto headerAction = [&](const QString &name, bool enabled) {
+            bool found = false, actualEnabled = false;
+            QTimer::singleShot(0, &window, [&]() {
+                auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+                if (!menu) return;
+                for (auto *action : menu->actions())
+                    if (action->objectName() == name)
+                    {
+                        found = true;
+                        actualEnabled = action->isEnabled();
+                        if (actualEnabled) action->trigger();
+                    }
+                menu->close();
+            });
+            QVERIFY(QMetaObject::invokeMethod(contentHeader, "customContextMenuRequested",
+                Qt::DirectConnection, Q_ARG(QPoint, QPoint(10, 10))));
+            QVERIFY(found);
+            QCOMPARE(actualEnabled, enabled);
+        };
+        headerAction(QStringLiteral("contentColumn0"), false);
+        QVERIFY(!contents->isColumnHidden(0));
+        headerAction(QStringLiteral("contentColumn5"), true);
+        QVERIFY(contents->isColumnHidden(5));
+        headerAction(QStringLiteral("resizeContentColumns"), true);
+        QVERIFY(contents->isColumnHidden(5));
+        headerAction(QStringLiteral("contentColumn5"), true);
+        QVERIFY(!contents->isColumnHidden(5));
 
         // Click-to-exclude must send priority=0 for exactly this file;
         // the folder becomes partially checked, as in upstream qBittorrent.
