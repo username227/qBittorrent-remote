@@ -221,6 +221,79 @@
         "lockedReleaseCapabilityPolicy",
         "mixedHistoricalCapabilityDispatch"
       ]
+    },
+    {
+      "id": "sync-category-collection-shape",
+      "scope": "sync/maindata categories additions and removals",
+      "status": "source-reviewed-partial",
+      "findings": "All 26 distinct sync controller revisions covering 68 releases reviewed for collection shape. 4.1.0–4.1.2 serialize QVariantList names; 4.1.3 introduces QVariantHash definitions with name/savePath. processMap/processList emit additions and categories_removed, not full arrays on incremental responses. Later controllers retain object shape; individual fields and downstream serializers remain open. Normalize arrays at the session boundary to empty definitions without inventing save paths; keep incremental merge and replacement semantics.",
+      "evidence": [
+        {
+          "release": "4.1.0",
+          "commit": "e9ed621178af841114a045887c5ce1e6b50cb366",
+          "path": "src/webui/api/synccontroller.cpp",
+          "blob": "1c2126fd21c50698661129b9a33487f22ec08f50",
+          "lines": "157–180,245–294,402–406"
+        },
+        {
+          "release": "4.1.2",
+          "commit": "d1ebbcb35d8833dabcb5130609f2d37dec1b4f66",
+          "path": "src/webui/api/synccontroller.cpp",
+          "blob": "d8fe4d46489eb275ace08f1d86dd6047161eaf46",
+          "lines": "402–406"
+        },
+        {
+          "release": "4.1.3",
+          "commit": "a574c4a70a5a3293d2f6135952c301d930d23627",
+          "path": "src/webui/api/synccontroller.cpp",
+          "blob": "597a207e3c8c91098887f21aac41fac596d5bffc",
+          "lines": "402–412"
+        }
+      ],
+      "release_matrix": "connection-controller-review.json",
+      "live_status": "Only empty 4.1.0 full snapshot observed; populated/delta real daemon not yet verified.",
+      "regression_tests": [
+        "historicalCategorySynchronization"
+      ]
+    },
+    {
+      "id": "login-controller-result-history",
+      "scope": "auth/login result and selected dispatcher boundaries",
+      "status": "source-reviewed-partial",
+      "findings": "Nine distinct auth controller blobs covering every release checked for login result. 4.1.0–5.1.4 set Ok. or Fails. text; 5.2.0+ sets APIStatus::Ok with null data or throws Unauthorized. 5.2.0 webapplication.cpp maps null data to 204 and Unauthorized to 401. Earlier credential hashing, failed attempt reset and ban configuration changed without changing these result strings. Client already accepts 200 Ok. or 204 then authenticated version reads. Scoped fixtures exercise both positive and negative boundary cases with historical SID and QBT_SID-prefixed cookie names. Complete cookie, dispatch, permissions and timeout review remains open.",
+      "evidence": [
+        {
+          "release": "4.1.0",
+          "commit": "e9ed621178af841114a045887c5ce1e6b50cb366",
+          "path": "src/webui/api/authcontroller.cpp",
+          "blob": "e2422c6f870e3f95d3fbbe45934b85994b57d6cd"
+        },
+        {
+          "release": "5.1.4",
+          "commit": "33e5e772200b5e2f9d23af8870ce7436ec216faa",
+          "path": "src/webui/api/authcontroller.cpp",
+          "blob": "eb1d1baf237626bce80100d6941bf2a24c6ae4a0"
+        },
+        {
+          "release": "5.2.0",
+          "commit": "b2270f7f6fec1b10117564f642b961621ae0058a",
+          "path": "src/webui/api/authcontroller.cpp",
+          "blob": "b393f7d4de8a84b1b4b3973a7670f76b5a4de3fa"
+        },
+        {
+          "release": "5.2.0",
+          "commit": "b2270f7f6fec1b10117564f642b961621ae0058a",
+          "path": "src/webui/webapplication.cpp",
+          "blob": "3eacee634168ca0bff3a731d1d5f78156d51e123",
+          "lines": "367–425"
+        }
+      ],
+      "release_matrix": "connection-controller-review.json",
+      "live_status": "4.1.0 successful login observed; remaining authentication cases not live verified.",
+      "regression_tests": [
+        "historicalCategorySynchronization",
+        "historicalLoginFailures"
+      ]
     }
   ],
   "adjacent_status": [

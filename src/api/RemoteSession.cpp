@@ -482,7 +482,31 @@ void RemoteSession::requestMainData()
                 fail(tr("Invalid /sync/maindata JSON: %1").arg(parseError.errorString()));
                 return;
             }
-            const QJsonObject payload = json.object();
+            QJsonObject payload = json.object();
+            // 4.1.0–4.1.2 send a list of category names (including
+            // additions in incremental updates). From 4.1.3 onward the
+            // category map carries definitions. Normalize the wire shape
+            // once, preserving absence of savePath and other unknown fields.
+            const auto categories = payload.value(QStringLiteral("categories"));
+            if (categories.isArray())
+            {
+                QJsonObject names;
+                for (const auto &entry : categories.toArray())
+                {
+                    if (!entry.isString() || entry.toString().isEmpty())
+                    {
+                        fail(tr("Invalid category name in /sync/maindata response."));
+                        return;
+                    }
+                    names.insert(entry.toString(), QJsonObject{});
+                }
+                payload.insert(QStringLiteral("categories"), names);
+            }
+            else if (!categories.isUndefined() && !categories.isObject())
+            {
+                fail(tr("Invalid categories in /sync/maindata response."));
+                return;
+            }
             const qint64 rid = payload.value(QStringLiteral("rid")).toInteger(-1);
             if (rid < 0
                 || (payload.contains(QStringLiteral("torrents"))
