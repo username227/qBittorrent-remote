@@ -8860,6 +8860,98 @@ private slots:
         QCOMPARE(server.contentEntries(first), updated);
         QCOMPARE(server.commandsFor("/api/v2/torrents/renameFile"), 1);
         QCOMPARE(server.commandsFor("/api/v2/torrents/renameFolder"), 1);
+
+        // Batch rename follows the native Manage Content layout editor:
+        // selected folders contribute descendants, overlapping selection
+        // is deduplicated, and unrelated files remain visible.
+        QVERIFY(root(newFolder) && root(album));
+        tree->clearSelection();
+        tree->expandItem(root(newFolder));
+        tree->expandItem(root(newFolder)->child(0));
+        tree->expandItem(root(album)->child(0));
+        root(newFolder)->setSelected(true);
+        root(newFolder)->child(0)->child(0)->setSelected(true);
+        root(album)->child(0)->child(0)->setSelected(true);
+        bool opened = false, applied = false;
+        QTimer watchdog;
+        watchdog.setSingleShot(true);
+        connect(&watchdog, &QTimer::timeout, &window, []() {
+            if (auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget()))
+                dialog->reject();
+            if (auto *popup = QApplication::activePopupWidget()) popup->close();
+        });
+        watchdog.start(12000);
+        QTimer::singleShot(0, &window, [&]() {
+            auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+            if (!menu) return;
+            for (auto *action : menu->actions())
+            {
+                if (action->objectName() != QLatin1String("contentBatchRename")
+                    || !action->isEnabled()) continue;
+                QTimer::singleShot(0, &window, [&]() {
+                    auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+                    if (!dialog || dialog->objectName() != QLatin1String("remoteTorrentContentLayoutDialog")) return;
+                    opened = true;
+                    auto *paths = dialog->findChild<QTreeView *>(QStringLiteral("pathListView"));
+                    auto *common = dialog->findChild<QLineEdit *>(QStringLiteral("commonPathEdit"));
+                    auto *buttons = dialog->findChild<QDialogButtonBox *>(QStringLiteral("buttonBox"));
+                    QVERIFY(paths && common && buttons);
+                    QTRY_COMPARE_WITH_TIMEOUT(paths->model()->rowCount(), files.size(), 6000);
+                    QTRY_VERIFY_WITH_TIMEOUT(paths->isEnabled(), 6000);
+                    QSet<int> ids;
+                    for (const auto &index : paths->selectionModel()->selectedRows(0))
+                        ids.insert(index.data().toInt());
+                    QCOMPARE(ids, (QSet<int>{0, 1}));
+                    QVERIFY(common->isEnabled());
+                    QCOMPARE(common->text(), QString());
+                    QTest::keyClicks(common, QStringLiteral("Moved"));
+                    auto *model = qobject_cast<QStandardItemModel *>(paths->model());
+                    QVERIFY(model);
+                    QCOMPARE(model->item(0, 1)->text(), QStringLiteral("Moved/Album/Disc/song.flac"));
+                    QCOMPARE(model->item(1, 1)->text(), QStringLiteral("Moved/") + newFolder
+                        + QStringLiteral("/Disc/") + renamed);
+                    QCOMPARE(model->item(2, 1)->text(), files.at(2).toObject().value("name").toString());
+                    // A conflicting target must be rejected before sending
+                    // any mutations, even if another row is also edited.
+                    const QString target = model->item(0, 1)->text();
+                    model->item(0, 1)->setText(model->item(2, 1)->text());
+                    bool warned = false;
+                    QTimer::singleShot(0, dialog, [&]() {
+                        if (auto *message = qobject_cast<QMessageBox *>(QApplication::activeModalWidget()))
+                        {
+                            warned = true;
+                            message->accept();
+                        }
+                    });
+                    buttons->button(QDialogButtonBox::Apply)->click();
+                    QVERIFY(warned);
+                    QCOMPARE(server.commandsFor("/api/v2/torrents/renameFile"), 1);
+                    model->item(0, 1)->setText(target);
+                    buttons->button(QDialogButtonBox::Apply)->click();
+                    QTRY_COMPARE_WITH_TIMEOUT(server.contentEntries(second).at(0).toObject()
+                        .value("name").toString(), target, 6000);
+                    QTRY_COMPARE_WITH_TIMEOUT(server.contentEntries(second).at(1).toObject()
+                        .value("name").toString(), QStringLiteral("Moved/") + newFolder
+                        + QStringLiteral("/Disc/") + renamed, 6000);
+                    QTRY_VERIFY_WITH_TIMEOUT(paths->isEnabled()
+                        && buttons->button(QDialogButtonBox::Close)->isEnabled(), 6000);
+                    QCOMPARE(model->item(0, 1)->text(), target);
+                    applied = true;
+                    buttons->button(QDialogButtonBox::Close)->click();
+                });
+                action->trigger();
+                break;
+            }
+            menu->close();
+        });
+        QVERIFY(QMetaObject::invokeMethod(tree, "customContextMenuRequested",
+            Qt::DirectConnection, Q_ARG(QPoint, QPoint(10, 10))));
+        QVERIFY(opened && applied);
+        QTRY_VERIFY_WITH_TIMEOUT(root(QStringLiteral("Moved")), 6000);
+        QCOMPARE(server.commandsFor("/api/v2/torrents/renameFile"), 3);
+        QCOMPARE(server.contentEntries(first), updated);
+        for (int i = 2; i < files.size(); ++i)
+            QCOMPARE(server.contentEntries(second).at(i), files.at(i));
     }
 
     void torrentCommentsUseSelectedServerAndRespectCapability()

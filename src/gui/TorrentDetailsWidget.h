@@ -46,10 +46,12 @@ public:
     void finishPeerAction(const QString &hash, const QString &message);
     void finishWebSeedAction(const QString &hash);
     void finishContentRename(const QString &hash, const QString &oldPath);
+    bool contentBatchSelectionValid(const QString &hash, quint64 generation) const;
 
 signals:
     void filePriorityRequested(const QString &hash, const QList<int> &ids, int priority);
     void contentRenameRequested(const QString &hash, const QString &oldPath, const QString &newPath, bool folder);
+    void contentBatchRenameRequested(const QString &hash, const QList<int> &ids, quint64 generation);
     void trackerTiersRequested(const QString &hash, const QJsonObject &tiers);
     void trackerDetailActionRequested(const QString &hash, Remote::TrackerDetailAction action,
                                       const QStringList &urls, const QString &replacement);
@@ -92,6 +94,8 @@ private:
     void displayFiles(const QJsonArray &files);
     QString selectedContentPath() const;
     void renameSelectedContent();
+    QList<int> selectedContentFileIds() const;
+    void batchRenameSelectedContent();
     void chooseFilePriorities(int priority, bool allFiles);
     void updateFileFolders();
     void resetPages();
