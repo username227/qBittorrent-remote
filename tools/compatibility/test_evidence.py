@@ -177,6 +177,35 @@ class EvidenceTests(unittest.TestCase):
                               ("share_limits_mode", "5.3.0")):
             self.assertEqual(first_seen[key], boundary, key)
 
+    def test_torrent_metric_backend_review_covers_release_lock(self):
+        lock = json.loads((ROOT / "releases.lock.json").read_text(encoding="utf-8"))
+        report = json.loads((ROOT / "torrent-metric-backend-review.json").read_text(encoding="utf-8"))
+        rows, methods = report["releases"], report["methods"]
+        self.assertEqual([(r["version"], r["commit"]) for r in rows],
+                         [(r["version"], r["commit"]) for r in lock["releases"]])
+        self.assertEqual(len({r["blob"] for r in rows}), 44)
+        self.assertEqual(report["counts"]["methods"], len(methods))
+        self.assertEqual(report["counts"]["method_variants"], sum(map(len, methods.values())))
+        visited = {name: set() for name in methods}
+        for row in rows:
+            self.assertRegex(row["blob"], r"^[0-9a-f]{40}$")
+            self.assertEqual(set(row["methods"]), set(methods))
+            for name, i in row["methods"].items():
+                if i is None:
+                    continue
+                self.assertTrue(0 <= i < len(methods[name]))
+                if i not in visited[name]:
+                    self.assertEqual(methods[name][i]["first_release"], row["version"])
+                visited[name].add(i)
+        for name, variants in methods.items():
+            self.assertEqual(visited[name], set(range(len(variants))))
+        for name in ("wantedSize", "totalSize", "completedSize", "totalDownload",
+                     "totalUpload", "totalPayloadDownload", "totalPayloadUpload"):
+            self.assertEqual(len(methods[name]), 1, name)
+        self.assertEqual(methods["progress"][1]["first_release"], "4.1.1")
+        self.assertEqual(methods["totalSeedsCount"][1]["first_release"], "4.5.0")
+        self.assertEqual(methods["activeTime"][1]["first_release"], "4.2.0")
+
     def test_empty_4_1_0_live_evidence(self):
         evidence = json.loads((ROOT / "evidence/qbt-4.1.0-baseline.json").read_text(encoding="utf-8"))
         self.assertEqual(evidence["expected_daemon"], "4.1.0")

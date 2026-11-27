@@ -13,6 +13,7 @@
 #include "gui/RemoteSpeedLimitsDialog.h"
 #include "gui/MappedContentTreeWidget.h"
 #include "gui/TorrentModel.h"
+#include "gui/TorrentDetailsWidget.h"
 #include "gui/ConnectionDialog.h"
 #include "gui/RemoteAddTorrentDialog.h"
 #include "gui/RemoteTorrentCreatorDialog.h"
@@ -3301,7 +3302,7 @@ private slots:
         const QString hash(40, QLatin1Char('a'));
         QJsonObject torrent{{"name", "Limit presentation"}, {"state", modern ? "stoppedDL" : "pausedDL"},
             {"ratio_limit", -2}, {"max_ratio", 2.75}, {"dl_limit", 0}, {"up_limit", -1},
-            {"priority", 0}, {"eta", 8640000}};
+            {"priority", 0}, {"eta", 8640000}, {"time_active", 17283600}};
         if (modern)
             torrent.insert("popularity", 1.25);
         server.setCompletionSnapshot({{"torrents", QJsonObject{{hash, torrent}}}});
@@ -3327,11 +3328,14 @@ private slots:
         QCOMPARE(cell(17), QString("∞"));
         QCOMPARE(cell(18), QString("∞"));
         QCOMPARE(cell(37), QString("*"));
+        QCOMPARE(cell(24), QString("200d 1h"));
+        QCOMPARE(cell(8), QString("∞"));
         QCOMPARE(cell(36), modern ? QLocale().toString(1.25, 'f', 2) : QString("—"));
         pane->model()->setHideZeroValues(true, 0);
         QCOMPARE(cell(8), QString());
         QCOMPARE(cell(17), QString());
         QCOMPARE(cell(18), QString());
+        QCOMPARE(cell(24), QString("200d 1h"));
         pane->model()->setHideZeroValues(false, 0);
         server.queueCompletionPatch({{"torrents", QJsonObject{{hash, QJsonObject{
             {"max_ratio", -1}, {"priority", 1}}}}}});
@@ -3341,6 +3345,28 @@ private slots:
             {"max_ratio", QJsonValue(QJsonValue::Null)}}}}}});
         QTRY_COMPARE_WITH_TIMEOUT(cell(28), QString("—"), 6000);
         QCOMPARE(pane->model()->torrents().value(hash).value("ratio_limit").toInt(), -2);
+        // General properties use seconds for elapsed and announce time,
+        // whereas only ETA has the 100-day infinity sentinel.
+        TorrentDetailsWidget properties;
+        properties.setSelection(hash, torrent);
+        properties.showTab(0);
+        properties.displayDetails(hash, 0, QJsonObject{{"time_elapsed", 17283600}, {"eta", 8640000},
+            {"reannounce", 8643600}, {"dl_limit", -1}, {"up_limit", 0}});
+        const auto elapsed = properties.findChild<QLabel *>("labelElapsedVal");
+        const auto eta = properties.findChild<QLabel *>("labelETAVal");
+        const auto announce = properties.findChild<QLabel *>("labelReannounceInVal");
+        const auto dl = properties.findChild<QLabel *>("labelDlLimitVal");
+        const auto ul = properties.findChild<QLabel *>("labelUpLimitVal");
+        QVERIFY(elapsed && eta && announce && dl && ul);
+        QCOMPARE(elapsed->text(), QString("200d 1h"));
+        QCOMPARE(eta->text(), QString("∞"));
+        QCOMPARE(announce->text(), QString("100d 1h"));
+        QCOMPARE(dl->text(), QString("∞"));
+        QCOMPARE(ul->text(), QString("∞"));
+        properties.displayDetails(hash, 0, QJsonObject{});
+        QCOMPARE(elapsed->text(), QString("—"));
+        QCOMPARE(eta->text(), QString("—"));
+        QCOMPARE(dl->text(), QString("—"));
     }
 
     void historicalLoginFailures()

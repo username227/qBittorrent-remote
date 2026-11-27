@@ -67,10 +67,12 @@ QString bytesText(double bytes, int precision = 1)
     return BytePresentation::format(bytes, precision, false, 5);
 }
 
-QString durationText(qint64 seconds)
+QString durationText(qint64 seconds, bool eta)
 {
-    if (seconds < 0 || seconds >= 8640000)
+    if (eta && (seconds < 0 || seconds >= 8640000))
         return QStringLiteral("∞");
+    if (seconds < 0)
+        return QStringLiteral("—");
     const qint64 days = seconds / 86400;
     const qint64 hours = (seconds % 86400) / 3600;
     const qint64 minutes = (seconds % 3600) / 60;
@@ -263,7 +265,7 @@ QVariant TorrentModel::data(const QModelIndex &index, int role) const
             || col == 21 || col == 22 || col == 23 || col == 24
             || col == 28 || col == 34 || col == 36;
         const bool infinite = (number < 0
-            && (col == 8 || col == 9 || col == 28 || col == 34))
+            && (col == 8 || col == 9 || col == 28))
             || (col == 8 && number >= 8640000)
             || ((col == 17 || col == 18) && number <= 0);
         if (applies && numericColumn && (number == 0 || infinite))
@@ -308,7 +310,7 @@ QVariant TorrentModel::data(const QModelIndex &index, int role) const
         return number < 0 ? QStringLiteral("—") : bytesText(number) + QStringLiteral("/s");
     }
     if (durationColumn(col))
-        return durationText(static_cast<qint64>(number));
+        return durationText(static_cast<qint64>(number), col == 8);
     if (timeColumn(col))
         return DatePresentation::format(static_cast<qint64>(number), m_dateFormat);
     if (col == 9 || col == 28 || col == 36)

@@ -83,15 +83,23 @@ QString speedText(const QJsonValue &value)
     return value.isDouble() ? bytesText(value.toDouble(), true) : QStringLiteral("—");
 }
 
+QString speedLimitText(const QJsonValue &value)
+{
+    if (!value.isDouble()) return QStringLiteral("—");
+    return value.toDouble() <= 0 ? QStringLiteral("∞") : speedText(value);
+}
+
 QString dateText(const QJsonValue &value, const QString &pattern)
 {
     return DatePresentation::format(value.toInteger(), pattern);
 }
 
-QString durationText(const QJsonValue &value)
+QString durationText(const QJsonValue &value, bool eta = false)
 {
-    if (!value.isDouble() || value.toInteger() < 0 || value.toInteger() >= 8640000)
+    if (!value.isDouble() || value.toInteger() < 0)
         return QStringLiteral("—");
+    if (eta && value.toInteger() >= 8640000)
+        return QStringLiteral("∞");
     qint64 n = value.toInteger();
     const qint64 days = n / 86400;
     const qint64 hours = (n % 86400) / 3600;
@@ -1213,7 +1221,7 @@ void TorrentDetailsWidget::displayGeneral(const QJsonObject &p)
 {
     m_lastGeneral = p;
     setValue("labelElapsedVal", durationText(p.value(QStringLiteral("time_elapsed"))));
-    setValue("labelETAVal", durationText(p.value(QStringLiteral("eta"))));
+    setValue("labelETAVal", durationText(p.value(QStringLiteral("eta")), true));
     setValue("labelConnectionsVal", numberText(p.value(QStringLiteral("nb_connections"))));
     setValue("labelDlTotalVal", sizeText(p.value(QStringLiteral("total_downloaded"))));
     setValue("labelUpTotalVal", sizeText(p.value(QStringLiteral("total_uploaded"))));
@@ -1221,8 +1229,8 @@ void TorrentDetailsWidget::displayGeneral(const QJsonObject &p)
     setValue("labelPeersVal", numberText(p.value(QStringLiteral("peers"))));
     setValue("labelDlSpeedVal", speedText(p.value(QStringLiteral("dl_speed"))));
     setValue("labelUpSpeedVal", speedText(p.value(QStringLiteral("up_speed"))));
-    setValue("labelDlLimitVal", speedText(p.value(QStringLiteral("dl_limit"))));
-    setValue("labelUpLimitVal", speedText(p.value(QStringLiteral("up_limit"))));
+    setValue("labelDlLimitVal", speedLimitText(p.value(QStringLiteral("dl_limit"))));
+    setValue("labelUpLimitVal", speedLimitText(p.value(QStringLiteral("up_limit"))));
     setValue("labelWastedVal", sizeText(p.value(QStringLiteral("total_wasted"))));
     if (const auto v = p.value(QStringLiteral("share_ratio")); v.isDouble())
         setValue("labelShareRatioVal", QLocale().toString(v.toDouble(), 'f', 2));
