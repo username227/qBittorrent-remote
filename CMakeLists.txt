@@ -212,8 +212,16 @@ if(UNIX AND NOT APPLE)
     target_compile_definitions(qbittorrent_remote_gui PRIVATE QBT_REMOTE_WITH_DBUS=1)
 endif()
 
+if(WIN32)
+    enable_language(RC)
+    set(QBT_WINDOWS_ICON_PATH "${PROJECT_SOURCE_DIR}/src/gui/icons/qbittorrent.ico")
+    set(QBT_REMOTE_WINDOWS_ICON_RESOURCE "${CMAKE_CURRENT_BINARY_DIR}/qbittorrent-remote-icon.rc")
+    configure_file(packaging/windows/icon.rc.in "${QBT_REMOTE_WINDOWS_ICON_RESOURCE}" @ONLY)
+endif()
+
 qt_add_executable(qbittorrent-remote
     src/main.cpp
+    ${QBT_REMOTE_WINDOWS_ICON_RESOURCE}
 )
 add_dependencies(qbittorrent-remote qbt_remote_build_version)
 target_link_libraries(qbittorrent-remote PRIVATE

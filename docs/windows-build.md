@@ -42,16 +42,16 @@ In the **same UCRT64 terminal**:
 git clone https://github.com/username227/qBittorrent-remote.git
 cd qBittorrent-remote
 git fetch origin
-git switch -c feature/windows-build-packaging --track origin/feature/windows-build-packaging
+git switch master
 bash packaging/windows/build-installer.sh
 ```
 
 If you already have a Windows checkout, use `git fetch origin`,
-switch to the Windows branch, and update normally with `git pull --ff-only`
+switch to the desired branch, and update normally with `git pull --ff-only`
 rather than cloning again.
 
 The script checks its environment, configures and builds in Release mode,
-runs **all four CTest workflows**, stages the executable, uses `windeployqt6`
+runs **all current CTest workflows**, stages the executable, uses `windeployqt6`
 for Qt DLLs and plugins, explicitly bundles QtSvg, qsvgicon.dll and qsvg.dll
 so all original qBittorrent SVG icons render, copies QtKeychain and other
 imported UCRT64 runtime DLLs, packages the Windows-native **Schannel** TLS backend, and creates
@@ -75,11 +75,44 @@ The installer is at:
 build/windows-ucrt/dist/qBittorrent-Remote-0.1.0-Windows-x64-Setup.exe
 ```
 
-Double-click it in Windows Explorer. It installs per-user under:
+Double-click it in Windows Explorer. Windows requests administrator approval **before**
+the installer wizard appears, even if you subsequently select **Current user**.
+The wizard presents Welcome, GNU GPLv3 license acknowledgment, installation
+scope, installation directory, Install/Cancel, progress, and Finish, including
+an optional checkbox to launch the application.
 
-```text
-%LOCALAPPDATA%\Programs\qBittorrent Remote
-```
+Choose an installation scope:
+
+- **Current user** — default path `%LOCALAPPDATA%\Programs\qBittorrent Remote`;
+  Start Menu shortcuts and uninstall registration are for that Windows account.
+- **All users** — default path `%ProgramFiles%\qBittorrent Remote`;
+  Start Menu shortcuts are machine-wide and uninstall registration is in HKLM.
+
+The account named on the scope page is the elevated installer account. If a
+standard user supplies credentials for a **different administrator account**
+at the UAC prompt, **Current user refers to that administrator**, not the
+original Windows account. For that situation choose **All users**, or run
+the installer from an administrator account in which the app will be used.
+
+Upgrade **within the same scope** to retain the selected install directory
+without changing user settings. When changing scope, the installer offers to
+**remove the existing application automatically** first. Automatic migration
+only supports the standard per-user or Program Files directories; a custom
+installation path requires manual uninstall for safety. The application must
+be closed before switching. Silent scope switches require an explicit
+`/AutoRemoveOldScope` flag in addition to `/S /AllUsers` or `/S /CurrentUser`.
+The Finish page also offers an **unchecked** checkbox to start the program.
+The application and installer use the original embedded Windows qBittorrent icon.
+Check that launch from the elevated wizard starts the application at ordinary
+user integrity; if Explorer runs elevated or under a different Windows account,
+use the Start Menu instead.
+
+**Important: server profiles, passwords, font size, layouts, window geometry,
+saved directory mappings and all other personal preferences stay in the same
+Windows-account configuration/credential stores regardless of scope.**
+They are not stored in the application installation directory, are not copied
+during scope changes, and are not deleted by uninstallation. Launch the new
+installation under the *same Windows account* to retain them.
 
 The installer bundles the Qt libraries/plugins, QtKeychain and applicable
 MinGW runtime DLLs. It uses the built-in Windows Schannel TLS provider,
@@ -94,9 +127,8 @@ that catches missing bundled DLLs or plugins.
 Suggested manual checks:
 
 1. Open the app from the Start menu. Verify the native window renders.
-2. Connect to both known HTTPS QNAP endpoints *one at a time*: confirm
-   certificate fingerprint approval and successful login/version.
-   Simultaneous multi-server tabs are not implemented in this milestone.
+2. Connect to the configured servers: confirm certificate fingerprint approval
+   where applicable, successful login/version, and independent server tabs.
 3. Disconnect and reconnect: the same certificate should not reprompt.
 4. With password-required login enabled, select **Remember password
    securely**, enter the password, and connect successfully.
@@ -116,7 +148,7 @@ the app never enables unencrypted QtKeychain fallback.
 ## GitHub Actions
 
 The workflow in `.github/workflows/windows-installer.yml` runs a UCRT64
-Windows build and all four CTest workflows, then uploads the generated
+Windows build and all current CTest workflows, then uploads the generated
 installer as a workflow artifact. This is a **testing** artifact, not a
 signed production release; Windows SmartScreen may warn about an
 unsigned installer.
@@ -127,6 +159,9 @@ This is deliberately a development packaging milestone. Code signing,
 installer update/repair handling, third-party license auditing, and
 future version naming remain release-readiness work.
 
-The Windows branch builds on the unmerged
-`feature/remote-connection-foundation` branch. Keep PR #3 untouched
-until reviewed, and treat this Windows packaging as a separate change.
+The installer wizard requires real Windows verification before release.
+The silent CI scope-switch checks run on disposable Windows runners only.
+They log each installer/uninstaller invocation, require an already elevated
+runner, verify rejection without explicit consent, and have per-process and
+workflow-step timeouts. Do not distribute automatic migration until elevated
+filesystem removal has been reviewed.
