@@ -867,6 +867,16 @@ TorrentDetailsWidget::TorrentDetailsWidget(QWidget *parent)
             connect(action, &QAction::triggered, this,
                     [this, option]() { chooseFilePriorities(option.second, false); });
         }
+        priorityMenu->addSeparator();
+        auto *byOrder = priorityMenu->addAction(tr("By shown file order"));
+        byOrder->setObjectName(QStringLiteral("contentPriorityByOrder"));
+        const auto groups = selectedContentPriorityGroups();
+        byOrder->setEnabled(!groups.isEmpty());
+        connect(byOrder, &QAction::triggered, this, [this, hash, generation, groups]() {
+            if (contentBatchSelectionValid(hash, generation)
+                && groups == selectedContentPriorityGroups())
+                chooseFilePrioritiesByOrder(groups);
+        });
         menu.exec(m_ui->filesList->viewport()->mapToGlobal(pos));
     });
     auto *renameShortcut = new QShortcut(QKeySequence(Qt::Key_F2), tree);
@@ -2191,6 +2201,60 @@ void TorrentDetailsWidget::updateFileFolders()
     for (int i = 0; i < tree->topLevelItemCount(); ++i)
         visit(tree->topLevelItem(i), visit);
     tree->setSortingEnabled(wasSorting);
+}
+
+QList<QList<int>> TorrentDetailsWidget::selectedContentPriorityGroups() const
+{
+    if (selectedContentFileIds().isEmpty()) return {};
+    auto *tree = m_ui->filesList;
+    QList<QList<int>> rows;
+    QSet<int> seen;
+    const auto gather = [&seen](QTreeWidgetItem *item, QList<int> &ids, const auto &self) -> void {
+        const QVariant id = item->data(0, Qt::UserRole);
+        if (id.isValid())
+        {
+            const int index = id.toInt();
+            if (index >= 0 && !seen.contains(index))
+            {
+                seen.insert(index);
+                ids.append(index);
+            }
+            return;
+        }
+        for (int i = 0; i < item->childCount(); ++i) self(item->child(i), ids, self);
+    };
+    // Walk the sorted tree, not the order in which the user selected rows.
+    // A selected folder represents one row; its descendants inherit its
+    // priority, even if also selected. No file receives conflicting writes.
+    const auto visit = [&rows, &gather](QTreeWidgetItem *item, const auto &self) -> void {
+        if (item->isSelected())
+        {
+            QList<int> ids;
+            gather(item, ids, gather);
+            if (!ids.isEmpty()) rows.append(ids);
+            return;
+        }
+        for (int i = 0; i < item->childCount(); ++i) self(item->child(i), self);
+    };
+    for (int i = 0; i < tree->topLevelItemCount(); ++i) visit(tree->topLevelItem(i), visit);
+    if (rows.isEmpty()) return {};
+    const qsizetype groupSize = std::max<qsizetype>(rows.size() / 3, 1);
+    QList<QList<int>> groups(3);
+    for (qsizetype i = 0; i < rows.size(); ++i)
+        groups[std::min<qsizetype>(i / groupSize, 2)].append(rows.at(i));
+    return groups;
+}
+
+void TorrentDetailsWidget::chooseFilePrioritiesByOrder(const QList<QList<int>> &groups)
+{
+    if (groups.size() != 3 || groups != selectedContentPriorityGroups()) return;
+    const QString hash = m_hash;
+    // Use the existing serialized HTTP queue and authoritative readback.
+    // At most three requests, irrespective of the number of selected files.
+    const int priorities[] = {7, 6, 1};
+    for (int i = 0; i < 3; ++i)
+        if (!groups.at(i).isEmpty())
+            emit filePriorityRequested(hash, groups.at(i), priorities[i]);
 }
 
 void TorrentDetailsWidget::chooseFilePriorities(int priority, bool allFiles)

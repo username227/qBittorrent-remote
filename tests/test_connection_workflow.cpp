@@ -893,6 +893,22 @@ public:
                                 m_sidebarSnapshot.insert(QStringLiteral("trackers"), trackers);
                             }
                             if (m_statefulContentDemo && !m_rejectCommands
+                                && path == "/api/v2/torrents/filePrio")
+                            {
+                                const QString hash = form.queryItemValue("hash");
+                                const auto ids = form.queryItemValue("id", QUrl::FullyDecoded).split(QLatin1Char('|'));
+                                const int priority = form.queryItemValue("priority").toInt();
+                                QJsonArray updated;
+                                for (const auto &value : m_contentEntries.value(hash))
+                                {
+                                    auto row = value.toObject();
+                                    if (ids.contains(QString::number(row.value("index").toInt())))
+                                        row.insert("priority", priority);
+                                    updated.append(row);
+                                }
+                                m_contentEntries.insert(hash, updated);
+                            }
+                            if (m_statefulContentDemo && !m_rejectCommands
                                 && (path == "/api/v2/torrents/renameFile"
                                     || path == "/api/v2/torrents/renameFolder"))
                             {
@@ -8952,6 +8968,53 @@ private slots:
         QCOMPARE(server.contentEntries(first), updated);
         for (int i = 2; i < files.size(); ++i)
             QCOMPARE(server.contentEntries(second).at(i), files.at(i));
+
+        // Assign priorities using the actual descending displayed order,
+        // selecting in the opposite order. Four rows yield Max, High,
+        // Normal, Normal. The neighboring torrent and other IDs stay intact.
+        tree->clearSelection();
+        tree->sortItems(0, Qt::DescendingOrder);
+        QTRY_VERIFY(root(album));
+        auto *disc = root(album)->child(0);
+        tree->expandItem(root(album));
+        tree->expandItem(disc);
+        QList<int> order;
+        for (int i = 3; i >= 0; --i) disc->child(i)->setSelected(true);
+        for (int i = 0; i < 4; ++i)
+            order.append(disc->child(i)->data(0, Qt::UserRole).toInt());
+        QVERIFY(order.at(0) > order.at(1) && order.at(1) > order.at(2));
+        bool priorityTriggered = false;
+        QTimer::singleShot(0, &window, [&]() {
+            auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+            if (!menu) return;
+            for (auto *action : menu->actions())
+            {
+                if (!action->menu()) continue;
+                for (auto *sub : action->menu()->actions())
+                {
+                    if (sub->objectName() != QLatin1String("contentPriorityByOrder")) continue;
+                    priorityTriggered = sub->isEnabled();
+                    if (priorityTriggered) sub->trigger();
+                }
+            }
+            menu->close();
+        });
+        QVERIFY(QMetaObject::invokeMethod(tree, "customContextMenuRequested",
+            Qt::DirectConnection, Q_ARG(QPoint, QPoint(10, 10))));
+        QVERIFY(priorityTriggered);
+        QTRY_COMPARE_WITH_TIMEOUT(server.commandsFor("/api/v2/torrents/filePrio"), 3, 6000);
+        const auto priorityAt = [&](int id) {
+            return server.contentEntries(second).at(id).toObject().value("priority").toInt();
+        };
+        QTRY_COMPARE_WITH_TIMEOUT(priorityAt(order.at(0)), 7, 6000);
+        QCOMPARE(priorityAt(order.at(1)), 6);
+        QCOMPARE(priorityAt(order.at(2)), 1);
+        QCOMPARE(priorityAt(order.at(3)), 1);
+        QTRY_COMPARE_WITH_TIMEOUT(disc->child(0)->data(3, Qt::UserRole).toInt(), 7, 6000);
+        QCOMPARE(disc->child(1)->data(3, Qt::UserRole).toInt(), 6);
+        QCOMPARE(server.contentEntries(first), updated);
+        QCOMPARE(priorityAt(0), 1);
+        QCOMPARE(priorityAt(1), 1);
     }
 
     void torrentCommentsUseSelectedServerAndRespectCapability()
