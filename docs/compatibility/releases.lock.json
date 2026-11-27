@@ -1,0 +1,484 @@
+{
+  "schema": 1,
+  "upstream": "https://github.com/qbittorrent/qBittorrent",
+  "direction": "ascending",
+  "note": "Tag/commit and declared numeric version from the generated 2026-11-27 inventory; not a live API version observation or semantic equivalence assertion.",
+  "releases": [
+    {
+      "tag": "release-4.1.0",
+      "version": "4.1.0",
+      "commit": "e9ed621178af841114a045887c5ce1e6b50cb366",
+      "declared_api_version": "2.0.0",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.1.1",
+      "version": "4.1.1",
+      "commit": "ea5a29018fba738223d0f1143ac97722e3ee9b5f",
+      "declared_api_version": "2.0.1",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.1.2",
+      "version": "4.1.2",
+      "commit": "d1ebbcb35d8833dabcb5130609f2d37dec1b4f66",
+      "declared_api_version": "2.0.2",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.1.3",
+      "version": "4.1.3",
+      "commit": "a574c4a70a5a3293d2f6135952c301d930d23627",
+      "declared_api_version": "2.1.0",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.1.4",
+      "version": "4.1.4",
+      "commit": "0061b752001e2d5c60b88f736e46685a64ea6bb9",
+      "declared_api_version": "2.1.1",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.1.5",
+      "version": "4.1.5",
+      "commit": "3f0e0a319a6f4833b238842744ed1f37104fcd4c",
+      "declared_api_version": "2.2.0",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.1.6",
+      "version": "4.1.6",
+      "commit": "ea7e47d11328f408ba435bafaf618b483851c651",
+      "declared_api_version": "2.2.0",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.1.7",
+      "version": "4.1.7",
+      "commit": "05a82afeb6c927bfc0cda4fe8fb25ecc3faecd86",
+      "declared_api_version": "2.2.0",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.1.8",
+      "version": "4.1.8",
+      "commit": "359b4649583564407628ebdac234a71c2f25e4dc",
+      "declared_api_version": "2.2.0",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.1.9",
+      "version": "4.1.9",
+      "commit": "7825d8627f8be4682167bbe091870edad9dc33b6",
+      "declared_api_version": "2.2.1",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.1.9.1",
+      "version": "4.1.9.1",
+      "commit": "eea38e7c9ecb1e1df5e889cb42fc93d3f79d429f",
+      "declared_api_version": "2.2.1",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.2.0",
+      "version": "4.2.0",
+      "commit": "912b0767071f564646e9ced06a8382b0d67423b8",
+      "declared_api_version": "2.3.0",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.2.1",
+      "version": "4.2.1",
+      "commit": "118af03534e5ded6d3c8323b5dbeeff57b177193",
+      "declared_api_version": "2.4.0",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.2.2",
+      "version": "4.2.2",
+      "commit": "3c17ad566c94a92b6beefae119db3da5cb26456e",
+      "declared_api_version": "2.4.1",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.2.3",
+      "version": "4.2.3",
+      "commit": "29e9594859151b774ee5f2f18a989a91d541b6f2",
+      "declared_api_version": "2.4.1",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.2.4",
+      "version": "4.2.4",
+      "commit": "50f676c30507ece9fca6cc2bf61cf5fe79cf46c2",
+      "declared_api_version": "2.5.0",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.2.5",
+      "version": "4.2.5",
+      "commit": "2c65b796401f924d6889aadde958de3d2846bb4b",
+      "declared_api_version": "2.5.1",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.3.0",
+      "version": "4.3.0",
+      "commit": "b925cffddb386b2ca10e58fc9c55d99721cfa2ff",
+      "declared_api_version": "2.6.0",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.3.0.1",
+      "version": "4.3.0.1",
+      "commit": "f09ee1b3986e51b9e0a63cefd361e9702a108a24",
+      "declared_api_version": "2.6.0",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.3.1",
+      "version": "4.3.1",
+      "commit": "587688634561b17229a6f5951478cbdd5ae0c128",
+      "declared_api_version": "2.6.1",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.3.2",
+      "version": "4.3.2",
+      "commit": "abb854a1e6309bec8ddbcccd7c550cd07c13c16e",
+      "declared_api_version": "2.7.0",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.3.3",
+      "version": "4.3.3",
+      "commit": "da0b276d5fc4582f40e6fc8f17883083d2662316",
+      "declared_api_version": "2.7.0",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.3.4",
+      "version": "4.3.4",
+      "commit": "f7e6b964931c305c4a341c75e4b32e4e7b1443ce",
+      "declared_api_version": "2.8.1",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.3.4.1",
+      "version": "4.3.4.1",
+      "commit": "332b173e080aa2deb2933eb848298fd98b71514b",
+      "declared_api_version": "2.8.1",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.3.5",
+      "version": "4.3.5",
+      "commit": "063844ed44bffd3fbf2ac2792590ba47bf3fb78e",
+      "declared_api_version": "2.8.2",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.3.6",
+      "version": "4.3.6",
+      "commit": "ac8105c304b84c77b7b72fbf4547e7ad977d44fc",
+      "declared_api_version": "2.8.2",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.3.7",
+      "version": "4.3.7",
+      "commit": "0415c0c6f87d0093811f03c99d0e8cefe6945347",
+      "declared_api_version": "2.8.2",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.3.8",
+      "version": "4.3.8",
+      "commit": "9392ce436db5e9ed4e5ce68d9fe1f279f0b89b9f",
+      "declared_api_version": "2.8.2",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.3.9",
+      "version": "4.3.9",
+      "commit": "01519b5e77d2a1e577ebc0c4291611fc37df0d4a",
+      "declared_api_version": "2.8.2",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.4.0",
+      "version": "4.4.0",
+      "commit": "b9164adb7ae933e81c278cd40d2c529848494e22",
+      "declared_api_version": "2.8.4",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.4.1",
+      "version": "4.4.1",
+      "commit": "4cb386af35bc81ff911c78a5b612857703f4af81",
+      "declared_api_version": "2.8.5",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.4.2",
+      "version": "4.4.2",
+      "commit": "ede7c8acbb79c1c6627fa03e8402b89f47711f70",
+      "declared_api_version": "2.8.5",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.4.3",
+      "version": "4.4.3",
+      "commit": "9ed9ffcaf22f281b426cf0ccc524218631bf9bf1",
+      "declared_api_version": "2.8.5",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.4.3.1",
+      "version": "4.4.3.1",
+      "commit": "6c546df70bbbb5602ddb91fbbd0e3762e75472c3",
+      "declared_api_version": "2.8.5",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.4.4",
+      "version": "4.4.4",
+      "commit": "4a56c3f5df344c4984900352a800deefb504ae67",
+      "declared_api_version": "2.8.5",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.4.5",
+      "version": "4.4.5",
+      "commit": "f9811ec3b0f727562c6fa5376e8a43ca8c8c8fa3",
+      "declared_api_version": "2.8.5",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.5.0",
+      "version": "4.5.0",
+      "commit": "480e3f02cae0ad7b2463e7e188867d747487c0bb",
+      "declared_api_version": "2.8.18",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.5.1",
+      "version": "4.5.1",
+      "commit": "927732f1900efcc7a6102c605c513e9f4b7f6454",
+      "declared_api_version": "2.8.19",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.5.2",
+      "version": "4.5.2",
+      "commit": "97853f31f25bd427b7f821f16c8b1d7131842db8",
+      "declared_api_version": "2.8.19",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.5.3",
+      "version": "4.5.3",
+      "commit": "04bd33e5b3754c7e070a9fa0cb5df294ac57b219",
+      "declared_api_version": "2.8.19",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.5.4",
+      "version": "4.5.4",
+      "commit": "c8763f08da080cd9a9ea22caafff999ee54cbaa2",
+      "declared_api_version": "2.8.19",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.5.5",
+      "version": "4.5.5",
+      "commit": "7d7097b024788814cf74b05ca6857d074467285e",
+      "declared_api_version": "2.8.19",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.6.0",
+      "version": "4.6.0",
+      "commit": "7bc49423c7e6a69554a27b75fdc2f4ea7606ad84",
+      "declared_api_version": "2.9.2",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.6.1",
+      "version": "4.6.1",
+      "commit": "92f810873a2ae2387ddcd82e657c7ba1741b0efe",
+      "declared_api_version": "2.9.3",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.6.2",
+      "version": "4.6.2",
+      "commit": "1773b1ea05d60ccdb2c5185e48410267c5245632",
+      "declared_api_version": "2.9.3",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.6.3",
+      "version": "4.6.3",
+      "commit": "cfa7a6db46e8376273ec9ae833cf637fe7670b4e",
+      "declared_api_version": "2.9.3",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.6.4",
+      "version": "4.6.4",
+      "commit": "785320e7f6a5e228caf817b01dca69da0b83a012",
+      "declared_api_version": "2.9.3",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.6.5",
+      "version": "4.6.5",
+      "commit": "5e81347933adec219dab27a503f8dc9c4a1c522d",
+      "declared_api_version": "2.9.3",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.6.6",
+      "version": "4.6.6",
+      "commit": "c01265c4cffe98db2ee2fba651f7f254ca8afbec",
+      "declared_api_version": "2.9.3",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-4.6.7",
+      "version": "4.6.7",
+      "commit": "839bc696d066aca34ebd994ee1673c4b2d5afd7b",
+      "declared_api_version": "2.9.3",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-5.0.0",
+      "version": "5.0.0",
+      "commit": "cce295faeb27ebf9d57498ac5e35490c845b9d4f",
+      "declared_api_version": "2.11.2",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-5.0.1",
+      "version": "5.0.1",
+      "commit": "94136262a84293da0d8504724e7143df0d0baa12",
+      "declared_api_version": "2.11.2",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-5.0.2",
+      "version": "5.0.2",
+      "commit": "15b60912610d5a1e6712013079d3b2db4b78b85d",
+      "declared_api_version": "2.11.2",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-5.0.3",
+      "version": "5.0.3",
+      "commit": "0188e11dd7ece1ee8b6004145c4437d7455745d4",
+      "declared_api_version": "2.11.2",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-5.0.4",
+      "version": "5.0.4",
+      "commit": "100ee5dbe0eacfff30147ad1ee666d5c5eb35eb5",
+      "declared_api_version": "2.11.2",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-5.0.5",
+      "version": "5.0.5",
+      "commit": "4b794a9930435a8c011601365667b9f7de9d1e64",
+      "declared_api_version": "2.11.2",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-5.1.0",
+      "version": "5.1.0",
+      "commit": "da87be2b12893dfb769df8124afeb064f099dc71",
+      "declared_api_version": "2.11.4",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-5.1.1",
+      "version": "5.1.1",
+      "commit": "ea9f3800ce70ded6db66b2c9f0d2f0513399e969",
+      "declared_api_version": "2.11.4",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-5.1.2",
+      "version": "5.1.2",
+      "commit": "202ff8a099cfc1ca9421e7d30944b3c58a4a47cd",
+      "declared_api_version": "2.11.4",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-5.1.3",
+      "version": "5.1.3",
+      "commit": "6ede4e49ff1432ade8a75d37daf076b6000e2a57",
+      "declared_api_version": "2.11.4",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-5.1.4",
+      "version": "5.1.4",
+      "commit": "33e5e772200b5e2f9d23af8870ce7436ec216faa",
+      "declared_api_version": "2.11.4",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-5.2.0",
+      "version": "5.2.0",
+      "commit": "b2270f7f6fec1b10117564f642b961621ae0058a",
+      "declared_api_version": "2.15.1",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-5.2.1",
+      "version": "5.2.1",
+      "commit": "7e8db603f207fec1ee5dc192cacf44fed264452c",
+      "declared_api_version": "2.15.1",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-5.2.2",
+      "version": "5.2.2",
+      "commit": "89aad1aad9fc7d819a28db3dc01f19c6b1f1be8c",
+      "declared_api_version": "2.15.1",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-5.2.3",
+      "version": "5.2.3",
+      "commit": "0b63c3d17373f6132ea211c9dcd4241284ccdfaf",
+      "declared_api_version": "2.15.1",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-5.2.4",
+      "version": "5.2.4",
+      "commit": "a1e4649cb8ae581925acc161dbab5cbc6584c542",
+      "declared_api_version": "2.15.1",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-5.3.0",
+      "version": "5.3.0",
+      "commit": "9213075dd5f7b352208361c6a84c1c115efc898e",
+      "declared_api_version": "2.16.2",
+      "contract_status": "unreviewed"
+    },
+    {
+      "tag": "release-5.3.1",
+      "version": "5.3.1",
+      "commit": "f3cfbccd42dc07e7aa174b525f6d6dfd2d0595a0",
+      "declared_api_version": "2.16.2",
+      "contract_status": "unreviewed"
+    }
+  ]
+}

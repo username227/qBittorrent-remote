@@ -1,0 +1,183 @@
+{
+  "schema": 1,
+  "expected_daemon": "4.1.0",
+  "login": {
+    "status": 200,
+    "content_type": "text/plain"
+  },
+  "responses": {
+    "app/version": {
+      "status": 200,
+      "content_type": "text/plain",
+      "body": "v4.1.0"
+    },
+    "app/webapiVersion": {
+      "status": 200,
+      "content_type": "text/plain",
+      "body": 2.0
+    },
+    "app/buildInfo": {
+      "status": 404
+    },
+    "app/preferences": {
+      "status": 200,
+      "content_type": "application/json",
+      "shape": {
+        "RSSAutoDownloadingEnabled": "bool",
+        "RSSMaxArticlesPerFeed": "int",
+        "RSSProcessingEnabled": "bool",
+        "RSSRefreshInterval": "int",
+        "add_trackers": "str",
+        "add_trackers_enabled": "bool",
+        "alt_dl_limit": "int",
+        "alt_up_limit": "int",
+        "anonymous_mode": "bool",
+        "autorun_enabled": "bool",
+        "autorun_program": "str",
+        "banned_IPs": "str",
+        "bittorrent_protocol": "int",
+        "bypass_auth_subnet_whitelist": "str",
+        "bypass_auth_subnet_whitelist_enabled": "bool",
+        "bypass_local_auth": "bool",
+        "dht": "bool",
+        "dl_limit": "int",
+        "dont_count_slow_torrents": "bool",
+        "dyndns_domain": "str",
+        "dyndns_enabled": "bool",
+        "dyndns_password": "str",
+        "dyndns_service": "int",
+        "dyndns_username": "str",
+        "encryption": "int",
+        "export_dir": "str",
+        "export_dir_fin": "str",
+        "force_proxy": "bool",
+        "incomplete_files_ext": "bool",
+        "ip_filter_enabled": "bool",
+        "ip_filter_path": "str",
+        "ip_filter_trackers": "bool",
+        "limit_tcp_overhead": "bool",
+        "limit_utp_rate": "bool",
+        "listen_port": "int",
+        "locale": "str",
+        "lsd": "bool",
+        "mail_notification_auth_enabled": "bool",
+        "mail_notification_email": "str",
+        "mail_notification_enabled": "bool",
+        "mail_notification_password": "str",
+        "mail_notification_smtp": "str",
+        "mail_notification_ssl_enabled": "bool",
+        "mail_notification_username": "str",
+        "max_active_downloads": "int",
+        "max_active_torrents": "int",
+        "max_active_uploads": "int",
+        "max_connec": "int",
+        "max_connec_per_torrent": "int",
+        "max_ratio": "int",
+        "max_ratio_act": "int",
+        "max_ratio_enabled": "bool",
+        "max_seeding_time": "int",
+        "max_seeding_time_enabled": "bool",
+        "max_uploads": "int",
+        "max_uploads_per_torrent": "int",
+        "pex": "bool",
+        "preallocate_all": "bool",
+        "proxy_auth_enabled": "bool",
+        "proxy_ip": "str",
+        "proxy_password": "str",
+        "proxy_peer_connections": "bool",
+        "proxy_port": "int",
+        "proxy_torrents_only": "bool",
+        "proxy_type": "int",
+        "proxy_username": "str",
+        "queueing_enabled": "bool",
+        "random_port": "bool",
+        "save_path": "str",
+        "scan_dirs": {},
+        "schedule_from_hour": "int",
+        "schedule_from_min": "int",
+        "schedule_to_hour": "int",
+        "schedule_to_min": "int",
+        "scheduler_days": "int",
+        "scheduler_enabled": "bool",
+        "ssl_cert": "str",
+        "ssl_key": "str",
+        "temp_path": "str",
+        "temp_path_enabled": "bool",
+        "up_limit": "int",
+        "upnp": "bool",
+        "use_https": "bool",
+        "web_ui_address": "str",
+        "web_ui_domain_list": "str",
+        "web_ui_password": "str",
+        "web_ui_port": "int",
+        "web_ui_upnp": "bool",
+        "web_ui_username": "str"
+      }
+    },
+    "transfer/info": {
+      "status": 200,
+      "content_type": "application/json",
+      "shape": {
+        "connection_status": "str",
+        "dht_nodes": "int",
+        "dl_info_data": "int",
+        "dl_info_speed": "int",
+        "dl_rate_limit": "int",
+        "up_info_data": "int",
+        "up_info_speed": "int",
+        "up_rate_limit": "int"
+      }
+    },
+    "transfer/speedLimitsMode": {
+      "status": 200,
+      "content_type": "text/plain",
+      "body": 0
+    },
+    "torrents/info": {
+      "status": 200,
+      "content_type": "application/json",
+      "body": []
+    },
+    "torrents/categories": {
+      "status": 404
+    },
+    "torrents/tags": {
+      "status": 404
+    },
+    "sync/maindata?rid=0": {
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "categories": [],
+        "full_update": true,
+        "rid": 1,
+        "server_state": {
+          "alltime_dl": "int",
+          "alltime_ul": "int",
+          "average_time_queue": "int",
+          "connection_status": "str",
+          "dht_nodes": "int",
+          "dl_info_data": "int",
+          "dl_info_speed": "int",
+          "dl_rate_limit": "int",
+          "global_ratio": "str",
+          "queued_io_jobs": "int",
+          "queueing": "bool",
+          "read_cache_hits": "str",
+          "read_cache_overload": "str",
+          "refresh_interval": "int",
+          "total_buffers_size": "int",
+          "total_peer_connections": "int",
+          "total_queued_size": "int",
+          "total_wasted_session": "int",
+          "up_info_data": "int",
+          "up_info_speed": "int",
+          "up_rate_limit": "int",
+          "use_alt_speed_limits": "bool",
+          "write_cache_overload": "str"
+        },
+        "torrents": {}
+      }
+    }
+  }
+}

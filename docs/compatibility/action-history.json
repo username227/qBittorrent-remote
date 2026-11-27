@@ -1,0 +1,650 @@
+{
+  "schema": 1,
+  "status": "lexical-unreviewed",
+  "inventory_sha256": "6279394052f6ebf791ff0dda33c7e4231d92326a5d9f39ba4b0310f56a1f14ec",
+  "release_pins_sha256": "a1a71afe97097cbf6364850f21f9bd02e5131e8104cf77dfa4c4c34a031322c5",
+  "counts": {
+    "releases": 68,
+    "adjacent_pairs": 67,
+    "candidate_records": 6481,
+    "distinct_actions": 135,
+    "unique_web_source_blobs": 382,
+    "changed_tree_entries": 16373
+  },
+  "releases": [
+    {
+      "version": "4.1.0",
+      "action_count": 61,
+      "changed_tree_entries": null,
+      "added": [
+        "AppController::defaultSavePath",
+        "AppController::preferences",
+        "AppController::setPreferences",
+        "AppController::shutdown",
+        "AppController::version",
+        "AppController::webapiVersion",
+        "AuthController::login",
+        "AuthController::logout",
+        "LogController::main",
+        "LogController::peers",
+        "RSSController::addFeed",
+        "RSSController::addFolder",
+        "RSSController::items",
+        "RSSController::moveItem",
+        "RSSController::removeItem",
+        "RSSController::removeRule",
+        "RSSController::renameRule",
+        "RSSController::rules",
+        "RSSController::setRule",
+        "SyncController::maindata",
+        "SyncController::torrentPeers",
+        "TorrentsController::add",
+        "TorrentsController::addTrackers",
+        "TorrentsController::bottomPrio",
+        "TorrentsController::createCategory",
+        "TorrentsController::decreasePrio",
+        "TorrentsController::delete",
+        "TorrentsController::downloadLimit",
+        "TorrentsController::filePrio",
+        "TorrentsController::files",
+        "TorrentsController::increasePrio",
+        "TorrentsController::info",
+        "TorrentsController::pause",
+        "TorrentsController::pieceHashes",
+        "TorrentsController::pieceStates",
+        "TorrentsController::properties",
+        "TorrentsController::recheck",
+        "TorrentsController::removeCategories",
+        "TorrentsController::rename",
+        "TorrentsController::resume",
+        "TorrentsController::setAutoManagement",
+        "TorrentsController::setCategory",
+        "TorrentsController::setDownloadLimit",
+        "TorrentsController::setForceStart",
+        "TorrentsController::setLocation",
+        "TorrentsController::setShareLimits",
+        "TorrentsController::setSuperSeeding",
+        "TorrentsController::setUploadLimit",
+        "TorrentsController::toggleFirstLastPiecePrio",
+        "TorrentsController::toggleSequentialDownload",
+        "TorrentsController::topPrio",
+        "TorrentsController::trackers",
+        "TorrentsController::uploadLimit",
+        "TorrentsController::webseeds",
+        "TransferController::downloadLimit",
+        "TransferController::info",
+        "TransferController::setDownloadLimit",
+        "TransferController::setUploadLimit",
+        "TransferController::speedLimitsMode",
+        "TransferController::toggleSpeedLimitsMode",
+        "TransferController::uploadLimit"
+      ],
+      "removed": []
+    },
+    {
+      "version": "4.1.1",
+      "action_count": 61,
+      "changed_tree_entries": 220,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.1.2",
+      "action_count": 62,
+      "changed_tree_entries": 396,
+      "added": [
+        "TorrentsController::reannounce"
+      ],
+      "removed": []
+    },
+    {
+      "version": "4.1.3",
+      "action_count": 63,
+      "changed_tree_entries": 413,
+      "added": [
+        "TorrentsController::editCategory"
+      ],
+      "removed": []
+    },
+    {
+      "version": "4.1.4",
+      "action_count": 75,
+      "changed_tree_entries": 202,
+      "added": [
+        "SearchController::categories",
+        "SearchController::delete",
+        "SearchController::enablePlugin",
+        "SearchController::installPlugin",
+        "SearchController::plugins",
+        "SearchController::results",
+        "SearchController::start",
+        "SearchController::status",
+        "SearchController::stop",
+        "SearchController::uninstallPlugin",
+        "SearchController::updatePlugins",
+        "TorrentsController::categories"
+      ],
+      "removed": []
+    },
+    {
+      "version": "4.1.5",
+      "action_count": 77,
+      "changed_tree_entries": 244,
+      "added": [
+        "TorrentsController::editTracker",
+        "TorrentsController::removeTrackers"
+      ],
+      "removed": []
+    },
+    {
+      "version": "4.1.6",
+      "action_count": 77,
+      "changed_tree_entries": 150,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.1.7",
+      "action_count": 77,
+      "changed_tree_entries": 147,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.1.8",
+      "action_count": 78,
+      "changed_tree_entries": 18,
+      "added": [
+        "RSSController::refreshItem"
+      ],
+      "removed": []
+    },
+    {
+      "version": "4.1.9",
+      "action_count": 78,
+      "changed_tree_entries": 16,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.1.9.1",
+      "action_count": 78,
+      "changed_tree_entries": 6,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.2.0",
+      "action_count": 88,
+      "changed_tree_entries": 660,
+      "added": [
+        "AppController::buildInfo",
+        "AppController::networkInterfaceAddressList",
+        "AppController::networkInterfaceList",
+        "TorrentsController::addPeers",
+        "TorrentsController::addTags",
+        "TorrentsController::createTags",
+        "TorrentsController::deleteTags",
+        "TorrentsController::removeTags",
+        "TorrentsController::tags",
+        "TransferController::banPeers"
+      ],
+      "removed": []
+    },
+    {
+      "version": "4.2.1",
+      "action_count": 89,
+      "changed_tree_entries": 140,
+      "added": [
+        "TorrentsController::renameFile"
+      ],
+      "removed": []
+    },
+    {
+      "version": "4.2.2",
+      "action_count": 89,
+      "changed_tree_entries": 353,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.2.3",
+      "action_count": 89,
+      "changed_tree_entries": 152,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.2.4",
+      "action_count": 89,
+      "changed_tree_entries": 228,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.2.5",
+      "action_count": 91,
+      "changed_tree_entries": 120,
+      "added": [
+        "RSSController::markAsRead",
+        "RSSController::matchingArticles"
+      ],
+      "removed": []
+    },
+    {
+      "version": "4.3.0",
+      "action_count": 90,
+      "changed_tree_entries": 976,
+      "added": [],
+      "removed": [
+        "SearchController::categories"
+      ]
+    },
+    {
+      "version": "4.3.0.1",
+      "action_count": 90,
+      "changed_tree_entries": 8,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.3.1",
+      "action_count": 90,
+      "changed_tree_entries": 378,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.3.2",
+      "action_count": 90,
+      "changed_tree_entries": 325,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.3.3",
+      "action_count": 91,
+      "changed_tree_entries": 290,
+      "added": [
+        "TorrentsController::renameFolder"
+      ],
+      "removed": []
+    },
+    {
+      "version": "4.3.4",
+      "action_count": 91,
+      "changed_tree_entries": 259,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.3.4.1",
+      "action_count": 91,
+      "changed_tree_entries": 9,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.3.5",
+      "action_count": 91,
+      "changed_tree_entries": 227,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.3.6",
+      "action_count": 91,
+      "changed_tree_entries": 209,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.3.7",
+      "action_count": 91,
+      "changed_tree_entries": 144,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.3.8",
+      "action_count": 91,
+      "changed_tree_entries": 169,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.3.9",
+      "action_count": 91,
+      "changed_tree_entries": 132,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.4.0",
+      "action_count": 93,
+      "changed_tree_entries": 775,
+      "added": [
+        "TorrentsController::setDownloadPath",
+        "TorrentsController::setSavePath"
+      ],
+      "removed": []
+    },
+    {
+      "version": "4.4.1",
+      "action_count": 93,
+      "changed_tree_entries": 141,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.4.2",
+      "action_count": 93,
+      "changed_tree_entries": 135,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.4.3",
+      "action_count": 93,
+      "changed_tree_entries": 178,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.4.3.1",
+      "action_count": 93,
+      "changed_tree_entries": 117,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.4.4",
+      "action_count": 93,
+      "changed_tree_entries": 34,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.4.5",
+      "action_count": 93,
+      "changed_tree_entries": 8,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.5.0",
+      "action_count": 95,
+      "changed_tree_entries": 1256,
+      "added": [
+        "TorrentsController::export",
+        "TransferController::setSpeedLimitsMode"
+      ],
+      "removed": []
+    },
+    {
+      "version": "4.5.1",
+      "action_count": 95,
+      "changed_tree_entries": 226,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.5.2",
+      "action_count": 95,
+      "changed_tree_entries": 141,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.5.3",
+      "action_count": 95,
+      "changed_tree_entries": 133,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.5.4",
+      "action_count": 95,
+      "changed_tree_entries": 142,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.5.5",
+      "action_count": 95,
+      "changed_tree_entries": 154,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.6.0",
+      "action_count": 96,
+      "changed_tree_entries": 840,
+      "added": [
+        "RSSController::setFeedURL"
+      ],
+      "removed": []
+    },
+    {
+      "version": "4.6.1",
+      "action_count": 97,
+      "changed_tree_entries": 181,
+      "added": [
+        "TorrentsController::count"
+      ],
+      "removed": []
+    },
+    {
+      "version": "4.6.2",
+      "action_count": 97,
+      "changed_tree_entries": 140,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.6.3",
+      "action_count": 97,
+      "changed_tree_entries": 89,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.6.4",
+      "action_count": 97,
+      "changed_tree_entries": 107,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.6.5",
+      "action_count": 97,
+      "changed_tree_entries": 88,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.6.6",
+      "action_count": 97,
+      "changed_tree_entries": 129,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.6.7",
+      "action_count": 97,
+      "changed_tree_entries": 121,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "5.0.0",
+      "action_count": 106,
+      "changed_tree_entries": 749,
+      "added": [
+        "AppController::getDirectoryContent",
+        "AppController::sendTestEmail",
+        "SearchController::downloadTorrent",
+        "TorrentCreatorController::addTask",
+        "TorrentCreatorController::deleteTask",
+        "TorrentCreatorController::status",
+        "TorrentCreatorController::torrentFile",
+        "TorrentsController::SSLParameters",
+        "TorrentsController::setSSLParameters",
+        "TorrentsController::start",
+        "TorrentsController::stop"
+      ],
+      "removed": [
+        "TorrentsController::pause",
+        "TorrentsController::resume"
+      ]
+    },
+    {
+      "version": "5.0.1",
+      "action_count": 106,
+      "changed_tree_entries": 545,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "5.0.2",
+      "action_count": 106,
+      "changed_tree_entries": 161,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "5.0.3",
+      "action_count": 106,
+      "changed_tree_entries": 133,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "5.0.4",
+      "action_count": 106,
+      "changed_tree_entries": 91,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "5.0.5",
+      "action_count": 106,
+      "changed_tree_entries": 84,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "5.1.0",
+      "action_count": 112,
+      "changed_tree_entries": 452,
+      "added": [
+        "AppController::cookies",
+        "AppController::setCookies",
+        "TorrentsController::addWebSeeds",
+        "TorrentsController::editWebSeed",
+        "TorrentsController::removeWebSeeds",
+        "TorrentsController::setTags"
+      ],
+      "removed": []
+    },
+    {
+      "version": "5.1.1",
+      "action_count": 112,
+      "changed_tree_entries": 159,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "5.1.2",
+      "action_count": 112,
+      "changed_tree_entries": 123,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "5.1.3",
+      "action_count": 112,
+      "changed_tree_entries": 110,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "5.1.4",
+      "action_count": 112,
+      "changed_tree_entries": 18,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "5.2.0",
+      "action_count": 123,
+      "changed_tree_entries": 653,
+      "added": [
+        "AppController::deleteAPIKey",
+        "AppController::processInfo",
+        "AppController::rotateAPIKey",
+        "ClientDataController::load",
+        "ClientDataController::store",
+        "RSSController::setFeedRefreshInterval",
+        "TorrentsController::fetchMetadata",
+        "TorrentsController::parseMetadata",
+        "TorrentsController::pieceAvailability",
+        "TorrentsController::saveMetadata",
+        "TorrentsController::setComment"
+      ],
+      "removed": []
+    },
+    {
+      "version": "5.2.1",
+      "action_count": 123,
+      "changed_tree_entries": 140,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "5.2.2",
+      "action_count": 123,
+      "changed_tree_entries": 163,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "5.2.3",
+      "action_count": 123,
+      "changed_tree_entries": 94,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "5.2.4",
+      "action_count": 123,
+      "changed_tree_entries": 166,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "5.3.0",
+      "action_count": 132,
+      "changed_tree_entries": 633,
+      "added": [
+        "AppController::getFreeSpaceAtPath",
+        "RSSController::cloneRule",
+        "RSSController::exportRules",
+        "RSSController::importRules",
+        "TorrentsController::downloadFile",
+        "TransferController::getSpeedLimits",
+        "TransferController::pauseSession",
+        "TransferController::resumeSession",
+        "TransferController::setSpeedLimits"
+      ],
+      "removed": []
+    },
+    {
+      "version": "5.3.1",
+      "action_count": 132,
+      "changed_tree_entries": 173,
+      "added": [],
+      "removed": []
+    }
+  ]
+}

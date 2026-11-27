@@ -213,6 +213,14 @@ endif()
 
 if(BUILD_TESTING)
     find_package(Qt6 6.6 REQUIRED COMPONENTS Test)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_test(NAME compatibility_inventory_primitives
+        COMMAND "${Python3_EXECUTABLE}" -B "${PROJECT_SOURCE_DIR}/tools/compatibility/test_inventory.py")
+    add_test(NAME compatibility_inventory_evidence
+        COMMAND "${Python3_EXECUTABLE}" -B "${PROJECT_SOURCE_DIR}/tools/compatibility/test_evidence.py")
+    set_tests_properties(compatibility_inventory_primitives compatibility_inventory_evidence
+        PROPERTIES LABELS "compatibility;tooling" TIMEOUT 30)
+
 
     # Tests exercise user-visible workflows, not implementation units
     # or hard-coded protocol inputs. All tests run through CTest.
