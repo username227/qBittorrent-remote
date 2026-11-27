@@ -172,6 +172,11 @@ QVariant TorrentModel::data(const QModelIndex &index, int role) const
         value = record.value(QStringLiteral("created_on"));
     if (value.isUndefined() && col == 35)
         value = record.value(QStringLiteral("is_private"));
+    // The configured ratio_limit can be -2 (inherit) or a dormant custom
+    // value. The native column displays the effective limit, serialized as
+    // max_ratio since 4.1.0. Preserve the raw record for editing actions.
+    if (col == 28)
+        value = record.value(QStringLiteral("max_ratio"));
 
     if (role == Qt::DecorationRole && col == 0)
         return QIcon(QStringLiteral(":/icons/") + stateIcon(record.value(QStringLiteral("state")).toString())
@@ -242,6 +247,8 @@ QVariant TorrentModel::data(const QModelIndex &index, int role) const
     }
     if (value.isUndefined() || value.isNull())
         return QStringLiteral("—");
+    if (col == 28 && (!value.isDouble() || value.toDouble() < -1))
+        return QStringLiteral("—");
     // Native "Hide zero and infinity values" changes presentation only.
     // UserRole retains the complete server value for sorting/actions.
     if (role == Qt::DisplayRole && m_hideZeroValues && value.isDouble())
@@ -254,9 +261,11 @@ QVariant TorrentModel::data(const QModelIndex &index, int role) const
             || col == 7 || col == 8 || col == 9 || col == 12
             || col == 17 || col == 18 || col == 19 || col == 20
             || col == 21 || col == 22 || col == 23 || col == 24
-            || col == 28 || col == 34;
-        const bool infinite = number < 0
-            && (col == 8 || col == 9 || col == 28 || col == 34);
+            || col == 28 || col == 34 || col == 36;
+        const bool infinite = (number < 0
+            && (col == 8 || col == 9 || col == 28 || col == 34))
+            || (col == 8 && number >= 8640000)
+            || ((col == 17 || col == 18) && number <= 0);
         if (applies && numericColumn && (number == 0 || infinite))
             return QString();
     }
@@ -292,13 +301,24 @@ QVariant TorrentModel::data(const QModelIndex &index, int role) const
     if (byteColumn(col))
         return bytesText(number, col == 1 ? 2 : 1);
     if (speedColumn(col))
-        return number < 0 ? QStringLiteral("∞") : bytesText(number) + QStringLiteral("/s");
+    {
+        // Per-torrent limit getters expose nonpositive values for unlimited.
+        if ((col == 17 || col == 18) && number <= 0)
+            return QStringLiteral("∞");
+        return number < 0 ? QStringLiteral("—") : bytesText(number) + QStringLiteral("/s");
+    }
     if (durationColumn(col))
         return durationText(static_cast<qint64>(number));
     if (timeColumn(col))
         return DatePresentation::format(static_cast<qint64>(number), m_dateFormat);
-    if (col == 9 || col == 28)
-        return number < 0 ? QStringLiteral("∞") : QLocale().toString(number, 'f', 2);
+    if (col == 9 || col == 28 || col == 36)
+        return number == -1 ? QStringLiteral("∞") : (number < 0
+            ? QStringLiteral("—") : QLocale().toString(number, 'f', 2));
+    // Both the historical helper and the modern serializer already convert
+    // the internal zero-based queue to one-based positions; zero is unqueued.
+    if (col == 37)
+        return number == 0 ? QStringLiteral("*") : (number < 0
+            ? QStringLiteral("—") : QLocale().toString(static_cast<qint64>(number)));
     return QLocale().toString(static_cast<qint64>(number));
 }
 
