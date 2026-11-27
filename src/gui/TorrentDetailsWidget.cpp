@@ -41,6 +41,7 @@
 #include <QProgressBar>
 #include <QRegularExpression>
 #include <QScrollBar>
+#include <QScopedValueRollback>
 #include <QSignalBlocker>
 #include <QStyledItemDelegate>
 #include <QStyleOptionViewItem>
@@ -842,6 +843,18 @@ TorrentDetailsWidget::TorrentDetailsWidget(QWidget *parent)
         rename->setIconVisibleInMenu(true);
         rename->setEnabled(!selectedContentPath().isEmpty());
         connect(rename, &QAction::triggered, this, &TorrentDetailsWidget::renameSelectedContent);
+        auto *batchRename = menu.addAction(QIcon(QStringLiteral(":/icons/edit-rename.svg")), tr("Batch rename..."));
+        batchRename->setObjectName(QStringLiteral("contentBatchRename"));
+        batchRename->setIconVisibleInMenu(true);
+        const QString hash = m_hash;
+        const quint64 generation = m_contentSelectionGeneration;
+        const QList<int> ids = selectedContentFileIds();
+        batchRename->setEnabled(!ids.isEmpty());
+        connect(batchRename, &QAction::triggered, this, [this, hash, generation, ids]() {
+            if (hash == m_hash && generation == m_contentSelectionGeneration
+                && ids == selectedContentFileIds())
+                batchRenameSelectedContent();
+        });
         menu.addSeparator();
         QMenu *priorityMenu = menu.addMenu(tr("Priority"));
         for (const auto option : {
@@ -1799,6 +1812,45 @@ QString TorrentDetailsWidget::selectedContentPath() const
         parts.prepend(part);
     }
     return parts.join(QLatin1Char('/'));
+}
+
+bool TorrentDetailsWidget::contentBatchSelectionValid(const QString &hash, quint64 generation) const
+{
+    return !hash.isEmpty() && hash == m_hash && generation == m_contentSelectionGeneration
+        && m_currentTab == 4 && isVisible();
+}
+
+QList<int> TorrentDetailsWidget::selectedContentFileIds() const
+{
+    if (!contentBatchSelectionValid(m_hash, m_contentSelectionGeneration)
+        || !m_contentKnown || !m_pendingContentHash.isEmpty() || m_contentRenameDialogOpen)
+        return {};
+    QSet<int> ids;
+    const auto collect = [&ids](QTreeWidgetItem *item, const auto &self) -> void {
+        const QVariant id = item->data(0, Qt::UserRole);
+        if (id.isValid())
+        {
+            bool ok = false;
+            const int index = id.toInt(&ok);
+            if (ok && index >= 0) ids.insert(index);
+            return;
+        }
+        for (int i = 0; i < item->childCount(); ++i) self(item->child(i), self);
+    };
+    for (auto *item : m_ui->filesList->selectedItems()) collect(item, collect);
+    QList<int> result = ids.values();
+    std::sort(result.begin(), result.end());
+    return result;
+}
+
+void TorrentDetailsWidget::batchRenameSelectedContent()
+{
+    const auto ids = selectedContentFileIds();
+    if (ids.isEmpty()) return;
+    // The originating pane opens the existing modal content-layout editor.
+    // Guard the other rename actions for the duration of that editor.
+    QScopedValueRollback<bool> guard(m_contentRenameDialogOpen, true);
+    emit contentBatchRenameRequested(m_hash, ids, m_contentSelectionGeneration);
 }
 
 void TorrentDetailsWidget::renameSelectedContent()

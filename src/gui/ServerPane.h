@@ -82,6 +82,7 @@ public:
     void displayTorrentDetailsError(const QString &hash, int tab, const QString &reason);
     void refreshSelectedDetails();
     void finishContentRename(const QString &hash, const QString &oldPath, bool success, const QString &reason);
+    bool contentBatchSelectionValid(const QString &hash, quint64 generation) const;
     void setTrackerTierEditingSupported(bool supported);
     void setSelectedTrackerReannounceSupported(bool supported);
     void finishTrackerTierEdit(const QString &hash);
@@ -112,6 +113,7 @@ signals:
     void torrentDetailsRequested(const QString &hash, int tab, bool availability);
     void filePriorityRequested(const QString &hash, const QList<int> &ids, int priority);
     void contentRenameRequested(const QString &hash, const QString &oldPath, const QString &newPath, bool folder);
+    void contentBatchRenameRequested(const QString &hash, const QList<int> &ids, quint64 generation);
     void trackerTiersRequested(const QString &hash, const QJsonObject &tiers);
     void trackerDetailActionRequested(const QString &hash, Remote::TrackerDetailAction action,
                                       const QStringList &urls, const QString &replacement);

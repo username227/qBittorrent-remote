@@ -2840,6 +2840,21 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
     connect(connection->pane, &ServerPane::filePriorityRequested,
             session, &Remote::RemoteSession::setFilePriority);
     connect(connection->pane, &ServerPane::contentRenameRequested, session, &Remote::RemoteSession::renameTorrentContentItem);
+    connect(connection->pane, &ServerPane::contentBatchRenameRequested, this,
+        [this, connection](const QString &hash, const QList<int> &ids, quint64 generation) {
+            const auto valid = [this, connection, hash, generation]() {
+                return containsConnection(connection) && connection->connected
+                    && activeConnection() == connection
+                    && selectedTorrentHashes() == QStringList{hash}
+                    && connection->pane->model()->torrents().contains(hash)
+                    && connection->pane->contentBatchSelectionValid(hash, generation);
+            };
+            if (ids.isEmpty() || !valid()) return;
+            RemoteTorrentContentLayoutDialog dialog(connection->session, hash, valid, this,
+                QSet<int>(ids.cbegin(), ids.cend()));
+            trackDialogGeometry(dialog, QStringLiteral("ManageTorrentContent"));
+            dialog.exec();
+        });
     connect(session, &Remote::RemoteSession::torrentContentRenameFinished, connection->pane, &ServerPane::finishContentRename);
     connect(connection->pane, &ServerPane::addPeersRequested, session, &Remote::RemoteSession::addTorrentPeers);
     connect(connection->pane, &ServerPane::banPeersRequested, session, &Remote::RemoteSession::banTorrentPeers);

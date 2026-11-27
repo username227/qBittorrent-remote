@@ -5,6 +5,7 @@
 #include <QHash>
 #include <QJsonArray>
 #include <QPointer>
+#include <QSet>
 #include <QString>
 
 #include <functional>
@@ -22,8 +23,9 @@ class RemoteTorrentContentLayoutDialog final : public QDialog
 public:
     RemoteTorrentContentLayoutDialog(Remote::RemoteSession *session,
         QString hash, std::function<bool()> selectionStillValid,
-        QWidget *parent = nullptr);
+        QWidget *parent = nullptr, QSet<int> selectedIds = {});
     ~RemoteTorrentContentLayoutDialog() override;
+    void reject() override;
 
 private:
     void reload();
@@ -44,6 +46,10 @@ private:
     QStandardItemModel *m_model = nullptr;
     QHash<int, QString> m_original;
     QString m_commonPrefix;
+    QHash<int, QString> m_commonSuffixes;
+    QSet<int> m_selectedIds;
+    bool m_initialSelection = true;
+    QSet<QString> m_pendingPaths;
     int m_pending = 0;
     bool m_loading = false;
 };
