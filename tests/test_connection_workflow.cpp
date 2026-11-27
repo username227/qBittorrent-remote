@@ -63,6 +63,7 @@
 #include <QMenu>
 #include <QPushButton>
 #include <QSettings>
+#include <QSystemTrayIcon>
 #include <QScopeGuard>
 #include <QScrollBar>
 #include <QShortcut>
@@ -3691,7 +3692,16 @@ private slots:
                 auto *apply = dlg->findChild<QPushButton *>(QStringLiteral("preferencesApply"));
                 QVERIFY(sections && notification && audio && tray && apply);
                 sections->setCurrentRow(1);
-                QVERIFY(notification->isEnabled() && audio->isEnabled() && !tray->isChecked());
+                QVERIFY(notification->isEnabled() && audio->isEnabled());
+                // Default is enabled even on offscreen/headless platforms;
+                // an unavailable host must not erase the saved preference.
+                QVERIFY(tray->isChecked());
+                auto *startup = dlg->findChild<QComboBox *>(QStringLiteral("windowStateComboBox"));
+                QVERIFY(startup);
+                const int hidden = startup->findData(QStringLiteral("hidden"));
+                QVERIFY(hidden >= 0);
+                QCOMPARE(bool(startup->model()->flags(startup->model()->index(hidden, 0)) & Qt::ItemIsEnabled),
+                    QSystemTrayIcon::isSystemTrayAvailable());
                 QCOMPARE(notification->isChecked(), beforeNotify);
                 QCOMPARE(audio->isChecked(), beforeSound);
                 notification->setChecked(notify);
@@ -3711,6 +3721,7 @@ private slots:
         changePreferences(true, false, false, true, true);
         QCOMPARE(settings.value(QStringLiteral("Preferences/Behavior/NotifyTorrentCompletion")).toBool(), false);
         QCOMPARE(settings.value(QStringLiteral("Preferences/Behavior/SoundTorrentCompletion")).toBool(), true);
+        QCOMPARE(settings.value(QStringLiteral("Preferences/Behavior/EnableTray")).toBool(), true);
 
         // Same infohash on a different server must complete independently.
         // This time progress arrives first; sound-only still dispatches once.

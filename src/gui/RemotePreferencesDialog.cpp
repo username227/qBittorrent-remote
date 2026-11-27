@@ -618,8 +618,11 @@ void RemotePreferencesDialog::loadLocalBehaviorControls()
     unlock(m_ui->windowStateComboBox);
     if (DesktopAutostart::available())
         unlock(m_ui->checkStartup);
-    if (QSystemTrayIcon::isSystemTrayAvailable())
+    const bool trayAvailable = QSystemTrayIcon::isSystemTrayAvailable();
+    if (trayAvailable)
         unlock(m_ui->checkShowSystray);
+    else
+        m_ui->checkShowSystray->setToolTip(tr("The system tray is unavailable in this desktop session. Your saved preference is retained."));
     unlock(m_ui->checkMinimizeToSysTray);
     unlock(m_ui->checkCloseToSystray);
     unlock(m_ui->comboTrayIcon);
@@ -645,8 +648,7 @@ void RemotePreferencesDialog::loadLocalBehaviorControls()
     const int startupIndex = m_ui->windowStateComboBox->findData(startupWindowState);
     m_ui->windowStateComboBox->setCurrentIndex(startupIndex >= 0 ? startupIndex : 0);
     m_ui->checkShowSystray->setChecked(m_settings.value(
-        QStringLiteral("Preferences/Behavior/EnableTray"), false).toBool()
-        && QSystemTrayIcon::isSystemTrayAvailable());
+        QStringLiteral("Preferences/Behavior/EnableTray"), true).toBool());
     m_ui->checkMinimizeToSysTray->setChecked(m_settings.value(
         QStringLiteral("Preferences/Behavior/MinimizeToTray"), false).toBool());
     m_ui->checkCloseToSystray->setChecked(m_settings.value(
@@ -660,6 +662,13 @@ void RemotePreferencesDialog::loadLocalBehaviorControls()
         m_ui->checkMinimizeToSysTray->setEnabled(active);
         m_ui->checkCloseToSystray->setEnabled(active);
         m_ui->comboTrayIcon->setEnabled(active);
+        // Hidden startup is safe only when a usable tray can restore the window.
+        const int hidden = m_ui->windowStateComboBox->findData(QStringLiteral("hidden"));
+        if (auto *model = qobject_cast<QStandardItemModel *>(m_ui->windowStateComboBox->model()))
+            if (auto *item = model->item(hidden))
+                item->setEnabled(active);
+        if (!active && m_ui->windowStateComboBox->currentIndex() == hidden)
+            m_ui->windowStateComboBox->setCurrentIndex(0);
     };
     updateTrayInputs();
 
@@ -4159,10 +4168,11 @@ bool RemotePreferencesDialog::applyLocalChanges()
     }
     if (m_behaviorDirty)
     {
-        const bool tray = m_ui->checkShowSystray->isChecked()
-            && QSystemTrayIcon::isSystemTrayAvailable();
+        // Save the preference independently of transient platform availability.
+        const bool tray = m_ui->checkShowSystray->isChecked();
         if (m_ui->windowStateComboBox->currentData().toString()
-                == QLatin1String("hidden") && !tray)
+                == QLatin1String("hidden")
+            && !(tray && QSystemTrayIcon::isSystemTrayAvailable()))
         {
             QMessageBox::warning(this, tr("Tray required"),
                 tr("A hidden startup window requires an enabled, available system tray. "

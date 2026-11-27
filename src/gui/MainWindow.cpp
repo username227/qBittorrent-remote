@@ -2096,7 +2096,7 @@ void MainWindow::updateTraySettings()
         ? upstreamIcon(dark ? "dark/qbittorrent-tray-mono" : "qbittorrent-tray-mono")
         : windowIcon());
     const bool enabled = m_settings->value(
-        QStringLiteral("Preferences/Behavior/EnableTray"), false).toBool()
+        QStringLiteral("Preferences/Behavior/EnableTray"), true).toBool()
         && QSystemTrayIcon::isSystemTrayAvailable();
     if (!enabled)
     {

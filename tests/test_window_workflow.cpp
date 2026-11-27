@@ -124,6 +124,7 @@ private slots:
             QTRY_VERIFY(window.isVisible());
             auto *tray = window.findChild<QSystemTrayIcon *>(QStringLiteral("remoteTrayIcon"));
             QVERIFY(tray);
+            QCOMPARE(tray->isVisible(), QSystemTrayIcon::isSystemTrayAvailable());
             const QImage normal = tray->icon().pixmap(32, 32).toImage();
             QVERIFY(!normal.isNull());
             const QColor background = normal.pixelColor(16, 5);
@@ -132,12 +133,15 @@ private slots:
             QVERIFY(background.green() >= background.blue());
             QCOMPARE(window.windowIcon().pixmap(32, 32).toImage(), normal);
         }
+        // An explicit opt-out must override the enabled-by-default setting.
+        settings.setValue(QStringLiteral("Preferences/Behavior/EnableTray"), false);
         // Reopen with saved Monochrome, then change the live window palette.
         settings.setValue(style, 1);
         MainWindow window(nullptr, &settings);
         window.show();
         auto *tray = window.findChild<QSystemTrayIcon *>(QStringLiteral("remoteTrayIcon"));
         QVERIFY(tray);
+        QVERIFY(!tray->isVisible());
         const auto checkSymbolic = [tray](bool lightInk) {
             const QImage img = tray->icon().pixmap(32, 32).toImage();
             QVERIFY(!img.isNull());
