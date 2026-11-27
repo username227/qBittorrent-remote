@@ -5,6 +5,10 @@ on:
     branches:
       - master
       - 'feature/**'
+  # Seed a default-branch compiler cache accessible to subsequent PRs.
+  push:
+    branches:
+      - master
   workflow_dispatch:
 
 permissions:
@@ -26,6 +30,7 @@ jobs:
           install: >-
             git
             mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-ccache
             mingw-w64-ucrt-x86_64-cmake
             mingw-w64-ucrt-x86_64-ninja
             mingw-w64-ucrt-x86_64-python
@@ -36,9 +41,31 @@ jobs:
             mingw-w64-ucrt-x86_64-openssl
             mingw-w64-ucrt-x86_64-nsis
 
+      - name: Restore compiler cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: windows-ucrt64-ccache-v1-${{ github.sha }}
+          restore-keys: |
+            windows-ucrt64-ccache-v1-
+
       - name: Build, CTest, stage and package installer
         shell: msys2 {0}
-        run: bash packaging/windows/build-installer.sh
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+          CCACHE_MAXSIZE: 500M
+          CCACHE_COMPILERCHECK: content
+          CMAKE_CXX_COMPILER_LAUNCHER: ccache
+        run: |
+          ccache --zero-stats
+          bash packaging/windows/build-installer.sh
+
+      - name: Compiler cache statistics
+        if: always()
+        shell: msys2 {0}
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+        run: ccache --show-stats
 
       - name: Upload installer EXE
         uses: actions/upload-artifact@v4
