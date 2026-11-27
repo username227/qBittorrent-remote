@@ -51,6 +51,25 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(changes, history["counts"]["changed_tree_entries"])
         self.assertEqual((history["releases"][0]["action_count"], len(actions)), (61, 132))
 
+    def test_connection_controller_review_covers_release_lock(self):
+        lock = json.loads((ROOT / "releases.lock.json").read_text(encoding="utf-8"))
+        review = json.loads((ROOT / "connection-controller-review.json").read_text(encoding="utf-8"))
+        expected = [(r["version"], r["commit"]) for r in lock["releases"]]
+        rows = review["releases"]
+        self.assertEqual([(r["version"], r["commit"]) for r in rows], expected)
+        self.assertEqual(len({r["sync_controller_blob"] for r in rows}), 26)
+        self.assertEqual(len({r["auth_controller_blob"] for r in rows}), 9)
+        self.assertEqual([r["version"] for r in rows if r["categories_wire_shape"] == "name-array"],
+                         ["4.1.0", "4.1.1", "4.1.2"])
+        self.assertEqual([r["version"] for r in rows if r["login_controller_contract"] == "APIStatus::Ok/Unauthorized"],
+                         ["5.2.0", "5.2.1", "5.2.2", "5.2.3", "5.2.4", "5.3.0", "5.3.1"])
+        for r in rows:
+            self.assertRegex(r["sync_controller_blob"], r"^[0-9a-f]{40}$")
+            self.assertRegex(r["auth_controller_blob"], r"^[0-9a-f]{40}$")
+            self.assertIn(r["categories_wire_shape"], ("name-array", "definition-map"))
+            self.assertIn(r["login_controller_contract"], ("Ok./Fails. text", "APIStatus::Ok/Unauthorized"))
+            self.assertEqual(r["full_connection_contract"], "pending")
+
     def test_empty_4_1_0_live_evidence(self):
         evidence = json.loads((ROOT / "evidence/qbt-4.1.0-baseline.json").read_text(encoding="utf-8"))
         self.assertEqual(evidence["expected_daemon"], "4.1.0")

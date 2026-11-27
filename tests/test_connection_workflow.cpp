@@ -126,6 +126,20 @@ public:
     }
     int prohibitedCapabilityRequests() const noexcept { return m_prohibitedCapabilityRequests; }
 
+    // Scope: login/logout, session cookie and category sync shape only.
+    // Not a complete historical server fixture.
+    void setHistoricalConnectionProfile(const QString &version, const QString &api,
+                                        bool modernLogin, bool listCategories)
+    {
+        setReportedVersions("v" + version, api);
+        m_historicalConnection = true;
+        m_modernResponses = modernLogin;
+        m_listCategories = listCategories;
+        m_sessionCookie = modernLogin ? QByteArrayLiteral("QBT_SID_fixture")
+                                     : QByteArrayLiteral("SID");
+    }
+    int invalidHistoricalSyncReplies() const { return m_invalidHistoricalSyncReplies; }
+
     explicit DemoQbittorrentServer(bool acceptPassword, QObject *parent = nullptr,
                                    bool acceptBlank = false)
         : QObject(parent)
@@ -158,7 +172,8 @@ public:
                         const QByteArray requestLine = headers.split('\n').first().trimmed();
                         const QList<QByteArray> fields = requestLine.split(' ');
                         const QByteArray path = fields.value(1);
-                        const bool hasCookie = headers.contains("QBT_SID=demo-session");
+                        const bool hasCookie = headers.contains(m_sessionCookie + "=demo-session")
+                            && (!m_historicalConnection || m_historicalAuthenticated);
 
                         int code = 200;
                         QByteArray response;
@@ -187,7 +202,11 @@ public:
                             else
                                 response = good ? QByteArrayLiteral("Ok.") : QByteArrayLiteral("Fails.");
                             if (good)
-                                cookieHeader = "Set-Cookie: QBT_SID=demo-session; Path=/; HttpOnly\r\n";
+                            {
+                                m_historicalAuthenticated = true;
+                                cookieHeader = "Set-Cookie: " + m_sessionCookie
+                                    + "=demo-session; Path=/; HttpOnly\r\n";
+                            }
                         }
                         else if (path == "/api/v2/app/version" && hasCookie)
                         {
@@ -292,7 +311,18 @@ public:
                                 else if (!m_completionPatches.isEmpty())
                                     snapshot = m_completionPatches.takeFirst();
                                 snapshot.insert(QStringLiteral("rid"), rid + 1);
-                                response = QJsonDocument(snapshot).toJson(QJsonDocument::Compact);
+                                // Fail fixture mistakes rather than silently
+                                // supplying a modern category map to 4.1.0.
+                                if (m_historicalConnection && snapshot.contains("categories")
+                                    && (m_listCategories ? !snapshot.value("categories").isArray()
+                                                         : !snapshot.value("categories").isObject()))
+                                {
+                                    ++m_invalidHistoricalSyncReplies;
+                                    code = 500;
+                                    response = "Invalid fixture category shape";
+                                }
+                                else
+                                    response = QJsonDocument(snapshot).toJson(QJsonDocument::Compact);
                             }
                             else if (!m_sidebarSnapshot.isEmpty())
                             {
@@ -1113,7 +1143,16 @@ public:
                         else if (path == "/api/v2/auth/logout" && hasCookie)
                         {
                             ++m_logouts;
-                            response = "Ok.";
+                            if (m_historicalConnection)
+                            {
+                                m_historicalAuthenticated = false;
+                                cookieHeader = "Set-Cookie: " + m_sessionCookie
+                                    + "=; Path=/; Max-Age=0\r\n";
+                                // Historical logoutAction ends the session;
+                                // do not fabricate a login-style Ok. body.
+                                response.clear();
+                            }
+                            else response = "Ok.";
                         }
                         else
                         {
@@ -1414,6 +1453,11 @@ private:
     bool m_acceptPassword;
     bool m_acceptBlank;
     bool m_modernResponses = false;
+    bool m_historicalConnection = false;
+    bool m_historicalAuthenticated = false;
+    bool m_listCategories = false;
+    int m_invalidHistoricalSyncReplies = 0;
+    QByteArray m_sessionCookie = QByteArrayLiteral("QBT_SID");
     QByteArray m_reportedQbtVersion = QByteArrayLiteral("v5.1.4");
     QByteArray m_reportedApiVersion = QByteArrayLiteral("2.11.3");
     int m_logouts = 0;
@@ -2611,6 +2655,141 @@ private slots:
             QVERIFY(!settings.contains(QStringLiteral("Appearance/FontPointSize")));
         }
         QApplication::setFont(original);
+    }
+
+    void historicalCategorySynchronization_data()
+    {
+        QTest::addColumn<QString>("version");
+        QTest::addColumn<QString>("api");
+        QTest::addColumn<bool>("listCategories");
+        QTest::addColumn<bool>("modernLogin");
+        QTest::newRow("4.1.0") << QString("4.1.0") << QString("2.0") << true << false;
+        QTest::newRow("4.1.1") << QString("4.1.1") << QString("2.0.1") << true << false;
+        QTest::newRow("4.1.2") << QString("4.1.2") << QString("2.0.2") << true << false;
+        QTest::newRow("4.1.3") << QString("4.1.3") << QString("2.1.0") << false << false;
+        QTest::newRow("5.1.4") << QString("5.1.4") << QString("2.11.4") << false << false;
+        QTest::newRow("5.2.0") << QString("5.2.0") << QString("2.15.1") << false << true;
+        QTest::newRow("5.3.1") << QString("5.3.1") << QString("2.16.2") << false << true;
+    }
+
+    void historicalCategorySynchronization()
+    {
+        QFETCH(QString, version);
+        QFETCH(QString, api);
+        QFETCH(bool, listCategories);
+        QFETCH(bool, modernLogin);
+        DemoQbittorrentServer server(true);
+        server.setHistoricalConnectionProfile(version, api, modernLogin, listCategories);
+        const QString hash(40, QLatin1Char('a'));
+        const auto categories = [listCategories](const QStringList &names) -> QJsonValue {
+            if (listCategories) return QJsonArray::fromStringList(names);
+            QJsonObject result;
+            for (const auto &name : names)
+                result.insert(name, QJsonObject{{"name", name}, {"savePath", "/share/" + name}});
+            return result;
+        };
+        // An empty category is not inferable from any torrent's category field.
+        server.setCompletionSnapshot({
+            {"categories", categories({"Music", "Empty category"})},
+            {"torrents", QJsonObject{{hash, QJsonObject{{"name", "Test torrent"},
+                {"state", "uploading"}, {"progress", 1}, {"category", "Music"}}}}},
+            {"server_state", QJsonObject{{"queueing", false}, {"dl_info_speed", 0}}}
+        });
+        QVERIFY(server.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath("historical-sync.ini"), QSettings::IniFormat);
+        settings.setValue("Preferences/Advanced/RefreshInterval", 100);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, server.url());
+        auto *tabs = window.findChild<QTabWidget *>("serverTabs");
+        QVERIFY(tabs);
+        QTRY_COMPARE_WITH_TIMEOUT(tabs->count(), 1, 6000);
+        auto *pane = qobject_cast<ServerPane *>(tabs->widget(0));
+        QVERIFY(pane);
+        auto *sidebar = pane->findChild<QListWidget *>("categoryFilterList");
+        QVERIFY(sidebar);
+        const auto hasCategory = [sidebar](const QString &name) {
+            const QString key = QStringLiteral("category:") + name;
+            for (int i = 0; i < sidebar->count(); ++i)
+                if (sidebar->item(i)->data(Qt::UserRole).toString() == key) return true;
+            return false;
+        };
+        // Separate the connection/sync assertions from the visible row
+        // assertions so a failure identifies the actual layer.
+        QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(
+            QStringLiteral("Connected to Demo seedbox")), 6000);
+        QTRY_VERIFY_WITH_TIMEOUT(pane->hasFullSync(), 6000);
+        QVERIFY(pane->categories().contains("Empty category"));
+        QVERIFY(pane->categories().contains("Music"));
+        QVERIFY(hasCategory("Empty category"));
+        QVERIFY(hasCategory("Music"));
+        QCOMPARE(pane->table()->model()->rowCount(), 1);
+        QVERIFY(window.statusBar()->currentMessage().contains("v" + version));
+        if (listCategories)
+            QVERIFY(!pane->categoryDefinitions().value("Music").toObject().contains("savePath"));
+        else
+            QCOMPARE(pane->categoryDefinitions().value("Music").toObject().value("savePath").toString(),
+                     QString("/share/Music"));
+
+        // In both wire contracts the incremental collection is an addition,
+        // not a replacement. Removals are transmitted independently.
+        server.queueCompletionPatch({{"categories", categories({"New empty"})},
+                                     {"categories_removed", QJsonArray{"Empty category"}}});
+        QTRY_VERIFY_WITH_TIMEOUT(hasCategory("New empty") && !hasCategory("Empty category"), 6000);
+        QVERIFY(hasCategory("Music"));
+        QCOMPARE(pane->table()->model()->rowCount(), 1);
+        if (!listCategories)
+        {
+            server.queueCompletionPatch({{"categories", QJsonObject{
+                {"Music", QJsonObject{{"savePath", "/changed"}}}}}});
+            QTRY_COMPARE_WITH_TIMEOUT(pane->categoryDefinitions().value("Music").toObject()
+                .value("savePath").toString(), QString("/changed"), 6000);
+            QCOMPARE(pane->categoryDefinitions().value("Music").toObject()
+                .value("name").toString(), QString("Music"));
+        }
+
+        // A replacement snapshot after server-side sync state loss must
+        // discard old category names/definitions and preserve no fake paths.
+        server.queueCompletionPatch({{"full_update", true}, {"torrents", QJsonObject{}},
+                                     {"categories", categories({"Replacement"})}});
+        QTRY_VERIFY_WITH_TIMEOUT(hasCategory("Replacement") && !hasCategory("Music")
+            && !hasCategory("New empty"), 6000);
+        QCOMPARE(pane->table()->model()->rowCount(), 0);
+        QVERIFY(!pane->categoryDefinitions().contains("Music"));
+        QCOMPARE(server.invalidHistoricalSyncReplies(), 0);
+
+        auto *disconnect = window.findChild<QAction *>("disconnectServer");
+        QVERIFY(disconnect && disconnect->isEnabled());
+        disconnect->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(server.logouts(), 1, 6000);
+        QTRY_VERIFY_WITH_TIMEOUT(!pane->isEnabled(), 6000);
+    }
+
+    void historicalLoginFailures()
+    {
+        for (const bool modern : {false, true})
+        {
+            DemoQbittorrentServer server(false);
+            server.setHistoricalConnectionProfile(modern ? "5.2.0" : "5.1.4",
+                modern ? "2.15.1" : "2.11.4", modern, false);
+            QVERIFY(server.start());
+            QTemporaryDir temp;
+            QVERIFY(temp.isValid());
+            QSettings settings(temp.filePath("historical-login.ini"), QSettings::IniFormat);
+            DemoCredentialVault vault;
+            MainWindow window(nullptr, &settings, &vault);
+            window.show();
+            openConnectDialog(window, server.url());
+            QTRY_VERIFY_WITH_TIMEOUT(window.statusBar()->currentMessage().contains(
+                modern ? "HTTP 401" : "Login failed"), 6000);
+            auto *tabs = window.findChild<QTabWidget *>("serverTabs");
+            QVERIFY(tabs && tabs->count() == 1 && !tabs->widget(0)->isEnabled());
+            QCOMPARE(server.syncRequests(), 0);
+            QCOMPARE(vault.writes, 0);
+        }
     }
 
     void userCanConnectAndDisconnect()

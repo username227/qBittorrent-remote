@@ -313,6 +313,11 @@ if(BUILD_TESTING)
         modernServerLoginAndPreferencesAcceptNoContent
     )
 
+    add_remote_workflow_group(remote_historical_connection_workflow 120
+        historicalCategorySynchronization
+        historicalLoginFailures
+    )
+
     add_remote_workflow_group(remote_compatibility_capabilities_workflow 90
         lockedReleaseCapabilityPolicy
         mixedHistoricalCapabilityDispatch
