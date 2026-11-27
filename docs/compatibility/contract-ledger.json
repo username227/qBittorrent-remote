@@ -451,6 +451,29 @@
         "historicalTorrentNumericPresentation"
       ],
       "live_status": "Simulated authenticated workflow; live daemon validation pending."
+    },
+    {
+      "id": "torrent-serializer-lexical-inventory",
+      "scope": "All 68 locked releases; 19 distinct serializer implementation/header pairs; field and assignment inventory",
+      "status": "source-reviewed-partial",
+      "findings": "Every release pinned to exact serializer and header blobs. Adjacent key additions/removals and assignment evidence in torrent-serializer-review.json. This is a lexical inventory, not a claim that all backend helpers, conditional presence, wire types, units and sentinel semantics have been verified. Remaining semantic and live validation explicitly pending.",
+      "evidence": [
+        {
+          "release": "4.1.0",
+          "commit": "e9ed621178af841114a045887c5ce1e6b50cb366",
+          "path": "src/webui/api/serialize/serialize_torrent.cpp",
+          "blob": "124d9e1f4c56daeaff853f80c377fcc462b603ea"
+        },
+        {
+          "release": "5.3.1",
+          "commit": "f3cfbccd42dc07e7aa174b525f6d6dfd2d0595a0",
+          "path": "src/webui/api/serialize/serialize_torrent.cpp",
+          "blob": "651abf8ef5d69e872fa9ee78ce237cc8ed4ce579"
+        }
+      ],
+      "regression_tests": [
+        "test_torrent_serializer_inventory_covers_release_lock"
+      ]
     }
   ],
   "adjacent_status": [

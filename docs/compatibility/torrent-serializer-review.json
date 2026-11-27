@@ -1,0 +1,6574 @@
+{
+  "schema": 1,
+  "status": "lexical-source-inventory",
+  "scope": "Every locked release, torrent-list serializer implementation and header. Field assignment lines and selected control-flow lines are lexical evidence, not a full type, unit, conditional-presence or backend contract. Main sync can add other fields. No runtime capability is inferred from this inventory alone.",
+  "paths": {
+    "cpp": "src/webui/api/serialize/serialize_torrent.cpp",
+    "header": "src/webui/api/serialize/serialize_torrent.h"
+  },
+  "counts": {
+    "releases": 68,
+    "adjacent_pairs": 67,
+    "revisions": 19,
+    "distinct_fields": 67
+  },
+  "releases": [
+    {
+      "version": "4.1.0",
+      "commit": "e9ed621178af841114a045887c5ce1e6b50cb366",
+      "revision": 0,
+      "added": [
+        "added_on",
+        "amount_left",
+        "auto_tmm",
+        "category",
+        "completed",
+        "completion_on",
+        "dl_limit",
+        "dlspeed",
+        "downloaded",
+        "downloaded_session",
+        "eta",
+        "f_l_piece_prio",
+        "force_start",
+        "hash",
+        "last_activity",
+        "magnet_uri",
+        "max_ratio",
+        "max_seeding_time",
+        "name",
+        "num_complete",
+        "num_incomplete",
+        "num_leechs",
+        "num_seeds",
+        "priority",
+        "progress",
+        "ratio",
+        "ratio_limit",
+        "save_path",
+        "seeding_time_limit",
+        "seen_complete",
+        "seq_dl",
+        "size",
+        "state",
+        "super_seeding",
+        "tags",
+        "time_active",
+        "total_size",
+        "tracker",
+        "up_limit",
+        "uploaded",
+        "uploaded_session",
+        "upspeed"
+      ],
+      "removed": []
+    },
+    {
+      "version": "4.1.1",
+      "commit": "ea5a29018fba738223d0f1143ac97722e3ee9b5f",
+      "revision": 1,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.1.2",
+      "commit": "d1ebbcb35d8833dabcb5130609f2d37dec1b4f66",
+      "revision": 1,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.1.3",
+      "commit": "a574c4a70a5a3293d2f6135952c301d930d23627",
+      "revision": 1,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.1.4",
+      "commit": "0061b752001e2d5c60b88f736e46685a64ea6bb9",
+      "revision": 1,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.1.5",
+      "commit": "3f0e0a319a6f4833b238842744ed1f37104fcd4c",
+      "revision": 1,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.1.6",
+      "commit": "ea7e47d11328f408ba435bafaf618b483851c651",
+      "revision": 1,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.1.7",
+      "commit": "05a82afeb6c927bfc0cda4fe8fb25ecc3faecd86",
+      "revision": 1,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.1.8",
+      "commit": "359b4649583564407628ebdac234a71c2f25e4dc",
+      "revision": 1,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.1.9",
+      "commit": "7825d8627f8be4682167bbe091870edad9dc33b6",
+      "revision": 1,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.1.9.1",
+      "commit": "eea38e7c9ecb1e1df5e889cb42fc93d3f79d429f",
+      "revision": 1,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.2.0",
+      "commit": "912b0767071f564646e9ced06a8382b0d67423b8",
+      "revision": 2,
+      "added": [
+        "availability"
+      ],
+      "removed": []
+    },
+    {
+      "version": "4.2.1",
+      "commit": "118af03534e5ded6d3c8323b5dbeeff57b177193",
+      "revision": 2,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.2.2",
+      "commit": "3c17ad566c94a92b6beefae119db3da5cb26456e",
+      "revision": 2,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.2.3",
+      "commit": "29e9594859151b774ee5f2f18a989a91d541b6f2",
+      "revision": 2,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.2.4",
+      "commit": "50f676c30507ece9fca6cc2bf61cf5fe79cf46c2",
+      "revision": 3,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.2.5",
+      "commit": "2c65b796401f924d6889aadde958de3d2846bb4b",
+      "revision": 3,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.3.0",
+      "commit": "b925cffddb386b2ca10e58fc9c55d99721cfa2ff",
+      "revision": 4,
+      "added": [
+        "trackers_count"
+      ],
+      "removed": []
+    },
+    {
+      "version": "4.3.0.1",
+      "commit": "f09ee1b3986e51b9e0a63cefd361e9702a108a24",
+      "revision": 4,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.3.1",
+      "commit": "587688634561b17229a6f5951478cbdd5ae0c128",
+      "revision": 5,
+      "added": [
+        "content_path"
+      ],
+      "removed": []
+    },
+    {
+      "version": "4.3.2",
+      "commit": "abb854a1e6309bec8ddbcccd7c550cd07c13c16e",
+      "revision": 6,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.3.3",
+      "commit": "da0b276d5fc4582f40e6fc8f17883083d2662316",
+      "revision": 7,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.3.4",
+      "commit": "f7e6b964931c305c4a341c75e4b32e4e7b1443ce",
+      "revision": 8,
+      "added": [
+        "seeding_time"
+      ],
+      "removed": []
+    },
+    {
+      "version": "4.3.4.1",
+      "commit": "332b173e080aa2deb2933eb848298fd98b71514b",
+      "revision": 8,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.3.5",
+      "commit": "063844ed44bffd3fbf2ac2792590ba47bf3fb78e",
+      "revision": 8,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.3.6",
+      "commit": "ac8105c304b84c77b7b72fbf4547e7ad977d44fc",
+      "revision": 8,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.3.7",
+      "commit": "0415c0c6f87d0093811f03c99d0e8cefe6945347",
+      "revision": 8,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.3.8",
+      "commit": "9392ce436db5e9ed4e5ce68d9fe1f279f0b89b9f",
+      "revision": 9,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.3.9",
+      "commit": "01519b5e77d2a1e577ebc0c4291611fc37df0d4a",
+      "revision": 9,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.4.0",
+      "commit": "b9164adb7ae933e81c278cd40d2c529848494e22",
+      "revision": 10,
+      "added": [
+        "download_path",
+        "infohash_v1",
+        "infohash_v2"
+      ],
+      "removed": []
+    },
+    {
+      "version": "4.4.1",
+      "commit": "4cb386af35bc81ff911c78a5b612857703f4af81",
+      "revision": 10,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.4.2",
+      "commit": "ede7c8acbb79c1c6627fa03e8402b89f47711f70",
+      "revision": 10,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.4.3",
+      "commit": "9ed9ffcaf22f281b426cf0ccc524218631bf9bf1",
+      "revision": 10,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.4.3.1",
+      "commit": "6c546df70bbbb5602ddb91fbbd0e3762e75472c3",
+      "revision": 10,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.4.4",
+      "commit": "4a56c3f5df344c4984900352a800deefb504ae67",
+      "revision": 10,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.4.5",
+      "commit": "f9811ec3b0f727562c6fa5376e8a43ca8c8c8fa3",
+      "revision": 10,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.5.0",
+      "commit": "480e3f02cae0ad7b2463e7e188867d747487c0bb",
+      "revision": 11,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.5.1",
+      "commit": "927732f1900efcc7a6102c605c513e9f4b7f6454",
+      "revision": 11,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.5.2",
+      "commit": "97853f31f25bd427b7f821f16c8b1d7131842db8",
+      "revision": 11,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.5.3",
+      "commit": "04bd33e5b3754c7e070a9fa0cb5df294ac57b219",
+      "revision": 11,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.5.4",
+      "commit": "c8763f08da080cd9a9ea22caafff999ee54cbaa2",
+      "revision": 11,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.5.5",
+      "commit": "7d7097b024788814cf74b05ca6857d074467285e",
+      "revision": 11,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.6.0",
+      "commit": "7bc49423c7e6a69554a27b75fdc2f4ea7606ad84",
+      "revision": 12,
+      "added": [
+        "inactive_seeding_time_limit",
+        "max_inactive_seeding_time"
+      ],
+      "removed": []
+    },
+    {
+      "version": "4.6.1",
+      "commit": "92f810873a2ae2387ddcd82e657c7ba1741b0efe",
+      "revision": 12,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.6.2",
+      "commit": "1773b1ea05d60ccdb2c5185e48410267c5245632",
+      "revision": 12,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.6.3",
+      "commit": "cfa7a6db46e8376273ec9ae833cf637fe7670b4e",
+      "revision": 12,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.6.4",
+      "commit": "785320e7f6a5e228caf817b01dca69da0b83a012",
+      "revision": 12,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.6.5",
+      "commit": "5e81347933adec219dab27a503f8dc9c4a1c522d",
+      "revision": 12,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.6.6",
+      "commit": "c01265c4cffe98db2ee2fba651f7f254ca8afbec",
+      "revision": 12,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "4.6.7",
+      "commit": "839bc696d066aca34ebd994ee1673c4b2d5afd7b",
+      "revision": 12,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "5.0.0",
+      "commit": "cce295faeb27ebf9d57498ac5e35490c845b9d4f",
+      "revision": 13,
+      "added": [
+        "comment",
+        "has_metadata",
+        "popularity",
+        "private",
+        "reannounce",
+        "root_path"
+      ],
+      "removed": []
+    },
+    {
+      "version": "5.0.1",
+      "commit": "94136262a84293da0d8504724e7143df0d0baa12",
+      "revision": 13,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "5.0.2",
+      "commit": "15b60912610d5a1e6712013079d3b2db4b78b85d",
+      "revision": 13,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "5.0.3",
+      "commit": "0188e11dd7ece1ee8b6004145c4437d7455745d4",
+      "revision": 14,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "5.0.4",
+      "commit": "100ee5dbe0eacfff30147ad1ee666d5c5eb35eb5",
+      "revision": 14,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "5.0.5",
+      "commit": "4b794a9930435a8c011601365667b9f7de9d1e64",
+      "revision": 14,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "5.1.0",
+      "commit": "da87be2b12893dfb769df8124afeb064f099dc71",
+      "revision": 15,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "5.1.1",
+      "commit": "ea9f3800ce70ded6db66b2c9f0d2f0513399e969",
+      "revision": 16,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "5.1.2",
+      "commit": "202ff8a099cfc1ca9421e7d30944b3c58a4a47cd",
+      "revision": 16,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "5.1.3",
+      "commit": "6ede4e49ff1432ade8a75d37daf076b6000e2a57",
+      "revision": 16,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "5.1.4",
+      "commit": "33e5e772200b5e2f9d23af8870ce7436ec216faa",
+      "revision": 16,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "5.2.0",
+      "commit": "b2270f7f6fec1b10117564f642b961621ae0058a",
+      "revision": 17,
+      "added": [
+        "connections_count",
+        "connections_limit",
+        "created_by",
+        "creation_date",
+        "piece_size",
+        "pieces_have",
+        "pieces_num",
+        "share_limit_action",
+        "total_wasted"
+      ],
+      "removed": []
+    },
+    {
+      "version": "5.2.1",
+      "commit": "7e8db603f207fec1ee5dc192cacf44fed264452c",
+      "revision": 17,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "5.2.2",
+      "commit": "89aad1aad9fc7d819a28db3dc01f19c6b1f1be8c",
+      "revision": 17,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "5.2.3",
+      "commit": "0b63c3d17373f6132ea211c9dcd4241284ccdfaf",
+      "revision": 17,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "5.2.4",
+      "commit": "a1e4649cb8ae581925acc161dbab5cbc6584c542",
+      "revision": 17,
+      "added": [],
+      "removed": []
+    },
+    {
+      "version": "5.3.0",
+      "commit": "9213075dd5f7b352208361c6a84c1c115efc898e",
+      "revision": 18,
+      "added": [
+        "share_limits_mode"
+      ],
+      "removed": []
+    },
+    {
+      "version": "5.3.1",
+      "commit": "f3cfbccd42dc07e7aa174b525f6d6dfd2d0595a0",
+      "revision": 18,
+      "added": [],
+      "removed": []
+    }
+  ],
+  "revisions": [
+    {
+      "cpp_blob": "124d9e1f4c56daeaff853f80c377fcc462b603ea",
+      "header_blob": "832e9e2527009dc87ca5e66dfbfe803c3131775e",
+      "first_release": "4.1.0",
+      "fields": [
+        {
+          "key": "hash",
+          "assignments": [
+            "ret[KEY_TORRENT_HASH] = QString(torrent.hash());"
+          ]
+        },
+        {
+          "key": "name",
+          "assignments": [
+            "ret[KEY_TORRENT_NAME] = torrent.name();"
+          ]
+        },
+        {
+          "key": "magnet_uri",
+          "assignments": [
+            "ret[KEY_TORRENT_MAGNET_URI] = torrent.toMagnetUri();"
+          ]
+        },
+        {
+          "key": "size",
+          "assignments": [
+            "ret[KEY_TORRENT_SIZE] = torrent.wantedSize();"
+          ]
+        },
+        {
+          "key": "progress",
+          "assignments": [
+            "ret[KEY_TORRENT_PROGRESS] = torrent.progress();"
+          ]
+        },
+        {
+          "key": "dlspeed",
+          "assignments": [
+            "ret[KEY_TORRENT_DLSPEED] = torrent.downloadPayloadRate();"
+          ]
+        },
+        {
+          "key": "upspeed",
+          "assignments": [
+            "ret[KEY_TORRENT_UPSPEED] = torrent.uploadPayloadRate();"
+          ]
+        },
+        {
+          "key": "priority",
+          "assignments": [
+            "ret[KEY_TORRENT_PRIORITY] = torrent.queuePosition();"
+          ]
+        },
+        {
+          "key": "num_seeds",
+          "assignments": [
+            "ret[KEY_TORRENT_SEEDS] = torrent.seedsCount();"
+          ]
+        },
+        {
+          "key": "num_complete",
+          "assignments": [
+            "ret[KEY_TORRENT_NUM_COMPLETE] = torrent.totalSeedsCount();"
+          ]
+        },
+        {
+          "key": "num_leechs",
+          "assignments": [
+            "ret[KEY_TORRENT_LEECHS] = torrent.leechsCount();"
+          ]
+        },
+        {
+          "key": "num_incomplete",
+          "assignments": [
+            "ret[KEY_TORRENT_NUM_INCOMPLETE] = torrent.totalLeechersCount();"
+          ]
+        },
+        {
+          "key": "ratio",
+          "assignments": [
+            "ret[KEY_TORRENT_RATIO] = (ratio > BitTorrent::TorrentHandle::MAX_RATIO) ? -1 : ratio;"
+          ]
+        },
+        {
+          "key": "state",
+          "assignments": [
+            "ret[KEY_TORRENT_STATE] = torrentStateToString(torrent.state());"
+          ]
+        },
+        {
+          "key": "eta",
+          "assignments": [
+            "ret[KEY_TORRENT_ETA] = torrent.eta();"
+          ]
+        },
+        {
+          "key": "seq_dl",
+          "assignments": [
+            "ret[KEY_TORRENT_SEQUENTIAL_DOWNLOAD] = torrent.isSequentialDownload();"
+          ]
+        },
+        {
+          "key": "f_l_piece_prio",
+          "assignments": [
+            "ret[KEY_TORRENT_FIRST_LAST_PIECE_PRIO] = torrent.hasFirstLastPiecePriority();"
+          ]
+        },
+        {
+          "key": "category",
+          "assignments": [
+            "ret[KEY_TORRENT_CATEGORY] = torrent.category();"
+          ]
+        },
+        {
+          "key": "tags",
+          "assignments": [
+            "ret[KEY_TORRENT_TAGS] = torrent.tags().toList().join(\", \");"
+          ]
+        },
+        {
+          "key": "super_seeding",
+          "assignments": [
+            "ret[KEY_TORRENT_SUPER_SEEDING] = torrent.superSeeding();"
+          ]
+        },
+        {
+          "key": "force_start",
+          "assignments": [
+            "ret[KEY_TORRENT_FORCE_START] = torrent.isForced();"
+          ]
+        },
+        {
+          "key": "save_path",
+          "assignments": [
+            "ret[KEY_TORRENT_SAVE_PATH] = Utils::Fs::toNativePath(torrent.savePath());"
+          ]
+        },
+        {
+          "key": "added_on",
+          "assignments": [
+            "ret[KEY_TORRENT_ADDED_ON] = torrent.addedTime().toTime_t();"
+          ]
+        },
+        {
+          "key": "completion_on",
+          "assignments": [
+            "ret[KEY_TORRENT_COMPLETION_ON] = torrent.completedTime().toTime_t();"
+          ]
+        },
+        {
+          "key": "tracker",
+          "assignments": [
+            "ret[KEY_TORRENT_TRACKER] = torrent.currentTracker();"
+          ]
+        },
+        {
+          "key": "dl_limit",
+          "assignments": [
+            "ret[KEY_TORRENT_DL_LIMIT] = torrent.downloadLimit();"
+          ]
+        },
+        {
+          "key": "up_limit",
+          "assignments": [
+            "ret[KEY_TORRENT_UP_LIMIT] = torrent.uploadLimit();"
+          ]
+        },
+        {
+          "key": "downloaded",
+          "assignments": [
+            "ret[KEY_TORRENT_AMOUNT_DOWNLOADED] = torrent.totalDownload();"
+          ]
+        },
+        {
+          "key": "uploaded",
+          "assignments": [
+            "ret[KEY_TORRENT_AMOUNT_UPLOADED] = torrent.totalUpload();"
+          ]
+        },
+        {
+          "key": "downloaded_session",
+          "assignments": [
+            "ret[KEY_TORRENT_AMOUNT_DOWNLOADED_SESSION] = torrent.totalPayloadDownload();"
+          ]
+        },
+        {
+          "key": "uploaded_session",
+          "assignments": [
+            "ret[KEY_TORRENT_AMOUNT_UPLOADED_SESSION] = torrent.totalPayloadUpload();"
+          ]
+        },
+        {
+          "key": "amount_left",
+          "assignments": [
+            "ret[KEY_TORRENT_AMOUNT_LEFT] = torrent.incompletedSize();"
+          ]
+        },
+        {
+          "key": "completed",
+          "assignments": [
+            "ret[KEY_TORRENT_AMOUNT_COMPLETED] = torrent.completedSize();"
+          ]
+        },
+        {
+          "key": "max_ratio",
+          "assignments": [
+            "ret[KEY_TORRENT_MAX_RATIO] = torrent.maxRatio();"
+          ]
+        },
+        {
+          "key": "max_seeding_time",
+          "assignments": [
+            "ret[KEY_TORRENT_MAX_SEEDING_TIME] = torrent.maxSeedingTime();"
+          ]
+        },
+        {
+          "key": "ratio_limit",
+          "assignments": [
+            "ret[KEY_TORRENT_RATIO_LIMIT] = torrent.ratioLimit();"
+          ]
+        },
+        {
+          "key": "seeding_time_limit",
+          "assignments": [
+            "ret[KEY_TORRENT_SEEDING_TIME_LIMIT] = torrent.seedingTimeLimit();"
+          ]
+        },
+        {
+          "key": "seen_complete",
+          "assignments": [
+            "ret[KEY_TORRENT_LAST_SEEN_COMPLETE_TIME] = torrent.lastSeenComplete().toTime_t();"
+          ]
+        },
+        {
+          "key": "auto_tmm",
+          "assignments": [
+            "ret[KEY_TORRENT_AUTO_TORRENT_MANAGEMENT] = torrent.isAutoTMMEnabled();"
+          ]
+        },
+        {
+          "key": "time_active",
+          "assignments": [
+            "ret[KEY_TORRENT_TIME_ACTIVE] = torrent.activeTime();"
+          ]
+        },
+        {
+          "key": "last_activity",
+          "assignments": [
+            "ret[KEY_TORRENT_LAST_ACTIVITY_TIME] = 0;",
+            "ret[KEY_TORRENT_LAST_ACTIVITY_TIME] = dt.toTime_t();"
+          ]
+        },
+        {
+          "key": "total_size",
+          "assignments": [
+            "ret[KEY_TORRENT_TOTAL_SIZE] = torrent.totalSize();"
+          ]
+        }
+      ],
+      "conditions": [
+        "#if LIBTORRENT_VERSION_NUM < 10100",
+        "#endif",
+        "if (torrent.hasMetadata())",
+        "if (torrent.isPaused() || torrent.isChecking()) {",
+        "else {"
+      ]
+    },
+    {
+      "cpp_blob": "c78f5b405c306e24063f816d278064ae4d5b6d16",
+      "header_blob": "832e9e2527009dc87ca5e66dfbfe803c3131775e",
+      "first_release": "4.1.1",
+      "fields": [
+        {
+          "key": "hash",
+          "assignments": [
+            "ret[KEY_TORRENT_HASH] = QString(torrent.hash());"
+          ]
+        },
+        {
+          "key": "name",
+          "assignments": [
+            "ret[KEY_TORRENT_NAME] = torrent.name();"
+          ]
+        },
+        {
+          "key": "magnet_uri",
+          "assignments": [
+            "ret[KEY_TORRENT_MAGNET_URI] = torrent.toMagnetUri();"
+          ]
+        },
+        {
+          "key": "size",
+          "assignments": [
+            "ret[KEY_TORRENT_SIZE] = torrent.wantedSize();"
+          ]
+        },
+        {
+          "key": "progress",
+          "assignments": [
+            "ret[KEY_TORRENT_PROGRESS] = torrent.progress();"
+          ]
+        },
+        {
+          "key": "dlspeed",
+          "assignments": [
+            "ret[KEY_TORRENT_DLSPEED] = torrent.downloadPayloadRate();"
+          ]
+        },
+        {
+          "key": "upspeed",
+          "assignments": [
+            "ret[KEY_TORRENT_UPSPEED] = torrent.uploadPayloadRate();"
+          ]
+        },
+        {
+          "key": "priority",
+          "assignments": [
+            "ret[KEY_TORRENT_PRIORITY] = torrent.queuePosition();"
+          ]
+        },
+        {
+          "key": "num_seeds",
+          "assignments": [
+            "ret[KEY_TORRENT_SEEDS] = torrent.seedsCount();"
+          ]
+        },
+        {
+          "key": "num_complete",
+          "assignments": [
+            "ret[KEY_TORRENT_NUM_COMPLETE] = torrent.totalSeedsCount();"
+          ]
+        },
+        {
+          "key": "num_leechs",
+          "assignments": [
+            "ret[KEY_TORRENT_LEECHS] = torrent.leechsCount();"
+          ]
+        },
+        {
+          "key": "num_incomplete",
+          "assignments": [
+            "ret[KEY_TORRENT_NUM_INCOMPLETE] = torrent.totalLeechersCount();"
+          ]
+        },
+        {
+          "key": "ratio",
+          "assignments": [
+            "ret[KEY_TORRENT_RATIO] = (ratio > BitTorrent::TorrentHandle::MAX_RATIO) ? -1 : ratio;"
+          ]
+        },
+        {
+          "key": "state",
+          "assignments": [
+            "ret[KEY_TORRENT_STATE] = torrentStateToString(torrent.state());"
+          ]
+        },
+        {
+          "key": "eta",
+          "assignments": [
+            "ret[KEY_TORRENT_ETA] = torrent.eta();"
+          ]
+        },
+        {
+          "key": "seq_dl",
+          "assignments": [
+            "ret[KEY_TORRENT_SEQUENTIAL_DOWNLOAD] = torrent.isSequentialDownload();"
+          ]
+        },
+        {
+          "key": "f_l_piece_prio",
+          "assignments": [
+            "ret[KEY_TORRENT_FIRST_LAST_PIECE_PRIO] = torrent.hasFirstLastPiecePriority();"
+          ]
+        },
+        {
+          "key": "category",
+          "assignments": [
+            "ret[KEY_TORRENT_CATEGORY] = torrent.category();"
+          ]
+        },
+        {
+          "key": "tags",
+          "assignments": [
+            "ret[KEY_TORRENT_TAGS] = torrent.tags().toList().join(\", \");"
+          ]
+        },
+        {
+          "key": "super_seeding",
+          "assignments": [
+            "ret[KEY_TORRENT_SUPER_SEEDING] = torrent.superSeeding();"
+          ]
+        },
+        {
+          "key": "force_start",
+          "assignments": [
+            "ret[KEY_TORRENT_FORCE_START] = torrent.isForced();"
+          ]
+        },
+        {
+          "key": "save_path",
+          "assignments": [
+            "ret[KEY_TORRENT_SAVE_PATH] = Utils::Fs::toNativePath(torrent.savePath());"
+          ]
+        },
+        {
+          "key": "added_on",
+          "assignments": [
+            "ret[KEY_TORRENT_ADDED_ON] = torrent.addedTime().toTime_t();"
+          ]
+        },
+        {
+          "key": "completion_on",
+          "assignments": [
+            "ret[KEY_TORRENT_COMPLETION_ON] = torrent.completedTime().toTime_t();"
+          ]
+        },
+        {
+          "key": "tracker",
+          "assignments": [
+            "ret[KEY_TORRENT_TRACKER] = torrent.currentTracker();"
+          ]
+        },
+        {
+          "key": "dl_limit",
+          "assignments": [
+            "ret[KEY_TORRENT_DL_LIMIT] = torrent.downloadLimit();"
+          ]
+        },
+        {
+          "key": "up_limit",
+          "assignments": [
+            "ret[KEY_TORRENT_UP_LIMIT] = torrent.uploadLimit();"
+          ]
+        },
+        {
+          "key": "downloaded",
+          "assignments": [
+            "ret[KEY_TORRENT_AMOUNT_DOWNLOADED] = torrent.totalDownload();"
+          ]
+        },
+        {
+          "key": "uploaded",
+          "assignments": [
+            "ret[KEY_TORRENT_AMOUNT_UPLOADED] = torrent.totalUpload();"
+          ]
+        },
+        {
+          "key": "downloaded_session",
+          "assignments": [
+            "ret[KEY_TORRENT_AMOUNT_DOWNLOADED_SESSION] = torrent.totalPayloadDownload();"
+          ]
+        },
+        {
+          "key": "uploaded_session",
+          "assignments": [
+            "ret[KEY_TORRENT_AMOUNT_UPLOADED_SESSION] = torrent.totalPayloadUpload();"
+          ]
+        },
+        {
+          "key": "amount_left",
+          "assignments": [
+            "ret[KEY_TORRENT_AMOUNT_LEFT] = torrent.incompletedSize();"
+          ]
+        },
+        {
+          "key": "completed",
+          "assignments": [
+            "ret[KEY_TORRENT_AMOUNT_COMPLETED] = torrent.completedSize();"
+          ]
+        },
+        {
+          "key": "max_ratio",
+          "assignments": [
+            "ret[KEY_TORRENT_MAX_RATIO] = torrent.maxRatio();"
+          ]
+        },
+        {
+          "key": "max_seeding_time",
+          "assignments": [
+            "ret[KEY_TORRENT_MAX_SEEDING_TIME] = torrent.maxSeedingTime();"
+          ]
+        },
+        {
+          "key": "ratio_limit",
+          "assignments": [
+            "ret[KEY_TORRENT_RATIO_LIMIT] = torrent.ratioLimit();"
+          ]
+        },
+        {
+          "key": "seeding_time_limit",
+          "assignments": [
+            "ret[KEY_TORRENT_SEEDING_TIME_LIMIT] = torrent.seedingTimeLimit();"
+          ]
+        },
+        {
+          "key": "seen_complete",
+          "assignments": [
+            "ret[KEY_TORRENT_LAST_SEEN_COMPLETE_TIME] = torrent.lastSeenComplete().toTime_t();"
+          ]
+        },
+        {
+          "key": "auto_tmm",
+          "assignments": [
+            "ret[KEY_TORRENT_AUTO_TORRENT_MANAGEMENT] = torrent.isAutoTMMEnabled();"
+          ]
+        },
+        {
+          "key": "time_active",
+          "assignments": [
+            "ret[KEY_TORRENT_TIME_ACTIVE] = torrent.activeTime();"
+          ]
+        },
+        {
+          "key": "last_activity",
+          "assignments": [
+            "ret[KEY_TORRENT_LAST_ACTIVITY_TIME] = 0;",
+            "ret[KEY_TORRENT_LAST_ACTIVITY_TIME] = dt.toTime_t();"
+          ]
+        },
+        {
+          "key": "total_size",
+          "assignments": [
+            "ret[KEY_TORRENT_TOTAL_SIZE] = torrent.totalSize();"
+          ]
+        }
+      ],
+      "conditions": [
+        "#if LIBTORRENT_VERSION_NUM < 10100",
+        "#endif",
+        "if (torrent.hasMetadata())",
+        "if (torrent.isPaused() || torrent.isChecking()) {",
+        "else {"
+      ]
+    },
+    {
+      "cpp_blob": "fd77c8132480c27bac2a78b5380e96ec59a75851",
+      "header_blob": "b02c6574ca6d81d581368df2ce04c5a120d3a60a",
+      "first_release": "4.2.0",
+      "fields": [
+        {
+          "key": "hash",
+          "assignments": [
+            "{KEY_TORRENT_HASH, QString(torrent.hash())},"
+          ]
+        },
+        {
+          "key": "name",
+          "assignments": [
+            "{KEY_TORRENT_NAME, torrent.name()},"
+          ]
+        },
+        {
+          "key": "magnet_uri",
+          "assignments": [
+            "{KEY_TORRENT_MAGNET_URI, torrent.toMagnetUri()},"
+          ]
+        },
+        {
+          "key": "size",
+          "assignments": [
+            "{KEY_TORRENT_SIZE, torrent.wantedSize()},"
+          ]
+        },
+        {
+          "key": "progress",
+          "assignments": [
+            "{KEY_TORRENT_PROGRESS, torrent.progress()},"
+          ]
+        },
+        {
+          "key": "dlspeed",
+          "assignments": [
+            "{KEY_TORRENT_DLSPEED, torrent.downloadPayloadRate()},"
+          ]
+        },
+        {
+          "key": "upspeed",
+          "assignments": [
+            "{KEY_TORRENT_UPSPEED, torrent.uploadPayloadRate()},"
+          ]
+        },
+        {
+          "key": "priority",
+          "assignments": [
+            "{KEY_TORRENT_QUEUE_POSITION, torrent.queuePosition()},"
+          ]
+        },
+        {
+          "key": "num_seeds",
+          "assignments": [
+            "{KEY_TORRENT_SEEDS, torrent.seedsCount()},"
+          ]
+        },
+        {
+          "key": "num_complete",
+          "assignments": [
+            "{KEY_TORRENT_NUM_COMPLETE, torrent.totalSeedsCount()},"
+          ]
+        },
+        {
+          "key": "num_leechs",
+          "assignments": [
+            "{KEY_TORRENT_LEECHS, torrent.leechsCount()},"
+          ]
+        },
+        {
+          "key": "num_incomplete",
+          "assignments": [
+            "{KEY_TORRENT_NUM_INCOMPLETE, torrent.totalLeechersCount()},"
+          ]
+        },
+        {
+          "key": "state",
+          "assignments": [
+            "{KEY_TORRENT_STATE, torrentStateToString(torrent.state())},"
+          ]
+        },
+        {
+          "key": "eta",
+          "assignments": [
+            "{KEY_TORRENT_ETA, torrent.eta()},"
+          ]
+        },
+        {
+          "key": "seq_dl",
+          "assignments": [
+            "{KEY_TORRENT_SEQUENTIAL_DOWNLOAD, torrent.isSequentialDownload()},"
+          ]
+        },
+        {
+          "key": "f_l_piece_prio",
+          "assignments": [
+            "{KEY_TORRENT_FIRST_LAST_PIECE_PRIO, torrent.hasFirstLastPiecePriority()},"
+          ]
+        },
+        {
+          "key": "category",
+          "assignments": [
+            "{KEY_TORRENT_CATEGORY, torrent.category()},"
+          ]
+        },
+        {
+          "key": "tags",
+          "assignments": [
+            "{KEY_TORRENT_TAGS, torrent.tags().values().join(\", \")},"
+          ]
+        },
+        {
+          "key": "super_seeding",
+          "assignments": [
+            "{KEY_TORRENT_SUPER_SEEDING, torrent.superSeeding()},"
+          ]
+        },
+        {
+          "key": "force_start",
+          "assignments": [
+            "{KEY_TORRENT_FORCE_START, torrent.isForced()},"
+          ]
+        },
+        {
+          "key": "save_path",
+          "assignments": [
+            "{KEY_TORRENT_SAVE_PATH, Utils::Fs::toNativePath(torrent.savePath())},"
+          ]
+        },
+        {
+          "key": "added_on",
+          "assignments": [
+            "{KEY_TORRENT_ADDED_ON, torrent.addedTime().toSecsSinceEpoch()},"
+          ]
+        },
+        {
+          "key": "completion_on",
+          "assignments": [
+            "{KEY_TORRENT_COMPLETION_ON, torrent.completedTime().toSecsSinceEpoch()},"
+          ]
+        },
+        {
+          "key": "tracker",
+          "assignments": [
+            "{KEY_TORRENT_TRACKER, torrent.currentTracker()},"
+          ]
+        },
+        {
+          "key": "dl_limit",
+          "assignments": [
+            "{KEY_TORRENT_DL_LIMIT, torrent.downloadLimit()},"
+          ]
+        },
+        {
+          "key": "up_limit",
+          "assignments": [
+            "{KEY_TORRENT_UP_LIMIT, torrent.uploadLimit()},"
+          ]
+        },
+        {
+          "key": "downloaded",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_DOWNLOADED, torrent.totalDownload()},"
+          ]
+        },
+        {
+          "key": "uploaded",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_UPLOADED, torrent.totalUpload()},"
+          ]
+        },
+        {
+          "key": "downloaded_session",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_DOWNLOADED_SESSION, torrent.totalPayloadDownload()},"
+          ]
+        },
+        {
+          "key": "uploaded_session",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_UPLOADED_SESSION, torrent.totalPayloadUpload()},"
+          ]
+        },
+        {
+          "key": "amount_left",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_LEFT, torrent.incompletedSize()},"
+          ]
+        },
+        {
+          "key": "completed",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_COMPLETED, torrent.completedSize()},"
+          ]
+        },
+        {
+          "key": "max_ratio",
+          "assignments": [
+            "{KEY_TORRENT_MAX_RATIO, torrent.maxRatio()},"
+          ]
+        },
+        {
+          "key": "max_seeding_time",
+          "assignments": [
+            "{KEY_TORRENT_MAX_SEEDING_TIME, torrent.maxSeedingTime()},"
+          ]
+        },
+        {
+          "key": "ratio_limit",
+          "assignments": [
+            "{KEY_TORRENT_RATIO_LIMIT, torrent.ratioLimit()},"
+          ]
+        },
+        {
+          "key": "seeding_time_limit",
+          "assignments": [
+            "{KEY_TORRENT_SEEDING_TIME_LIMIT, torrent.seedingTimeLimit()},"
+          ]
+        },
+        {
+          "key": "seen_complete",
+          "assignments": [
+            "{KEY_TORRENT_LAST_SEEN_COMPLETE_TIME, torrent.lastSeenComplete().toSecsSinceEpoch()},"
+          ]
+        },
+        {
+          "key": "auto_tmm",
+          "assignments": [
+            "{KEY_TORRENT_AUTO_TORRENT_MANAGEMENT, torrent.isAutoTMMEnabled()},"
+          ]
+        },
+        {
+          "key": "time_active",
+          "assignments": [
+            "{KEY_TORRENT_TIME_ACTIVE, torrent.activeTime()},"
+          ]
+        },
+        {
+          "key": "availability",
+          "assignments": [
+            "{KEY_TORRENT_AVAILABILITY, torrent.distributedCopies()},"
+          ]
+        },
+        {
+          "key": "total_size",
+          "assignments": [
+            "{KEY_TORRENT_TOTAL_SIZE, torrent.totalSize()}"
+          ]
+        },
+        {
+          "key": "ratio",
+          "assignments": [
+            "ret[KEY_TORRENT_RATIO] = (ratio > BitTorrent::TorrentHandle::MAX_RATIO) ? -1 : ratio;"
+          ]
+        },
+        {
+          "key": "last_activity",
+          "assignments": [
+            "ret[KEY_TORRENT_LAST_ACTIVITY_TIME] = 0;",
+            "ret[KEY_TORRENT_LAST_ACTIVITY_TIME] = dt;"
+          ]
+        }
+      ],
+      "conditions": [
+        "if (torrent.isPaused() || torrent.isChecking()) {",
+        "else {"
+      ]
+    },
+    {
+      "cpp_blob": "23e53c6ee5ff70dc444c01828e9819db24466472",
+      "header_blob": "b02c6574ca6d81d581368df2ce04c5a120d3a60a",
+      "first_release": "4.2.4",
+      "fields": [
+        {
+          "key": "hash",
+          "assignments": [
+            "{KEY_TORRENT_HASH, QString(torrent.hash())},"
+          ]
+        },
+        {
+          "key": "name",
+          "assignments": [
+            "{KEY_TORRENT_NAME, torrent.name()},"
+          ]
+        },
+        {
+          "key": "magnet_uri",
+          "assignments": [
+            "{KEY_TORRENT_MAGNET_URI, torrent.createMagnetURI()},"
+          ]
+        },
+        {
+          "key": "size",
+          "assignments": [
+            "{KEY_TORRENT_SIZE, torrent.wantedSize()},"
+          ]
+        },
+        {
+          "key": "progress",
+          "assignments": [
+            "{KEY_TORRENT_PROGRESS, torrent.progress()},"
+          ]
+        },
+        {
+          "key": "dlspeed",
+          "assignments": [
+            "{KEY_TORRENT_DLSPEED, torrent.downloadPayloadRate()},"
+          ]
+        },
+        {
+          "key": "upspeed",
+          "assignments": [
+            "{KEY_TORRENT_UPSPEED, torrent.uploadPayloadRate()},"
+          ]
+        },
+        {
+          "key": "priority",
+          "assignments": [
+            "{KEY_TORRENT_QUEUE_POSITION, torrent.queuePosition()},"
+          ]
+        },
+        {
+          "key": "num_seeds",
+          "assignments": [
+            "{KEY_TORRENT_SEEDS, torrent.seedsCount()},"
+          ]
+        },
+        {
+          "key": "num_complete",
+          "assignments": [
+            "{KEY_TORRENT_NUM_COMPLETE, torrent.totalSeedsCount()},"
+          ]
+        },
+        {
+          "key": "num_leechs",
+          "assignments": [
+            "{KEY_TORRENT_LEECHS, torrent.leechsCount()},"
+          ]
+        },
+        {
+          "key": "num_incomplete",
+          "assignments": [
+            "{KEY_TORRENT_NUM_INCOMPLETE, torrent.totalLeechersCount()},"
+          ]
+        },
+        {
+          "key": "state",
+          "assignments": [
+            "{KEY_TORRENT_STATE, torrentStateToString(torrent.state())},"
+          ]
+        },
+        {
+          "key": "eta",
+          "assignments": [
+            "{KEY_TORRENT_ETA, torrent.eta()},"
+          ]
+        },
+        {
+          "key": "seq_dl",
+          "assignments": [
+            "{KEY_TORRENT_SEQUENTIAL_DOWNLOAD, torrent.isSequentialDownload()},"
+          ]
+        },
+        {
+          "key": "f_l_piece_prio",
+          "assignments": [
+            "{KEY_TORRENT_FIRST_LAST_PIECE_PRIO, torrent.hasFirstLastPiecePriority()},"
+          ]
+        },
+        {
+          "key": "category",
+          "assignments": [
+            "{KEY_TORRENT_CATEGORY, torrent.category()},"
+          ]
+        },
+        {
+          "key": "tags",
+          "assignments": [
+            "{KEY_TORRENT_TAGS, torrent.tags().values().join(\", \")},"
+          ]
+        },
+        {
+          "key": "super_seeding",
+          "assignments": [
+            "{KEY_TORRENT_SUPER_SEEDING, torrent.superSeeding()},"
+          ]
+        },
+        {
+          "key": "force_start",
+          "assignments": [
+            "{KEY_TORRENT_FORCE_START, torrent.isForced()},"
+          ]
+        },
+        {
+          "key": "save_path",
+          "assignments": [
+            "{KEY_TORRENT_SAVE_PATH, Utils::Fs::toNativePath(torrent.savePath())},"
+          ]
+        },
+        {
+          "key": "added_on",
+          "assignments": [
+            "{KEY_TORRENT_ADDED_ON, torrent.addedTime().toSecsSinceEpoch()},"
+          ]
+        },
+        {
+          "key": "completion_on",
+          "assignments": [
+            "{KEY_TORRENT_COMPLETION_ON, torrent.completedTime().toSecsSinceEpoch()},"
+          ]
+        },
+        {
+          "key": "tracker",
+          "assignments": [
+            "{KEY_TORRENT_TRACKER, torrent.currentTracker()},"
+          ]
+        },
+        {
+          "key": "dl_limit",
+          "assignments": [
+            "{KEY_TORRENT_DL_LIMIT, torrent.downloadLimit()},"
+          ]
+        },
+        {
+          "key": "up_limit",
+          "assignments": [
+            "{KEY_TORRENT_UP_LIMIT, torrent.uploadLimit()},"
+          ]
+        },
+        {
+          "key": "downloaded",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_DOWNLOADED, torrent.totalDownload()},"
+          ]
+        },
+        {
+          "key": "uploaded",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_UPLOADED, torrent.totalUpload()},"
+          ]
+        },
+        {
+          "key": "downloaded_session",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_DOWNLOADED_SESSION, torrent.totalPayloadDownload()},"
+          ]
+        },
+        {
+          "key": "uploaded_session",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_UPLOADED_SESSION, torrent.totalPayloadUpload()},"
+          ]
+        },
+        {
+          "key": "amount_left",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_LEFT, torrent.incompletedSize()},"
+          ]
+        },
+        {
+          "key": "completed",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_COMPLETED, torrent.completedSize()},"
+          ]
+        },
+        {
+          "key": "max_ratio",
+          "assignments": [
+            "{KEY_TORRENT_MAX_RATIO, torrent.maxRatio()},"
+          ]
+        },
+        {
+          "key": "max_seeding_time",
+          "assignments": [
+            "{KEY_TORRENT_MAX_SEEDING_TIME, torrent.maxSeedingTime()},"
+          ]
+        },
+        {
+          "key": "ratio_limit",
+          "assignments": [
+            "{KEY_TORRENT_RATIO_LIMIT, torrent.ratioLimit()},"
+          ]
+        },
+        {
+          "key": "seeding_time_limit",
+          "assignments": [
+            "{KEY_TORRENT_SEEDING_TIME_LIMIT, torrent.seedingTimeLimit()},"
+          ]
+        },
+        {
+          "key": "seen_complete",
+          "assignments": [
+            "{KEY_TORRENT_LAST_SEEN_COMPLETE_TIME, torrent.lastSeenComplete().toSecsSinceEpoch()},"
+          ]
+        },
+        {
+          "key": "auto_tmm",
+          "assignments": [
+            "{KEY_TORRENT_AUTO_TORRENT_MANAGEMENT, torrent.isAutoTMMEnabled()},"
+          ]
+        },
+        {
+          "key": "time_active",
+          "assignments": [
+            "{KEY_TORRENT_TIME_ACTIVE, torrent.activeTime()},"
+          ]
+        },
+        {
+          "key": "availability",
+          "assignments": [
+            "{KEY_TORRENT_AVAILABILITY, torrent.distributedCopies()},"
+          ]
+        },
+        {
+          "key": "total_size",
+          "assignments": [
+            "{KEY_TORRENT_TOTAL_SIZE, torrent.totalSize()}"
+          ]
+        },
+        {
+          "key": "ratio",
+          "assignments": [
+            "ret[KEY_TORRENT_RATIO] = (ratio > BitTorrent::TorrentHandle::MAX_RATIO) ? -1 : ratio;"
+          ]
+        },
+        {
+          "key": "last_activity",
+          "assignments": [
+            "ret[KEY_TORRENT_LAST_ACTIVITY_TIME] = 0;",
+            "ret[KEY_TORRENT_LAST_ACTIVITY_TIME] = dt;"
+          ]
+        }
+      ],
+      "conditions": [
+        "if (torrent.isPaused() || torrent.isChecking()) {",
+        "else {"
+      ]
+    },
+    {
+      "cpp_blob": "a4979008bf531d4dd87101521807c387ed22e03e",
+      "header_blob": "af0a01baee5d3636d2c972eb7dd1aba2e751390a",
+      "first_release": "4.3.0",
+      "fields": [
+        {
+          "key": "hash",
+          "assignments": [
+            "{KEY_TORRENT_HASH, QString(torrent.hash())},"
+          ]
+        },
+        {
+          "key": "name",
+          "assignments": [
+            "{KEY_TORRENT_NAME, torrent.name()},"
+          ]
+        },
+        {
+          "key": "magnet_uri",
+          "assignments": [
+            "{KEY_TORRENT_MAGNET_URI, torrent.createMagnetURI()},"
+          ]
+        },
+        {
+          "key": "size",
+          "assignments": [
+            "{KEY_TORRENT_SIZE, torrent.wantedSize()},"
+          ]
+        },
+        {
+          "key": "progress",
+          "assignments": [
+            "{KEY_TORRENT_PROGRESS, torrent.progress()},"
+          ]
+        },
+        {
+          "key": "dlspeed",
+          "assignments": [
+            "{KEY_TORRENT_DLSPEED, torrent.downloadPayloadRate()},"
+          ]
+        },
+        {
+          "key": "upspeed",
+          "assignments": [
+            "{KEY_TORRENT_UPSPEED, torrent.uploadPayloadRate()},"
+          ]
+        },
+        {
+          "key": "priority",
+          "assignments": [
+            "{KEY_TORRENT_QUEUE_POSITION, torrent.queuePosition()},"
+          ]
+        },
+        {
+          "key": "num_seeds",
+          "assignments": [
+            "{KEY_TORRENT_SEEDS, torrent.seedsCount()},"
+          ]
+        },
+        {
+          "key": "num_complete",
+          "assignments": [
+            "{KEY_TORRENT_NUM_COMPLETE, torrent.totalSeedsCount()},"
+          ]
+        },
+        {
+          "key": "num_leechs",
+          "assignments": [
+            "{KEY_TORRENT_LEECHS, torrent.leechsCount()},"
+          ]
+        },
+        {
+          "key": "num_incomplete",
+          "assignments": [
+            "{KEY_TORRENT_NUM_INCOMPLETE, torrent.totalLeechersCount()},"
+          ]
+        },
+        {
+          "key": "state",
+          "assignments": [
+            "{KEY_TORRENT_STATE, torrentStateToString(torrent.state())},"
+          ]
+        },
+        {
+          "key": "eta",
+          "assignments": [
+            "{KEY_TORRENT_ETA, torrent.eta()},"
+          ]
+        },
+        {
+          "key": "seq_dl",
+          "assignments": [
+            "{KEY_TORRENT_SEQUENTIAL_DOWNLOAD, torrent.isSequentialDownload()},"
+          ]
+        },
+        {
+          "key": "f_l_piece_prio",
+          "assignments": [
+            "{KEY_TORRENT_FIRST_LAST_PIECE_PRIO, torrent.hasFirstLastPiecePriority()},"
+          ]
+        },
+        {
+          "key": "category",
+          "assignments": [
+            "{KEY_TORRENT_CATEGORY, torrent.category()},"
+          ]
+        },
+        {
+          "key": "tags",
+          "assignments": [
+            "{KEY_TORRENT_TAGS, torrent.tags().values().join(\", \")},"
+          ]
+        },
+        {
+          "key": "super_seeding",
+          "assignments": [
+            "{KEY_TORRENT_SUPER_SEEDING, torrent.superSeeding()},"
+          ]
+        },
+        {
+          "key": "force_start",
+          "assignments": [
+            "{KEY_TORRENT_FORCE_START, torrent.isForced()},"
+          ]
+        },
+        {
+          "key": "save_path",
+          "assignments": [
+            "{KEY_TORRENT_SAVE_PATH, Utils::Fs::toNativePath(torrent.savePath())},"
+          ]
+        },
+        {
+          "key": "added_on",
+          "assignments": [
+            "{KEY_TORRENT_ADDED_ON, torrent.addedTime().toSecsSinceEpoch()},"
+          ]
+        },
+        {
+          "key": "completion_on",
+          "assignments": [
+            "{KEY_TORRENT_COMPLETION_ON, torrent.completedTime().toSecsSinceEpoch()},"
+          ]
+        },
+        {
+          "key": "tracker",
+          "assignments": [
+            "{KEY_TORRENT_TRACKER, torrent.currentTracker()},"
+          ]
+        },
+        {
+          "key": "trackers_count",
+          "assignments": [
+            "{KEY_TORRENT_TRACKERS_COUNT, torrent.trackers().size()},"
+          ]
+        },
+        {
+          "key": "dl_limit",
+          "assignments": [
+            "{KEY_TORRENT_DL_LIMIT, torrent.downloadLimit()},"
+          ]
+        },
+        {
+          "key": "up_limit",
+          "assignments": [
+            "{KEY_TORRENT_UP_LIMIT, torrent.uploadLimit()},"
+          ]
+        },
+        {
+          "key": "downloaded",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_DOWNLOADED, torrent.totalDownload()},"
+          ]
+        },
+        {
+          "key": "uploaded",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_UPLOADED, torrent.totalUpload()},"
+          ]
+        },
+        {
+          "key": "downloaded_session",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_DOWNLOADED_SESSION, torrent.totalPayloadDownload()},"
+          ]
+        },
+        {
+          "key": "uploaded_session",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_UPLOADED_SESSION, torrent.totalPayloadUpload()},"
+          ]
+        },
+        {
+          "key": "amount_left",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_LEFT, torrent.incompletedSize()},"
+          ]
+        },
+        {
+          "key": "completed",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_COMPLETED, torrent.completedSize()},"
+          ]
+        },
+        {
+          "key": "max_ratio",
+          "assignments": [
+            "{KEY_TORRENT_MAX_RATIO, torrent.maxRatio()},"
+          ]
+        },
+        {
+          "key": "max_seeding_time",
+          "assignments": [
+            "{KEY_TORRENT_MAX_SEEDING_TIME, torrent.maxSeedingTime()},"
+          ]
+        },
+        {
+          "key": "ratio_limit",
+          "assignments": [
+            "{KEY_TORRENT_RATIO_LIMIT, torrent.ratioLimit()},"
+          ]
+        },
+        {
+          "key": "seeding_time_limit",
+          "assignments": [
+            "{KEY_TORRENT_SEEDING_TIME_LIMIT, torrent.seedingTimeLimit()},"
+          ]
+        },
+        {
+          "key": "seen_complete",
+          "assignments": [
+            "{KEY_TORRENT_LAST_SEEN_COMPLETE_TIME, torrent.lastSeenComplete().toSecsSinceEpoch()},"
+          ]
+        },
+        {
+          "key": "auto_tmm",
+          "assignments": [
+            "{KEY_TORRENT_AUTO_TORRENT_MANAGEMENT, torrent.isAutoTMMEnabled()},"
+          ]
+        },
+        {
+          "key": "time_active",
+          "assignments": [
+            "{KEY_TORRENT_TIME_ACTIVE, torrent.activeTime()},"
+          ]
+        },
+        {
+          "key": "availability",
+          "assignments": [
+            "{KEY_TORRENT_AVAILABILITY, torrent.distributedCopies()},"
+          ]
+        },
+        {
+          "key": "total_size",
+          "assignments": [
+            "{KEY_TORRENT_TOTAL_SIZE, torrent.totalSize()}"
+          ]
+        },
+        {
+          "key": "ratio",
+          "assignments": [
+            "ret[KEY_TORRENT_RATIO] = (ratio > BitTorrent::TorrentHandle::MAX_RATIO) ? -1 : ratio;"
+          ]
+        },
+        {
+          "key": "last_activity",
+          "assignments": [
+            "ret[KEY_TORRENT_LAST_ACTIVITY_TIME] = 0;",
+            "ret[KEY_TORRENT_LAST_ACTIVITY_TIME] = dt;"
+          ]
+        }
+      ],
+      "conditions": [
+        "if (torrent.isPaused() || torrent.isChecking()) {",
+        "else {"
+      ]
+    },
+    {
+      "cpp_blob": "2bae34570c1be59136a21d5b5c86d0b89f07dfe2",
+      "header_blob": "022bb08217a19bfdc85ad1e5674660bd58329f64",
+      "first_release": "4.3.1",
+      "fields": [
+        {
+          "key": "hash",
+          "assignments": [
+            "{KEY_TORRENT_HASH, QString(torrent.hash())},"
+          ]
+        },
+        {
+          "key": "name",
+          "assignments": [
+            "{KEY_TORRENT_NAME, torrent.name()},"
+          ]
+        },
+        {
+          "key": "magnet_uri",
+          "assignments": [
+            "{KEY_TORRENT_MAGNET_URI, torrent.createMagnetURI()},"
+          ]
+        },
+        {
+          "key": "size",
+          "assignments": [
+            "{KEY_TORRENT_SIZE, torrent.wantedSize()},"
+          ]
+        },
+        {
+          "key": "progress",
+          "assignments": [
+            "{KEY_TORRENT_PROGRESS, torrent.progress()},"
+          ]
+        },
+        {
+          "key": "dlspeed",
+          "assignments": [
+            "{KEY_TORRENT_DLSPEED, torrent.downloadPayloadRate()},"
+          ]
+        },
+        {
+          "key": "upspeed",
+          "assignments": [
+            "{KEY_TORRENT_UPSPEED, torrent.uploadPayloadRate()},"
+          ]
+        },
+        {
+          "key": "priority",
+          "assignments": [
+            "{KEY_TORRENT_QUEUE_POSITION, torrent.queuePosition()},"
+          ]
+        },
+        {
+          "key": "num_seeds",
+          "assignments": [
+            "{KEY_TORRENT_SEEDS, torrent.seedsCount()},"
+          ]
+        },
+        {
+          "key": "num_complete",
+          "assignments": [
+            "{KEY_TORRENT_NUM_COMPLETE, torrent.totalSeedsCount()},"
+          ]
+        },
+        {
+          "key": "num_leechs",
+          "assignments": [
+            "{KEY_TORRENT_LEECHS, torrent.leechsCount()},"
+          ]
+        },
+        {
+          "key": "num_incomplete",
+          "assignments": [
+            "{KEY_TORRENT_NUM_INCOMPLETE, torrent.totalLeechersCount()},"
+          ]
+        },
+        {
+          "key": "state",
+          "assignments": [
+            "{KEY_TORRENT_STATE, torrentStateToString(torrent.state())},"
+          ]
+        },
+        {
+          "key": "eta",
+          "assignments": [
+            "{KEY_TORRENT_ETA, torrent.eta()},"
+          ]
+        },
+        {
+          "key": "seq_dl",
+          "assignments": [
+            "{KEY_TORRENT_SEQUENTIAL_DOWNLOAD, torrent.isSequentialDownload()},"
+          ]
+        },
+        {
+          "key": "f_l_piece_prio",
+          "assignments": [
+            "{KEY_TORRENT_FIRST_LAST_PIECE_PRIO, torrent.hasFirstLastPiecePriority()},"
+          ]
+        },
+        {
+          "key": "category",
+          "assignments": [
+            "{KEY_TORRENT_CATEGORY, torrent.category()},"
+          ]
+        },
+        {
+          "key": "tags",
+          "assignments": [
+            "{KEY_TORRENT_TAGS, torrent.tags().values().join(\", \")},"
+          ]
+        },
+        {
+          "key": "super_seeding",
+          "assignments": [
+            "{KEY_TORRENT_SUPER_SEEDING, torrent.superSeeding()},"
+          ]
+        },
+        {
+          "key": "force_start",
+          "assignments": [
+            "{KEY_TORRENT_FORCE_START, torrent.isForced()},"
+          ]
+        },
+        {
+          "key": "save_path",
+          "assignments": [
+            "{KEY_TORRENT_SAVE_PATH, Utils::Fs::toNativePath(torrent.savePath())},"
+          ]
+        },
+        {
+          "key": "content_path",
+          "assignments": [
+            "{KEY_TORRENT_CONTENT_PATH, Utils::Fs::toNativePath(torrent.contentPath())},"
+          ]
+        },
+        {
+          "key": "added_on",
+          "assignments": [
+            "{KEY_TORRENT_ADDED_ON, torrent.addedTime().toSecsSinceEpoch()},"
+          ]
+        },
+        {
+          "key": "completion_on",
+          "assignments": [
+            "{KEY_TORRENT_COMPLETION_ON, torrent.completedTime().toSecsSinceEpoch()},"
+          ]
+        },
+        {
+          "key": "tracker",
+          "assignments": [
+            "{KEY_TORRENT_TRACKER, torrent.currentTracker()},"
+          ]
+        },
+        {
+          "key": "trackers_count",
+          "assignments": [
+            "{KEY_TORRENT_TRACKERS_COUNT, torrent.trackers().size()},"
+          ]
+        },
+        {
+          "key": "dl_limit",
+          "assignments": [
+            "{KEY_TORRENT_DL_LIMIT, torrent.downloadLimit()},"
+          ]
+        },
+        {
+          "key": "up_limit",
+          "assignments": [
+            "{KEY_TORRENT_UP_LIMIT, torrent.uploadLimit()},"
+          ]
+        },
+        {
+          "key": "downloaded",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_DOWNLOADED, torrent.totalDownload()},"
+          ]
+        },
+        {
+          "key": "uploaded",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_UPLOADED, torrent.totalUpload()},"
+          ]
+        },
+        {
+          "key": "downloaded_session",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_DOWNLOADED_SESSION, torrent.totalPayloadDownload()},"
+          ]
+        },
+        {
+          "key": "uploaded_session",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_UPLOADED_SESSION, torrent.totalPayloadUpload()},"
+          ]
+        },
+        {
+          "key": "amount_left",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_LEFT, torrent.remainingSize()},"
+          ]
+        },
+        {
+          "key": "completed",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_COMPLETED, torrent.completedSize()},"
+          ]
+        },
+        {
+          "key": "max_ratio",
+          "assignments": [
+            "{KEY_TORRENT_MAX_RATIO, torrent.maxRatio()},"
+          ]
+        },
+        {
+          "key": "max_seeding_time",
+          "assignments": [
+            "{KEY_TORRENT_MAX_SEEDING_TIME, torrent.maxSeedingTime()},"
+          ]
+        },
+        {
+          "key": "ratio_limit",
+          "assignments": [
+            "{KEY_TORRENT_RATIO_LIMIT, torrent.ratioLimit()},"
+          ]
+        },
+        {
+          "key": "seeding_time_limit",
+          "assignments": [
+            "{KEY_TORRENT_SEEDING_TIME_LIMIT, torrent.seedingTimeLimit()},"
+          ]
+        },
+        {
+          "key": "seen_complete",
+          "assignments": [
+            "{KEY_TORRENT_LAST_SEEN_COMPLETE_TIME, torrent.lastSeenComplete().toSecsSinceEpoch()},"
+          ]
+        },
+        {
+          "key": "auto_tmm",
+          "assignments": [
+            "{KEY_TORRENT_AUTO_TORRENT_MANAGEMENT, torrent.isAutoTMMEnabled()},"
+          ]
+        },
+        {
+          "key": "time_active",
+          "assignments": [
+            "{KEY_TORRENT_TIME_ACTIVE, torrent.activeTime()},"
+          ]
+        },
+        {
+          "key": "availability",
+          "assignments": [
+            "{KEY_TORRENT_AVAILABILITY, torrent.distributedCopies()},"
+          ]
+        },
+        {
+          "key": "total_size",
+          "assignments": [
+            "{KEY_TORRENT_TOTAL_SIZE, torrent.totalSize()}"
+          ]
+        },
+        {
+          "key": "ratio",
+          "assignments": [
+            "ret[KEY_TORRENT_RATIO] = (ratio > BitTorrent::TorrentHandle::MAX_RATIO) ? -1 : ratio;"
+          ]
+        },
+        {
+          "key": "last_activity",
+          "assignments": [
+            "ret[KEY_TORRENT_LAST_ACTIVITY_TIME] = 0;",
+            "ret[KEY_TORRENT_LAST_ACTIVITY_TIME] = dt;"
+          ]
+        }
+      ],
+      "conditions": [
+        "if (torrent.isPaused() || torrent.isChecking())",
+        "else"
+      ]
+    },
+    {
+      "cpp_blob": "6b46ac3b39fcf5f87594e94c43da8813e81286aa",
+      "header_blob": "022bb08217a19bfdc85ad1e5674660bd58329f64",
+      "first_release": "4.3.2",
+      "fields": [
+        {
+          "key": "hash",
+          "assignments": [
+            "{KEY_TORRENT_HASH, QString(torrent.hash())},"
+          ]
+        },
+        {
+          "key": "name",
+          "assignments": [
+            "{KEY_TORRENT_NAME, torrent.name()},"
+          ]
+        },
+        {
+          "key": "magnet_uri",
+          "assignments": [
+            "{KEY_TORRENT_MAGNET_URI, torrent.createMagnetURI()},"
+          ]
+        },
+        {
+          "key": "size",
+          "assignments": [
+            "{KEY_TORRENT_SIZE, torrent.wantedSize()},"
+          ]
+        },
+        {
+          "key": "progress",
+          "assignments": [
+            "{KEY_TORRENT_PROGRESS, torrent.progress()},"
+          ]
+        },
+        {
+          "key": "dlspeed",
+          "assignments": [
+            "{KEY_TORRENT_DLSPEED, torrent.downloadPayloadRate()},"
+          ]
+        },
+        {
+          "key": "upspeed",
+          "assignments": [
+            "{KEY_TORRENT_UPSPEED, torrent.uploadPayloadRate()},"
+          ]
+        },
+        {
+          "key": "priority",
+          "assignments": [
+            "{KEY_TORRENT_QUEUE_POSITION, torrent.queuePosition()},"
+          ]
+        },
+        {
+          "key": "num_seeds",
+          "assignments": [
+            "{KEY_TORRENT_SEEDS, torrent.seedsCount()},"
+          ]
+        },
+        {
+          "key": "num_complete",
+          "assignments": [
+            "{KEY_TORRENT_NUM_COMPLETE, torrent.totalSeedsCount()},"
+          ]
+        },
+        {
+          "key": "num_leechs",
+          "assignments": [
+            "{KEY_TORRENT_LEECHS, torrent.leechsCount()},"
+          ]
+        },
+        {
+          "key": "num_incomplete",
+          "assignments": [
+            "{KEY_TORRENT_NUM_INCOMPLETE, torrent.totalLeechersCount()},"
+          ]
+        },
+        {
+          "key": "state",
+          "assignments": [
+            "{KEY_TORRENT_STATE, torrentStateToString(torrent.state())},"
+          ]
+        },
+        {
+          "key": "eta",
+          "assignments": [
+            "{KEY_TORRENT_ETA, torrent.eta()},"
+          ]
+        },
+        {
+          "key": "seq_dl",
+          "assignments": [
+            "{KEY_TORRENT_SEQUENTIAL_DOWNLOAD, torrent.isSequentialDownload()},"
+          ]
+        },
+        {
+          "key": "f_l_piece_prio",
+          "assignments": [
+            "{KEY_TORRENT_FIRST_LAST_PIECE_PRIO, torrent.hasFirstLastPiecePriority()},"
+          ]
+        },
+        {
+          "key": "category",
+          "assignments": [
+            "{KEY_TORRENT_CATEGORY, torrent.category()},"
+          ]
+        },
+        {
+          "key": "tags",
+          "assignments": [
+            "{KEY_TORRENT_TAGS, torrent.tags().values().join(\", \")},"
+          ]
+        },
+        {
+          "key": "super_seeding",
+          "assignments": [
+            "{KEY_TORRENT_SUPER_SEEDING, torrent.superSeeding()},"
+          ]
+        },
+        {
+          "key": "force_start",
+          "assignments": [
+            "{KEY_TORRENT_FORCE_START, torrent.isForced()},"
+          ]
+        },
+        {
+          "key": "save_path",
+          "assignments": [
+            "{KEY_TORRENT_SAVE_PATH, Utils::Fs::toNativePath(torrent.savePath())},"
+          ]
+        },
+        {
+          "key": "content_path",
+          "assignments": [
+            "{KEY_TORRENT_CONTENT_PATH, Utils::Fs::toNativePath(torrent.contentPath())},"
+          ]
+        },
+        {
+          "key": "added_on",
+          "assignments": [
+            "{KEY_TORRENT_ADDED_ON, torrent.addedTime().toSecsSinceEpoch()},"
+          ]
+        },
+        {
+          "key": "completion_on",
+          "assignments": [
+            "{KEY_TORRENT_COMPLETION_ON, torrent.completedTime().toSecsSinceEpoch()},"
+          ]
+        },
+        {
+          "key": "tracker",
+          "assignments": [
+            "{KEY_TORRENT_TRACKER, torrent.currentTracker()},"
+          ]
+        },
+        {
+          "key": "trackers_count",
+          "assignments": [
+            "{KEY_TORRENT_TRACKERS_COUNT, torrent.trackers().size()},"
+          ]
+        },
+        {
+          "key": "dl_limit",
+          "assignments": [
+            "{KEY_TORRENT_DL_LIMIT, torrent.downloadLimit()},"
+          ]
+        },
+        {
+          "key": "up_limit",
+          "assignments": [
+            "{KEY_TORRENT_UP_LIMIT, torrent.uploadLimit()},"
+          ]
+        },
+        {
+          "key": "downloaded",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_DOWNLOADED, torrent.totalDownload()},"
+          ]
+        },
+        {
+          "key": "uploaded",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_UPLOADED, torrent.totalUpload()},"
+          ]
+        },
+        {
+          "key": "downloaded_session",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_DOWNLOADED_SESSION, torrent.totalPayloadDownload()},"
+          ]
+        },
+        {
+          "key": "uploaded_session",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_UPLOADED_SESSION, torrent.totalPayloadUpload()},"
+          ]
+        },
+        {
+          "key": "amount_left",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_LEFT, torrent.remainingSize()},"
+          ]
+        },
+        {
+          "key": "completed",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_COMPLETED, torrent.completedSize()},"
+          ]
+        },
+        {
+          "key": "max_ratio",
+          "assignments": [
+            "{KEY_TORRENT_MAX_RATIO, torrent.maxRatio()},"
+          ]
+        },
+        {
+          "key": "max_seeding_time",
+          "assignments": [
+            "{KEY_TORRENT_MAX_SEEDING_TIME, torrent.maxSeedingTime()},"
+          ]
+        },
+        {
+          "key": "ratio_limit",
+          "assignments": [
+            "{KEY_TORRENT_RATIO_LIMIT, torrent.ratioLimit()},"
+          ]
+        },
+        {
+          "key": "seeding_time_limit",
+          "assignments": [
+            "{KEY_TORRENT_SEEDING_TIME_LIMIT, torrent.seedingTimeLimit()},"
+          ]
+        },
+        {
+          "key": "seen_complete",
+          "assignments": [
+            "{KEY_TORRENT_LAST_SEEN_COMPLETE_TIME, torrent.lastSeenComplete().toSecsSinceEpoch()},"
+          ]
+        },
+        {
+          "key": "auto_tmm",
+          "assignments": [
+            "{KEY_TORRENT_AUTO_TORRENT_MANAGEMENT, torrent.isAutoTMMEnabled()},"
+          ]
+        },
+        {
+          "key": "time_active",
+          "assignments": [
+            "{KEY_TORRENT_TIME_ACTIVE, torrent.activeTime()},"
+          ]
+        },
+        {
+          "key": "availability",
+          "assignments": [
+            "{KEY_TORRENT_AVAILABILITY, torrent.distributedCopies()},"
+          ]
+        },
+        {
+          "key": "total_size",
+          "assignments": [
+            "{KEY_TORRENT_TOTAL_SIZE, torrent.totalSize()}"
+          ]
+        },
+        {
+          "key": "ratio",
+          "assignments": [
+            "ret[KEY_TORRENT_RATIO] = (ratio > BitTorrent::TorrentHandle::MAX_RATIO) ? -1 : ratio;"
+          ]
+        },
+        {
+          "key": "last_activity",
+          "assignments": [
+            "ret[KEY_TORRENT_LAST_ACTIVITY_TIME] = 0;",
+            "ret[KEY_TORRENT_LAST_ACTIVITY_TIME] = dt;"
+          ]
+        }
+      ],
+      "conditions": [
+        "if (torrent.isPaused() || torrent.isChecking())",
+        "else"
+      ]
+    },
+    {
+      "cpp_blob": "59c0039edba6f3bb59ee41531d9d90832f6b864e",
+      "header_blob": "1db455af165faf7b4133bb76621a1dc6e15fff6c",
+      "first_release": "4.3.3",
+      "fields": [
+        {
+          "key": "hash",
+          "assignments": [
+            "{KEY_TORRENT_HASH, QString(torrent.hash())},"
+          ]
+        },
+        {
+          "key": "name",
+          "assignments": [
+            "{KEY_TORRENT_NAME, torrent.name()},"
+          ]
+        },
+        {
+          "key": "magnet_uri",
+          "assignments": [
+            "{KEY_TORRENT_MAGNET_URI, torrent.createMagnetURI()},"
+          ]
+        },
+        {
+          "key": "size",
+          "assignments": [
+            "{KEY_TORRENT_SIZE, torrent.wantedSize()},"
+          ]
+        },
+        {
+          "key": "progress",
+          "assignments": [
+            "{KEY_TORRENT_PROGRESS, torrent.progress()},"
+          ]
+        },
+        {
+          "key": "dlspeed",
+          "assignments": [
+            "{KEY_TORRENT_DLSPEED, torrent.downloadPayloadRate()},"
+          ]
+        },
+        {
+          "key": "upspeed",
+          "assignments": [
+            "{KEY_TORRENT_UPSPEED, torrent.uploadPayloadRate()},"
+          ]
+        },
+        {
+          "key": "priority",
+          "assignments": [
+            "{KEY_TORRENT_QUEUE_POSITION, torrent.queuePosition()},"
+          ]
+        },
+        {
+          "key": "num_seeds",
+          "assignments": [
+            "{KEY_TORRENT_SEEDS, torrent.seedsCount()},"
+          ]
+        },
+        {
+          "key": "num_complete",
+          "assignments": [
+            "{KEY_TORRENT_NUM_COMPLETE, torrent.totalSeedsCount()},"
+          ]
+        },
+        {
+          "key": "num_leechs",
+          "assignments": [
+            "{KEY_TORRENT_LEECHS, torrent.leechsCount()},"
+          ]
+        },
+        {
+          "key": "num_incomplete",
+          "assignments": [
+            "{KEY_TORRENT_NUM_INCOMPLETE, torrent.totalLeechersCount()},"
+          ]
+        },
+        {
+          "key": "state",
+          "assignments": [
+            "{KEY_TORRENT_STATE, torrentStateToString(torrent.state())},"
+          ]
+        },
+        {
+          "key": "eta",
+          "assignments": [
+            "{KEY_TORRENT_ETA, torrent.eta()},"
+          ]
+        },
+        {
+          "key": "seq_dl",
+          "assignments": [
+            "{KEY_TORRENT_SEQUENTIAL_DOWNLOAD, torrent.isSequentialDownload()},"
+          ]
+        },
+        {
+          "key": "f_l_piece_prio",
+          "assignments": [
+            "{KEY_TORRENT_FIRST_LAST_PIECE_PRIO, torrent.hasFirstLastPiecePriority()},"
+          ]
+        },
+        {
+          "key": "category",
+          "assignments": [
+            "{KEY_TORRENT_CATEGORY, torrent.category()},"
+          ]
+        },
+        {
+          "key": "tags",
+          "assignments": [
+            "{KEY_TORRENT_TAGS, torrent.tags().values().join(\", \")},"
+          ]
+        },
+        {
+          "key": "super_seeding",
+          "assignments": [
+            "{KEY_TORRENT_SUPER_SEEDING, torrent.superSeeding()},"
+          ]
+        },
+        {
+          "key": "force_start",
+          "assignments": [
+            "{KEY_TORRENT_FORCE_START, torrent.isForced()},"
+          ]
+        },
+        {
+          "key": "save_path",
+          "assignments": [
+            "{KEY_TORRENT_SAVE_PATH, Utils::Fs::toNativePath(torrent.savePath())},"
+          ]
+        },
+        {
+          "key": "content_path",
+          "assignments": [
+            "{KEY_TORRENT_CONTENT_PATH, Utils::Fs::toNativePath(torrent.contentPath())},"
+          ]
+        },
+        {
+          "key": "added_on",
+          "assignments": [
+            "{KEY_TORRENT_ADDED_ON, torrent.addedTime().toSecsSinceEpoch()},"
+          ]
+        },
+        {
+          "key": "completion_on",
+          "assignments": [
+            "{KEY_TORRENT_COMPLETION_ON, torrent.completedTime().toSecsSinceEpoch()},"
+          ]
+        },
+        {
+          "key": "tracker",
+          "assignments": [
+            "{KEY_TORRENT_TRACKER, torrent.currentTracker()},"
+          ]
+        },
+        {
+          "key": "trackers_count",
+          "assignments": [
+            "{KEY_TORRENT_TRACKERS_COUNT, torrent.trackers().size()},"
+          ]
+        },
+        {
+          "key": "dl_limit",
+          "assignments": [
+            "{KEY_TORRENT_DL_LIMIT, torrent.downloadLimit()},"
+          ]
+        },
+        {
+          "key": "up_limit",
+          "assignments": [
+            "{KEY_TORRENT_UP_LIMIT, torrent.uploadLimit()},"
+          ]
+        },
+        {
+          "key": "downloaded",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_DOWNLOADED, torrent.totalDownload()},"
+          ]
+        },
+        {
+          "key": "uploaded",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_UPLOADED, torrent.totalUpload()},"
+          ]
+        },
+        {
+          "key": "downloaded_session",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_DOWNLOADED_SESSION, torrent.totalPayloadDownload()},"
+          ]
+        },
+        {
+          "key": "uploaded_session",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_UPLOADED_SESSION, torrent.totalPayloadUpload()},"
+          ]
+        },
+        {
+          "key": "amount_left",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_LEFT, torrent.remainingSize()},"
+          ]
+        },
+        {
+          "key": "completed",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_COMPLETED, torrent.completedSize()},"
+          ]
+        },
+        {
+          "key": "max_ratio",
+          "assignments": [
+            "{KEY_TORRENT_MAX_RATIO, torrent.maxRatio()},"
+          ]
+        },
+        {
+          "key": "max_seeding_time",
+          "assignments": [
+            "{KEY_TORRENT_MAX_SEEDING_TIME, torrent.maxSeedingTime()},"
+          ]
+        },
+        {
+          "key": "ratio_limit",
+          "assignments": [
+            "{KEY_TORRENT_RATIO_LIMIT, torrent.ratioLimit()},"
+          ]
+        },
+        {
+          "key": "seeding_time_limit",
+          "assignments": [
+            "{KEY_TORRENT_SEEDING_TIME_LIMIT, torrent.seedingTimeLimit()},"
+          ]
+        },
+        {
+          "key": "seen_complete",
+          "assignments": [
+            "{KEY_TORRENT_LAST_SEEN_COMPLETE_TIME, torrent.lastSeenComplete().toSecsSinceEpoch()},"
+          ]
+        },
+        {
+          "key": "auto_tmm",
+          "assignments": [
+            "{KEY_TORRENT_AUTO_TORRENT_MANAGEMENT, torrent.isAutoTMMEnabled()},"
+          ]
+        },
+        {
+          "key": "time_active",
+          "assignments": [
+            "{KEY_TORRENT_TIME_ACTIVE, torrent.activeTime()},"
+          ]
+        },
+        {
+          "key": "availability",
+          "assignments": [
+            "{KEY_TORRENT_AVAILABILITY, torrent.distributedCopies()},"
+          ]
+        },
+        {
+          "key": "total_size",
+          "assignments": [
+            "{KEY_TORRENT_TOTAL_SIZE, torrent.totalSize()}"
+          ]
+        },
+        {
+          "key": "ratio",
+          "assignments": [
+            "ret[KEY_TORRENT_RATIO] = (ratio > BitTorrent::Torrent::MAX_RATIO) ? -1 : ratio;"
+          ]
+        },
+        {
+          "key": "last_activity",
+          "assignments": [
+            "ret[KEY_TORRENT_LAST_ACTIVITY_TIME] = 0;",
+            "ret[KEY_TORRENT_LAST_ACTIVITY_TIME] = dt;"
+          ]
+        }
+      ],
+      "conditions": [
+        "if (torrent.isPaused() || torrent.isChecking())",
+        "else"
+      ]
+    },
+    {
+      "cpp_blob": "9b4479429cf81e31837a491e13caae11179b709f",
+      "header_blob": "10cc56ce45b6a6a3dc8552ab0f5ff781dde2f0bd",
+      "first_release": "4.3.4",
+      "fields": [
+        {
+          "key": "hash",
+          "assignments": [
+            "{KEY_TORRENT_ID, QString(torrent.id().toString())},"
+          ]
+        },
+        {
+          "key": "name",
+          "assignments": [
+            "{KEY_TORRENT_NAME, torrent.name()},"
+          ]
+        },
+        {
+          "key": "magnet_uri",
+          "assignments": [
+            "{KEY_TORRENT_MAGNET_URI, torrent.createMagnetURI()},"
+          ]
+        },
+        {
+          "key": "size",
+          "assignments": [
+            "{KEY_TORRENT_SIZE, torrent.wantedSize()},"
+          ]
+        },
+        {
+          "key": "progress",
+          "assignments": [
+            "{KEY_TORRENT_PROGRESS, torrent.progress()},"
+          ]
+        },
+        {
+          "key": "dlspeed",
+          "assignments": [
+            "{KEY_TORRENT_DLSPEED, torrent.downloadPayloadRate()},"
+          ]
+        },
+        {
+          "key": "upspeed",
+          "assignments": [
+            "{KEY_TORRENT_UPSPEED, torrent.uploadPayloadRate()},"
+          ]
+        },
+        {
+          "key": "priority",
+          "assignments": [
+            "{KEY_TORRENT_QUEUE_POSITION, adjustQueuePosition(torrent.queuePosition())},"
+          ]
+        },
+        {
+          "key": "num_seeds",
+          "assignments": [
+            "{KEY_TORRENT_SEEDS, torrent.seedsCount()},"
+          ]
+        },
+        {
+          "key": "num_complete",
+          "assignments": [
+            "{KEY_TORRENT_NUM_COMPLETE, torrent.totalSeedsCount()},"
+          ]
+        },
+        {
+          "key": "num_leechs",
+          "assignments": [
+            "{KEY_TORRENT_LEECHS, torrent.leechsCount()},"
+          ]
+        },
+        {
+          "key": "num_incomplete",
+          "assignments": [
+            "{KEY_TORRENT_NUM_INCOMPLETE, torrent.totalLeechersCount()},"
+          ]
+        },
+        {
+          "key": "state",
+          "assignments": [
+            "{KEY_TORRENT_STATE, torrentStateToString(torrent.state())},"
+          ]
+        },
+        {
+          "key": "eta",
+          "assignments": [
+            "{KEY_TORRENT_ETA, torrent.eta()},"
+          ]
+        },
+        {
+          "key": "seq_dl",
+          "assignments": [
+            "{KEY_TORRENT_SEQUENTIAL_DOWNLOAD, torrent.isSequentialDownload()},"
+          ]
+        },
+        {
+          "key": "f_l_piece_prio",
+          "assignments": [
+            "{KEY_TORRENT_FIRST_LAST_PIECE_PRIO, torrent.hasFirstLastPiecePriority()},"
+          ]
+        },
+        {
+          "key": "category",
+          "assignments": [
+            "{KEY_TORRENT_CATEGORY, torrent.category()},"
+          ]
+        },
+        {
+          "key": "tags",
+          "assignments": [
+            "{KEY_TORRENT_TAGS, torrent.tags().values().join(\", \")},"
+          ]
+        },
+        {
+          "key": "super_seeding",
+          "assignments": [
+            "{KEY_TORRENT_SUPER_SEEDING, torrent.superSeeding()},"
+          ]
+        },
+        {
+          "key": "force_start",
+          "assignments": [
+            "{KEY_TORRENT_FORCE_START, torrent.isForced()},"
+          ]
+        },
+        {
+          "key": "save_path",
+          "assignments": [
+            "{KEY_TORRENT_SAVE_PATH, Utils::Fs::toNativePath(torrent.savePath())},"
+          ]
+        },
+        {
+          "key": "content_path",
+          "assignments": [
+            "{KEY_TORRENT_CONTENT_PATH, Utils::Fs::toNativePath(torrent.contentPath())},"
+          ]
+        },
+        {
+          "key": "added_on",
+          "assignments": [
+            "{KEY_TORRENT_ADDED_ON, torrent.addedTime().toSecsSinceEpoch()},"
+          ]
+        },
+        {
+          "key": "completion_on",
+          "assignments": [
+            "{KEY_TORRENT_COMPLETION_ON, torrent.completedTime().toSecsSinceEpoch()},"
+          ]
+        },
+        {
+          "key": "tracker",
+          "assignments": [
+            "{KEY_TORRENT_TRACKER, torrent.currentTracker()},"
+          ]
+        },
+        {
+          "key": "trackers_count",
+          "assignments": [
+            "{KEY_TORRENT_TRACKERS_COUNT, torrent.trackers().size()},"
+          ]
+        },
+        {
+          "key": "dl_limit",
+          "assignments": [
+            "{KEY_TORRENT_DL_LIMIT, torrent.downloadLimit()},"
+          ]
+        },
+        {
+          "key": "up_limit",
+          "assignments": [
+            "{KEY_TORRENT_UP_LIMIT, torrent.uploadLimit()},"
+          ]
+        },
+        {
+          "key": "downloaded",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_DOWNLOADED, torrent.totalDownload()},"
+          ]
+        },
+        {
+          "key": "uploaded",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_UPLOADED, torrent.totalUpload()},"
+          ]
+        },
+        {
+          "key": "downloaded_session",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_DOWNLOADED_SESSION, torrent.totalPayloadDownload()},"
+          ]
+        },
+        {
+          "key": "uploaded_session",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_UPLOADED_SESSION, torrent.totalPayloadUpload()},"
+          ]
+        },
+        {
+          "key": "amount_left",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_LEFT, torrent.remainingSize()},"
+          ]
+        },
+        {
+          "key": "completed",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_COMPLETED, torrent.completedSize()},"
+          ]
+        },
+        {
+          "key": "max_ratio",
+          "assignments": [
+            "{KEY_TORRENT_MAX_RATIO, torrent.maxRatio()},"
+          ]
+        },
+        {
+          "key": "max_seeding_time",
+          "assignments": [
+            "{KEY_TORRENT_MAX_SEEDING_TIME, torrent.maxSeedingTime()},"
+          ]
+        },
+        {
+          "key": "ratio",
+          "assignments": [
+            "{KEY_TORRENT_RATIO, adjustRatio(torrent.realRatio())},"
+          ]
+        },
+        {
+          "key": "ratio_limit",
+          "assignments": [
+            "{KEY_TORRENT_RATIO_LIMIT, torrent.ratioLimit()},"
+          ]
+        },
+        {
+          "key": "seeding_time_limit",
+          "assignments": [
+            "{KEY_TORRENT_SEEDING_TIME_LIMIT, torrent.seedingTimeLimit()},"
+          ]
+        },
+        {
+          "key": "seen_complete",
+          "assignments": [
+            "{KEY_TORRENT_LAST_SEEN_COMPLETE_TIME, torrent.lastSeenComplete().toSecsSinceEpoch()},"
+          ]
+        },
+        {
+          "key": "auto_tmm",
+          "assignments": [
+            "{KEY_TORRENT_AUTO_TORRENT_MANAGEMENT, torrent.isAutoTMMEnabled()},"
+          ]
+        },
+        {
+          "key": "time_active",
+          "assignments": [
+            "{KEY_TORRENT_TIME_ACTIVE, torrent.activeTime()},"
+          ]
+        },
+        {
+          "key": "seeding_time",
+          "assignments": [
+            "{KEY_TORRENT_SEEDING_TIME, torrent.seedingTime()},"
+          ]
+        },
+        {
+          "key": "last_activity",
+          "assignments": [
+            "{KEY_TORRENT_LAST_ACTIVITY_TIME, adjustLastActivity(torrent.timeSinceActivity())},"
+          ]
+        },
+        {
+          "key": "availability",
+          "assignments": [
+            "{KEY_TORRENT_AVAILABILITY, torrent.distributedCopies()},"
+          ]
+        },
+        {
+          "key": "total_size",
+          "assignments": [
+            "{KEY_TORRENT_TOTAL_SIZE, torrent.totalSize()}"
+          ]
+        }
+      ],
+      "conditions": [
+        "return (position < 0) ? 0 : (position + 1);",
+        "return (ratio > BitTorrent::Torrent::MAX_RATIO) ? -1 : ratio;",
+        ": (QDateTime::currentDateTime().toSecsSinceEpoch() - value);"
+      ]
+    },
+    {
+      "cpp_blob": "98d07199588feb3132037d318d5631b6c0a45913",
+      "header_blob": "10cc56ce45b6a6a3dc8552ab0f5ff781dde2f0bd",
+      "first_release": "4.3.8",
+      "fields": [
+        {
+          "key": "hash",
+          "assignments": [
+            "{KEY_TORRENT_ID, QString(torrent.id().toString())},"
+          ]
+        },
+        {
+          "key": "name",
+          "assignments": [
+            "{KEY_TORRENT_NAME, torrent.name()},"
+          ]
+        },
+        {
+          "key": "magnet_uri",
+          "assignments": [
+            "{KEY_TORRENT_MAGNET_URI, torrent.createMagnetURI()},"
+          ]
+        },
+        {
+          "key": "size",
+          "assignments": [
+            "{KEY_TORRENT_SIZE, torrent.wantedSize()},"
+          ]
+        },
+        {
+          "key": "progress",
+          "assignments": [
+            "{KEY_TORRENT_PROGRESS, torrent.progress()},"
+          ]
+        },
+        {
+          "key": "dlspeed",
+          "assignments": [
+            "{KEY_TORRENT_DLSPEED, torrent.downloadPayloadRate()},"
+          ]
+        },
+        {
+          "key": "upspeed",
+          "assignments": [
+            "{KEY_TORRENT_UPSPEED, torrent.uploadPayloadRate()},"
+          ]
+        },
+        {
+          "key": "priority",
+          "assignments": [
+            "{KEY_TORRENT_QUEUE_POSITION, adjustQueuePosition(torrent.queuePosition())},"
+          ]
+        },
+        {
+          "key": "num_seeds",
+          "assignments": [
+            "{KEY_TORRENT_SEEDS, torrent.seedsCount()},"
+          ]
+        },
+        {
+          "key": "num_complete",
+          "assignments": [
+            "{KEY_TORRENT_NUM_COMPLETE, torrent.totalSeedsCount()},"
+          ]
+        },
+        {
+          "key": "num_leechs",
+          "assignments": [
+            "{KEY_TORRENT_LEECHS, torrent.leechsCount()},"
+          ]
+        },
+        {
+          "key": "num_incomplete",
+          "assignments": [
+            "{KEY_TORRENT_NUM_INCOMPLETE, torrent.totalLeechersCount()},"
+          ]
+        },
+        {
+          "key": "state",
+          "assignments": [
+            "{KEY_TORRENT_STATE, torrentStateToString(torrent.state())},"
+          ]
+        },
+        {
+          "key": "eta",
+          "assignments": [
+            "{KEY_TORRENT_ETA, torrent.eta()},"
+          ]
+        },
+        {
+          "key": "seq_dl",
+          "assignments": [
+            "{KEY_TORRENT_SEQUENTIAL_DOWNLOAD, torrent.isSequentialDownload()},"
+          ]
+        },
+        {
+          "key": "f_l_piece_prio",
+          "assignments": [
+            "{KEY_TORRENT_FIRST_LAST_PIECE_PRIO, torrent.hasFirstLastPiecePriority()},"
+          ]
+        },
+        {
+          "key": "category",
+          "assignments": [
+            "{KEY_TORRENT_CATEGORY, torrent.category()},"
+          ]
+        },
+        {
+          "key": "tags",
+          "assignments": [
+            "{KEY_TORRENT_TAGS, torrent.tags().values().join(\", \")},"
+          ]
+        },
+        {
+          "key": "super_seeding",
+          "assignments": [
+            "{KEY_TORRENT_SUPER_SEEDING, torrent.superSeeding()},"
+          ]
+        },
+        {
+          "key": "force_start",
+          "assignments": [
+            "{KEY_TORRENT_FORCE_START, torrent.isForced()},"
+          ]
+        },
+        {
+          "key": "save_path",
+          "assignments": [
+            "{KEY_TORRENT_SAVE_PATH, Utils::Fs::toNativePath(torrent.savePath())},"
+          ]
+        },
+        {
+          "key": "content_path",
+          "assignments": [
+            "{KEY_TORRENT_CONTENT_PATH, Utils::Fs::toNativePath(torrent.contentPath())},"
+          ]
+        },
+        {
+          "key": "added_on",
+          "assignments": [
+            "{KEY_TORRENT_ADDED_ON, torrent.addedTime().toSecsSinceEpoch()},"
+          ]
+        },
+        {
+          "key": "completion_on",
+          "assignments": [
+            "{KEY_TORRENT_COMPLETION_ON, torrent.completedTime().toSecsSinceEpoch()},"
+          ]
+        },
+        {
+          "key": "tracker",
+          "assignments": [
+            "{KEY_TORRENT_TRACKER, torrent.currentTracker()},"
+          ]
+        },
+        {
+          "key": "trackers_count",
+          "assignments": [
+            "{KEY_TORRENT_TRACKERS_COUNT, torrent.trackers().size()},"
+          ]
+        },
+        {
+          "key": "dl_limit",
+          "assignments": [
+            "{KEY_TORRENT_DL_LIMIT, torrent.downloadLimit()},"
+          ]
+        },
+        {
+          "key": "up_limit",
+          "assignments": [
+            "{KEY_TORRENT_UP_LIMIT, torrent.uploadLimit()},"
+          ]
+        },
+        {
+          "key": "downloaded",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_DOWNLOADED, torrent.totalDownload()},"
+          ]
+        },
+        {
+          "key": "uploaded",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_UPLOADED, torrent.totalUpload()},"
+          ]
+        },
+        {
+          "key": "downloaded_session",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_DOWNLOADED_SESSION, torrent.totalPayloadDownload()},"
+          ]
+        },
+        {
+          "key": "uploaded_session",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_UPLOADED_SESSION, torrent.totalPayloadUpload()},"
+          ]
+        },
+        {
+          "key": "amount_left",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_LEFT, torrent.remainingSize()},"
+          ]
+        },
+        {
+          "key": "completed",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_COMPLETED, torrent.completedSize()},"
+          ]
+        },
+        {
+          "key": "max_ratio",
+          "assignments": [
+            "{KEY_TORRENT_MAX_RATIO, torrent.maxRatio()},"
+          ]
+        },
+        {
+          "key": "max_seeding_time",
+          "assignments": [
+            "{KEY_TORRENT_MAX_SEEDING_TIME, torrent.maxSeedingTime()},"
+          ]
+        },
+        {
+          "key": "ratio",
+          "assignments": [
+            "{KEY_TORRENT_RATIO, adjustRatio(torrent.realRatio())},"
+          ]
+        },
+        {
+          "key": "ratio_limit",
+          "assignments": [
+            "{KEY_TORRENT_RATIO_LIMIT, torrent.ratioLimit()},"
+          ]
+        },
+        {
+          "key": "seeding_time_limit",
+          "assignments": [
+            "{KEY_TORRENT_SEEDING_TIME_LIMIT, torrent.seedingTimeLimit()},"
+          ]
+        },
+        {
+          "key": "seen_complete",
+          "assignments": [
+            "{KEY_TORRENT_LAST_SEEN_COMPLETE_TIME, torrent.lastSeenComplete().toSecsSinceEpoch()},"
+          ]
+        },
+        {
+          "key": "auto_tmm",
+          "assignments": [
+            "{KEY_TORRENT_AUTO_TORRENT_MANAGEMENT, torrent.isAutoTMMEnabled()},"
+          ]
+        },
+        {
+          "key": "time_active",
+          "assignments": [
+            "{KEY_TORRENT_TIME_ACTIVE, torrent.activeTime()},"
+          ]
+        },
+        {
+          "key": "seeding_time",
+          "assignments": [
+            "{KEY_TORRENT_SEEDING_TIME, torrent.seedingTime()},"
+          ]
+        },
+        {
+          "key": "last_activity",
+          "assignments": [
+            "{KEY_TORRENT_LAST_ACTIVITY_TIME, getLastActivityTime()},"
+          ]
+        },
+        {
+          "key": "availability",
+          "assignments": [
+            "{KEY_TORRENT_AVAILABILITY, torrent.distributedCopies()},"
+          ]
+        },
+        {
+          "key": "total_size",
+          "assignments": [
+            "{KEY_TORRENT_TOTAL_SIZE, torrent.totalSize()}"
+          ]
+        }
+      ],
+      "conditions": [
+        "return (position < 0) ? 0 : (position + 1);",
+        "return (ratio > BitTorrent::Torrent::MAX_RATIO) ? -1 : ratio;",
+        "return (timeSinceActivity < 0)",
+        ": (QDateTime::currentDateTime().toSecsSinceEpoch() - timeSinceActivity);"
+      ]
+    },
+    {
+      "cpp_blob": "3317c591d24e94efe4bcebde5341a28206fef06c",
+      "header_blob": "54d50f616fdd60c2703e24841fb53c4047688a2e",
+      "first_release": "4.4.0",
+      "fields": [
+        {
+          "key": "hash",
+          "assignments": [
+            "{KEY_TORRENT_ID, torrent.id().toString()},"
+          ]
+        },
+        {
+          "key": "infohash_v1",
+          "assignments": [
+            "{KEY_TORRENT_INFOHASHV1, torrent.infoHash().v1().toString()},"
+          ]
+        },
+        {
+          "key": "infohash_v2",
+          "assignments": [
+            "{KEY_TORRENT_INFOHASHV2, torrent.infoHash().v2().toString()},"
+          ]
+        },
+        {
+          "key": "name",
+          "assignments": [
+            "{KEY_TORRENT_NAME, torrent.name()},"
+          ]
+        },
+        {
+          "key": "magnet_uri",
+          "assignments": [
+            "{KEY_TORRENT_MAGNET_URI, torrent.createMagnetURI()},"
+          ]
+        },
+        {
+          "key": "size",
+          "assignments": [
+            "{KEY_TORRENT_SIZE, torrent.wantedSize()},"
+          ]
+        },
+        {
+          "key": "progress",
+          "assignments": [
+            "{KEY_TORRENT_PROGRESS, torrent.progress()},"
+          ]
+        },
+        {
+          "key": "dlspeed",
+          "assignments": [
+            "{KEY_TORRENT_DLSPEED, torrent.downloadPayloadRate()},"
+          ]
+        },
+        {
+          "key": "upspeed",
+          "assignments": [
+            "{KEY_TORRENT_UPSPEED, torrent.uploadPayloadRate()},"
+          ]
+        },
+        {
+          "key": "priority",
+          "assignments": [
+            "{KEY_TORRENT_QUEUE_POSITION, adjustQueuePosition(torrent.queuePosition())},"
+          ]
+        },
+        {
+          "key": "num_seeds",
+          "assignments": [
+            "{KEY_TORRENT_SEEDS, torrent.seedsCount()},"
+          ]
+        },
+        {
+          "key": "num_complete",
+          "assignments": [
+            "{KEY_TORRENT_NUM_COMPLETE, torrent.totalSeedsCount()},"
+          ]
+        },
+        {
+          "key": "num_leechs",
+          "assignments": [
+            "{KEY_TORRENT_LEECHS, torrent.leechsCount()},"
+          ]
+        },
+        {
+          "key": "num_incomplete",
+          "assignments": [
+            "{KEY_TORRENT_NUM_INCOMPLETE, torrent.totalLeechersCount()},"
+          ]
+        },
+        {
+          "key": "state",
+          "assignments": [
+            "{KEY_TORRENT_STATE, torrentStateToString(torrent.state())},"
+          ]
+        },
+        {
+          "key": "eta",
+          "assignments": [
+            "{KEY_TORRENT_ETA, torrent.eta()},"
+          ]
+        },
+        {
+          "key": "seq_dl",
+          "assignments": [
+            "{KEY_TORRENT_SEQUENTIAL_DOWNLOAD, torrent.isSequentialDownload()},"
+          ]
+        },
+        {
+          "key": "f_l_piece_prio",
+          "assignments": [
+            "{KEY_TORRENT_FIRST_LAST_PIECE_PRIO, torrent.hasFirstLastPiecePriority()},"
+          ]
+        },
+        {
+          "key": "category",
+          "assignments": [
+            "{KEY_TORRENT_CATEGORY, torrent.category()},"
+          ]
+        },
+        {
+          "key": "tags",
+          "assignments": [
+            "{KEY_TORRENT_TAGS, torrent.tags().join(QLatin1String(\", \"))},"
+          ]
+        },
+        {
+          "key": "super_seeding",
+          "assignments": [
+            "{KEY_TORRENT_SUPER_SEEDING, torrent.superSeeding()},"
+          ]
+        },
+        {
+          "key": "force_start",
+          "assignments": [
+            "{KEY_TORRENT_FORCE_START, torrent.isForced()},"
+          ]
+        },
+        {
+          "key": "save_path",
+          "assignments": [
+            "{KEY_TORRENT_SAVE_PATH, Utils::Fs::toNativePath(torrent.savePath())},"
+          ]
+        },
+        {
+          "key": "download_path",
+          "assignments": [
+            "{KEY_TORRENT_DOWNLOAD_PATH, Utils::Fs::toNativePath(torrent.downloadPath())},"
+          ]
+        },
+        {
+          "key": "content_path",
+          "assignments": [
+            "{KEY_TORRENT_CONTENT_PATH, Utils::Fs::toNativePath(torrent.contentPath())},"
+          ]
+        },
+        {
+          "key": "added_on",
+          "assignments": [
+            "{KEY_TORRENT_ADDED_ON, torrent.addedTime().toSecsSinceEpoch()},"
+          ]
+        },
+        {
+          "key": "completion_on",
+          "assignments": [
+            "{KEY_TORRENT_COMPLETION_ON, torrent.completedTime().toSecsSinceEpoch()},"
+          ]
+        },
+        {
+          "key": "tracker",
+          "assignments": [
+            "{KEY_TORRENT_TRACKER, torrent.currentTracker()},"
+          ]
+        },
+        {
+          "key": "trackers_count",
+          "assignments": [
+            "{KEY_TORRENT_TRACKERS_COUNT, torrent.trackers().size()},"
+          ]
+        },
+        {
+          "key": "dl_limit",
+          "assignments": [
+            "{KEY_TORRENT_DL_LIMIT, torrent.downloadLimit()},"
+          ]
+        },
+        {
+          "key": "up_limit",
+          "assignments": [
+            "{KEY_TORRENT_UP_LIMIT, torrent.uploadLimit()},"
+          ]
+        },
+        {
+          "key": "downloaded",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_DOWNLOADED, torrent.totalDownload()},"
+          ]
+        },
+        {
+          "key": "uploaded",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_UPLOADED, torrent.totalUpload()},"
+          ]
+        },
+        {
+          "key": "downloaded_session",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_DOWNLOADED_SESSION, torrent.totalPayloadDownload()},"
+          ]
+        },
+        {
+          "key": "uploaded_session",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_UPLOADED_SESSION, torrent.totalPayloadUpload()},"
+          ]
+        },
+        {
+          "key": "amount_left",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_LEFT, torrent.remainingSize()},"
+          ]
+        },
+        {
+          "key": "completed",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_COMPLETED, torrent.completedSize()},"
+          ]
+        },
+        {
+          "key": "max_ratio",
+          "assignments": [
+            "{KEY_TORRENT_MAX_RATIO, torrent.maxRatio()},"
+          ]
+        },
+        {
+          "key": "max_seeding_time",
+          "assignments": [
+            "{KEY_TORRENT_MAX_SEEDING_TIME, torrent.maxSeedingTime()},"
+          ]
+        },
+        {
+          "key": "ratio",
+          "assignments": [
+            "{KEY_TORRENT_RATIO, adjustRatio(torrent.realRatio())},"
+          ]
+        },
+        {
+          "key": "ratio_limit",
+          "assignments": [
+            "{KEY_TORRENT_RATIO_LIMIT, torrent.ratioLimit()},"
+          ]
+        },
+        {
+          "key": "seeding_time_limit",
+          "assignments": [
+            "{KEY_TORRENT_SEEDING_TIME_LIMIT, torrent.seedingTimeLimit()},"
+          ]
+        },
+        {
+          "key": "seen_complete",
+          "assignments": [
+            "{KEY_TORRENT_LAST_SEEN_COMPLETE_TIME, torrent.lastSeenComplete().toSecsSinceEpoch()},"
+          ]
+        },
+        {
+          "key": "auto_tmm",
+          "assignments": [
+            "{KEY_TORRENT_AUTO_TORRENT_MANAGEMENT, torrent.isAutoTMMEnabled()},"
+          ]
+        },
+        {
+          "key": "time_active",
+          "assignments": [
+            "{KEY_TORRENT_TIME_ACTIVE, torrent.activeTime()},"
+          ]
+        },
+        {
+          "key": "seeding_time",
+          "assignments": [
+            "{KEY_TORRENT_SEEDING_TIME, torrent.seedingTime()},"
+          ]
+        },
+        {
+          "key": "last_activity",
+          "assignments": [
+            "{KEY_TORRENT_LAST_ACTIVITY_TIME, getLastActivityTime()},"
+          ]
+        },
+        {
+          "key": "availability",
+          "assignments": [
+            "{KEY_TORRENT_AVAILABILITY, torrent.distributedCopies()},"
+          ]
+        },
+        {
+          "key": "total_size",
+          "assignments": [
+            "{KEY_TORRENT_TOTAL_SIZE, torrent.totalSize()}"
+          ]
+        }
+      ],
+      "conditions": [
+        "return (position < 0) ? 0 : (position + 1);",
+        "return (ratio > BitTorrent::Torrent::MAX_RATIO) ? -1 : ratio;",
+        "return (timeSinceActivity < 0)",
+        ": (QDateTime::currentDateTime().toSecsSinceEpoch() - timeSinceActivity);"
+      ]
+    },
+    {
+      "cpp_blob": "87ca39a992f2c7bace998a8f2d0debb7599e383a",
+      "header_blob": "09d93aefcdc6dc15799f65f8c9538ffbf0d91c17",
+      "first_release": "4.5.0",
+      "fields": [
+        {
+          "key": "hash",
+          "assignments": [
+            "{KEY_TORRENT_ID, torrent.id().toString()},"
+          ]
+        },
+        {
+          "key": "infohash_v1",
+          "assignments": [
+            "{KEY_TORRENT_INFOHASHV1, torrent.infoHash().v1().toString()},"
+          ]
+        },
+        {
+          "key": "infohash_v2",
+          "assignments": [
+            "{KEY_TORRENT_INFOHASHV2, torrent.infoHash().v2().toString()},"
+          ]
+        },
+        {
+          "key": "name",
+          "assignments": [
+            "{KEY_TORRENT_NAME, torrent.name()},"
+          ]
+        },
+        {
+          "key": "magnet_uri",
+          "assignments": [
+            "{KEY_TORRENT_MAGNET_URI, torrent.createMagnetURI()},"
+          ]
+        },
+        {
+          "key": "size",
+          "assignments": [
+            "{KEY_TORRENT_SIZE, torrent.wantedSize()},"
+          ]
+        },
+        {
+          "key": "progress",
+          "assignments": [
+            "{KEY_TORRENT_PROGRESS, torrent.progress()},"
+          ]
+        },
+        {
+          "key": "dlspeed",
+          "assignments": [
+            "{KEY_TORRENT_DLSPEED, torrent.downloadPayloadRate()},"
+          ]
+        },
+        {
+          "key": "upspeed",
+          "assignments": [
+            "{KEY_TORRENT_UPSPEED, torrent.uploadPayloadRate()},"
+          ]
+        },
+        {
+          "key": "priority",
+          "assignments": [
+            "{KEY_TORRENT_QUEUE_POSITION, adjustQueuePosition(torrent.queuePosition())},"
+          ]
+        },
+        {
+          "key": "num_seeds",
+          "assignments": [
+            "{KEY_TORRENT_SEEDS, torrent.seedsCount()},"
+          ]
+        },
+        {
+          "key": "num_complete",
+          "assignments": [
+            "{KEY_TORRENT_NUM_COMPLETE, torrent.totalSeedsCount()},"
+          ]
+        },
+        {
+          "key": "num_leechs",
+          "assignments": [
+            "{KEY_TORRENT_LEECHS, torrent.leechsCount()},"
+          ]
+        },
+        {
+          "key": "num_incomplete",
+          "assignments": [
+            "{KEY_TORRENT_NUM_INCOMPLETE, torrent.totalLeechersCount()},"
+          ]
+        },
+        {
+          "key": "state",
+          "assignments": [
+            "{KEY_TORRENT_STATE, torrentStateToString(torrent.state())},"
+          ]
+        },
+        {
+          "key": "eta",
+          "assignments": [
+            "{KEY_TORRENT_ETA, torrent.eta()},"
+          ]
+        },
+        {
+          "key": "seq_dl",
+          "assignments": [
+            "{KEY_TORRENT_SEQUENTIAL_DOWNLOAD, torrent.isSequentialDownload()},"
+          ]
+        },
+        {
+          "key": "f_l_piece_prio",
+          "assignments": [
+            "{KEY_TORRENT_FIRST_LAST_PIECE_PRIO, torrent.hasFirstLastPiecePriority()},"
+          ]
+        },
+        {
+          "key": "category",
+          "assignments": [
+            "{KEY_TORRENT_CATEGORY, torrent.category()},"
+          ]
+        },
+        {
+          "key": "tags",
+          "assignments": [
+            "{KEY_TORRENT_TAGS, torrent.tags().join(u\", \"_qs)},"
+          ]
+        },
+        {
+          "key": "super_seeding",
+          "assignments": [
+            "{KEY_TORRENT_SUPER_SEEDING, torrent.superSeeding()},"
+          ]
+        },
+        {
+          "key": "force_start",
+          "assignments": [
+            "{KEY_TORRENT_FORCE_START, torrent.isForced()},"
+          ]
+        },
+        {
+          "key": "save_path",
+          "assignments": [
+            "{KEY_TORRENT_SAVE_PATH, torrent.savePath().toString()},"
+          ]
+        },
+        {
+          "key": "download_path",
+          "assignments": [
+            "{KEY_TORRENT_DOWNLOAD_PATH, torrent.downloadPath().toString()},"
+          ]
+        },
+        {
+          "key": "content_path",
+          "assignments": [
+            "{KEY_TORRENT_CONTENT_PATH, torrent.contentPath().toString()},"
+          ]
+        },
+        {
+          "key": "added_on",
+          "assignments": [
+            "{KEY_TORRENT_ADDED_ON, torrent.addedTime().toSecsSinceEpoch()},"
+          ]
+        },
+        {
+          "key": "completion_on",
+          "assignments": [
+            "{KEY_TORRENT_COMPLETION_ON, torrent.completedTime().toSecsSinceEpoch()},"
+          ]
+        },
+        {
+          "key": "tracker",
+          "assignments": [
+            "{KEY_TORRENT_TRACKER, torrent.currentTracker()},"
+          ]
+        },
+        {
+          "key": "trackers_count",
+          "assignments": [
+            "{KEY_TORRENT_TRACKERS_COUNT, torrent.trackers().size()},"
+          ]
+        },
+        {
+          "key": "dl_limit",
+          "assignments": [
+            "{KEY_TORRENT_DL_LIMIT, torrent.downloadLimit()},"
+          ]
+        },
+        {
+          "key": "up_limit",
+          "assignments": [
+            "{KEY_TORRENT_UP_LIMIT, torrent.uploadLimit()},"
+          ]
+        },
+        {
+          "key": "downloaded",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_DOWNLOADED, torrent.totalDownload()},"
+          ]
+        },
+        {
+          "key": "uploaded",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_UPLOADED, torrent.totalUpload()},"
+          ]
+        },
+        {
+          "key": "downloaded_session",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_DOWNLOADED_SESSION, torrent.totalPayloadDownload()},"
+          ]
+        },
+        {
+          "key": "uploaded_session",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_UPLOADED_SESSION, torrent.totalPayloadUpload()},"
+          ]
+        },
+        {
+          "key": "amount_left",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_LEFT, torrent.remainingSize()},"
+          ]
+        },
+        {
+          "key": "completed",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_COMPLETED, torrent.completedSize()},"
+          ]
+        },
+        {
+          "key": "max_ratio",
+          "assignments": [
+            "{KEY_TORRENT_MAX_RATIO, torrent.maxRatio()},"
+          ]
+        },
+        {
+          "key": "max_seeding_time",
+          "assignments": [
+            "{KEY_TORRENT_MAX_SEEDING_TIME, torrent.maxSeedingTime()},"
+          ]
+        },
+        {
+          "key": "ratio",
+          "assignments": [
+            "{KEY_TORRENT_RATIO, adjustRatio(torrent.realRatio())},"
+          ]
+        },
+        {
+          "key": "ratio_limit",
+          "assignments": [
+            "{KEY_TORRENT_RATIO_LIMIT, torrent.ratioLimit()},"
+          ]
+        },
+        {
+          "key": "seeding_time_limit",
+          "assignments": [
+            "{KEY_TORRENT_SEEDING_TIME_LIMIT, torrent.seedingTimeLimit()},"
+          ]
+        },
+        {
+          "key": "seen_complete",
+          "assignments": [
+            "{KEY_TORRENT_LAST_SEEN_COMPLETE_TIME, torrent.lastSeenComplete().toSecsSinceEpoch()},"
+          ]
+        },
+        {
+          "key": "auto_tmm",
+          "assignments": [
+            "{KEY_TORRENT_AUTO_TORRENT_MANAGEMENT, torrent.isAutoTMMEnabled()},"
+          ]
+        },
+        {
+          "key": "time_active",
+          "assignments": [
+            "{KEY_TORRENT_TIME_ACTIVE, torrent.activeTime()},"
+          ]
+        },
+        {
+          "key": "seeding_time",
+          "assignments": [
+            "{KEY_TORRENT_SEEDING_TIME, torrent.finishedTime()},"
+          ]
+        },
+        {
+          "key": "last_activity",
+          "assignments": [
+            "{KEY_TORRENT_LAST_ACTIVITY_TIME, getLastActivityTime()},"
+          ]
+        },
+        {
+          "key": "availability",
+          "assignments": [
+            "{KEY_TORRENT_AVAILABILITY, torrent.distributedCopies()},"
+          ]
+        },
+        {
+          "key": "total_size",
+          "assignments": [
+            "{KEY_TORRENT_TOTAL_SIZE, torrent.totalSize()}"
+          ]
+        }
+      ],
+      "conditions": [
+        "return (position < 0) ? 0 : (position + 1);",
+        "return (ratio > BitTorrent::Torrent::MAX_RATIO) ? -1 : ratio;",
+        "return (timeSinceActivity < 0)",
+        ": (QDateTime::currentDateTime().toSecsSinceEpoch() - timeSinceActivity);"
+      ]
+    },
+    {
+      "cpp_blob": "833f7c3e0d457179df90fe02cbe458f13969811d",
+      "header_blob": "881cdd7a6b15437eb44d71adc4216631b5cddc95",
+      "first_release": "4.6.0",
+      "fields": [
+        {
+          "key": "hash",
+          "assignments": [
+            "{KEY_TORRENT_ID, torrent.id().toString()},"
+          ]
+        },
+        {
+          "key": "infohash_v1",
+          "assignments": [
+            "{KEY_TORRENT_INFOHASHV1, torrent.infoHash().v1().toString()},"
+          ]
+        },
+        {
+          "key": "infohash_v2",
+          "assignments": [
+            "{KEY_TORRENT_INFOHASHV2, torrent.infoHash().v2().toString()},"
+          ]
+        },
+        {
+          "key": "name",
+          "assignments": [
+            "{KEY_TORRENT_NAME, torrent.name()},"
+          ]
+        },
+        {
+          "key": "magnet_uri",
+          "assignments": [
+            "{KEY_TORRENT_MAGNET_URI, torrent.createMagnetURI()},"
+          ]
+        },
+        {
+          "key": "size",
+          "assignments": [
+            "{KEY_TORRENT_SIZE, torrent.wantedSize()},"
+          ]
+        },
+        {
+          "key": "progress",
+          "assignments": [
+            "{KEY_TORRENT_PROGRESS, torrent.progress()},"
+          ]
+        },
+        {
+          "key": "dlspeed",
+          "assignments": [
+            "{KEY_TORRENT_DLSPEED, torrent.downloadPayloadRate()},"
+          ]
+        },
+        {
+          "key": "upspeed",
+          "assignments": [
+            "{KEY_TORRENT_UPSPEED, torrent.uploadPayloadRate()},"
+          ]
+        },
+        {
+          "key": "priority",
+          "assignments": [
+            "{KEY_TORRENT_QUEUE_POSITION, adjustQueuePosition(torrent.queuePosition())},"
+          ]
+        },
+        {
+          "key": "num_seeds",
+          "assignments": [
+            "{KEY_TORRENT_SEEDS, torrent.seedsCount()},"
+          ]
+        },
+        {
+          "key": "num_complete",
+          "assignments": [
+            "{KEY_TORRENT_NUM_COMPLETE, torrent.totalSeedsCount()},"
+          ]
+        },
+        {
+          "key": "num_leechs",
+          "assignments": [
+            "{KEY_TORRENT_LEECHS, torrent.leechsCount()},"
+          ]
+        },
+        {
+          "key": "num_incomplete",
+          "assignments": [
+            "{KEY_TORRENT_NUM_INCOMPLETE, torrent.totalLeechersCount()},"
+          ]
+        },
+        {
+          "key": "state",
+          "assignments": [
+            "{KEY_TORRENT_STATE, torrentStateToString(torrent.state())},"
+          ]
+        },
+        {
+          "key": "eta",
+          "assignments": [
+            "{KEY_TORRENT_ETA, torrent.eta()},"
+          ]
+        },
+        {
+          "key": "seq_dl",
+          "assignments": [
+            "{KEY_TORRENT_SEQUENTIAL_DOWNLOAD, torrent.isSequentialDownload()},"
+          ]
+        },
+        {
+          "key": "f_l_piece_prio",
+          "assignments": [
+            "{KEY_TORRENT_FIRST_LAST_PIECE_PRIO, torrent.hasFirstLastPiecePriority()},"
+          ]
+        },
+        {
+          "key": "category",
+          "assignments": [
+            "{KEY_TORRENT_CATEGORY, torrent.category()},"
+          ]
+        },
+        {
+          "key": "tags",
+          "assignments": [
+            "{KEY_TORRENT_TAGS, torrent.tags().join(u\", \"_s)},"
+          ]
+        },
+        {
+          "key": "super_seeding",
+          "assignments": [
+            "{KEY_TORRENT_SUPER_SEEDING, torrent.superSeeding()},"
+          ]
+        },
+        {
+          "key": "force_start",
+          "assignments": [
+            "{KEY_TORRENT_FORCE_START, torrent.isForced()},"
+          ]
+        },
+        {
+          "key": "save_path",
+          "assignments": [
+            "{KEY_TORRENT_SAVE_PATH, torrent.savePath().toString()},"
+          ]
+        },
+        {
+          "key": "download_path",
+          "assignments": [
+            "{KEY_TORRENT_DOWNLOAD_PATH, torrent.downloadPath().toString()},"
+          ]
+        },
+        {
+          "key": "content_path",
+          "assignments": [
+            "{KEY_TORRENT_CONTENT_PATH, torrent.contentPath().toString()},"
+          ]
+        },
+        {
+          "key": "added_on",
+          "assignments": [
+            "{KEY_TORRENT_ADDED_ON, torrent.addedTime().toSecsSinceEpoch()},"
+          ]
+        },
+        {
+          "key": "completion_on",
+          "assignments": [
+            "{KEY_TORRENT_COMPLETION_ON, torrent.completedTime().toSecsSinceEpoch()},"
+          ]
+        },
+        {
+          "key": "tracker",
+          "assignments": [
+            "{KEY_TORRENT_TRACKER, torrent.currentTracker()},"
+          ]
+        },
+        {
+          "key": "trackers_count",
+          "assignments": [
+            "{KEY_TORRENT_TRACKERS_COUNT, torrent.trackers().size()},"
+          ]
+        },
+        {
+          "key": "dl_limit",
+          "assignments": [
+            "{KEY_TORRENT_DL_LIMIT, torrent.downloadLimit()},"
+          ]
+        },
+        {
+          "key": "up_limit",
+          "assignments": [
+            "{KEY_TORRENT_UP_LIMIT, torrent.uploadLimit()},"
+          ]
+        },
+        {
+          "key": "downloaded",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_DOWNLOADED, torrent.totalDownload()},"
+          ]
+        },
+        {
+          "key": "uploaded",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_UPLOADED, torrent.totalUpload()},"
+          ]
+        },
+        {
+          "key": "downloaded_session",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_DOWNLOADED_SESSION, torrent.totalPayloadDownload()},"
+          ]
+        },
+        {
+          "key": "uploaded_session",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_UPLOADED_SESSION, torrent.totalPayloadUpload()},"
+          ]
+        },
+        {
+          "key": "amount_left",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_LEFT, torrent.remainingSize()},"
+          ]
+        },
+        {
+          "key": "completed",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_COMPLETED, torrent.completedSize()},"
+          ]
+        },
+        {
+          "key": "max_ratio",
+          "assignments": [
+            "{KEY_TORRENT_MAX_RATIO, torrent.maxRatio()},"
+          ]
+        },
+        {
+          "key": "max_seeding_time",
+          "assignments": [
+            "{KEY_TORRENT_MAX_SEEDING_TIME, torrent.maxSeedingTime()},"
+          ]
+        },
+        {
+          "key": "max_inactive_seeding_time",
+          "assignments": [
+            "{KEY_TORRENT_MAX_INACTIVE_SEEDING_TIME, torrent.maxInactiveSeedingTime()},"
+          ]
+        },
+        {
+          "key": "ratio",
+          "assignments": [
+            "{KEY_TORRENT_RATIO, adjustRatio(torrent.realRatio())},"
+          ]
+        },
+        {
+          "key": "ratio_limit",
+          "assignments": [
+            "{KEY_TORRENT_RATIO_LIMIT, torrent.ratioLimit()},"
+          ]
+        },
+        {
+          "key": "seeding_time_limit",
+          "assignments": [
+            "{KEY_TORRENT_SEEDING_TIME_LIMIT, torrent.seedingTimeLimit()},"
+          ]
+        },
+        {
+          "key": "inactive_seeding_time_limit",
+          "assignments": [
+            "{KEY_TORRENT_INACTIVE_SEEDING_TIME_LIMIT, torrent.inactiveSeedingTimeLimit()},"
+          ]
+        },
+        {
+          "key": "seen_complete",
+          "assignments": [
+            "{KEY_TORRENT_LAST_SEEN_COMPLETE_TIME, torrent.lastSeenComplete().toSecsSinceEpoch()},"
+          ]
+        },
+        {
+          "key": "auto_tmm",
+          "assignments": [
+            "{KEY_TORRENT_AUTO_TORRENT_MANAGEMENT, torrent.isAutoTMMEnabled()},"
+          ]
+        },
+        {
+          "key": "time_active",
+          "assignments": [
+            "{KEY_TORRENT_TIME_ACTIVE, torrent.activeTime()},"
+          ]
+        },
+        {
+          "key": "seeding_time",
+          "assignments": [
+            "{KEY_TORRENT_SEEDING_TIME, torrent.finishedTime()},"
+          ]
+        },
+        {
+          "key": "last_activity",
+          "assignments": [
+            "{KEY_TORRENT_LAST_ACTIVITY_TIME, getLastActivityTime()},"
+          ]
+        },
+        {
+          "key": "availability",
+          "assignments": [
+            "{KEY_TORRENT_AVAILABILITY, torrent.distributedCopies()},"
+          ]
+        },
+        {
+          "key": "total_size",
+          "assignments": [
+            "{KEY_TORRENT_TOTAL_SIZE, torrent.totalSize()}"
+          ]
+        }
+      ],
+      "conditions": [
+        "return (position < 0) ? 0 : (position + 1);",
+        "return (ratio > BitTorrent::Torrent::MAX_RATIO) ? -1 : ratio;",
+        "return (timeSinceActivity < 0)",
+        ": (QDateTime::currentDateTime().toSecsSinceEpoch() - timeSinceActivity);"
+      ]
+    },
+    {
+      "cpp_blob": "d48a3a5c8db460286e50aa1471030001da46ae5e",
+      "header_blob": "883efa6dd5cd20298ad21d6bfa647bcc5947675b",
+      "first_release": "5.0.0",
+      "fields": [
+        {
+          "key": "hash",
+          "assignments": [
+            "{KEY_TORRENT_ID, torrent.id().toString()},"
+          ]
+        },
+        {
+          "key": "infohash_v1",
+          "assignments": [
+            "{KEY_TORRENT_INFOHASHV1, torrent.infoHash().v1().toString()},"
+          ]
+        },
+        {
+          "key": "infohash_v2",
+          "assignments": [
+            "{KEY_TORRENT_INFOHASHV2, torrent.infoHash().v2().toString()},"
+          ]
+        },
+        {
+          "key": "name",
+          "assignments": [
+            "{KEY_TORRENT_NAME, torrent.name()},"
+          ]
+        },
+        {
+          "key": "magnet_uri",
+          "assignments": [
+            "{KEY_TORRENT_MAGNET_URI, torrent.createMagnetURI()},"
+          ]
+        },
+        {
+          "key": "size",
+          "assignments": [
+            "{KEY_TORRENT_SIZE, torrent.wantedSize()},"
+          ]
+        },
+        {
+          "key": "progress",
+          "assignments": [
+            "{KEY_TORRENT_PROGRESS, torrent.progress()},"
+          ]
+        },
+        {
+          "key": "dlspeed",
+          "assignments": [
+            "{KEY_TORRENT_DLSPEED, torrent.downloadPayloadRate()},"
+          ]
+        },
+        {
+          "key": "upspeed",
+          "assignments": [
+            "{KEY_TORRENT_UPSPEED, torrent.uploadPayloadRate()},"
+          ]
+        },
+        {
+          "key": "priority",
+          "assignments": [
+            "{KEY_TORRENT_QUEUE_POSITION, adjustQueuePosition(torrent.queuePosition())},"
+          ]
+        },
+        {
+          "key": "num_seeds",
+          "assignments": [
+            "{KEY_TORRENT_SEEDS, torrent.seedsCount()},"
+          ]
+        },
+        {
+          "key": "num_complete",
+          "assignments": [
+            "{KEY_TORRENT_NUM_COMPLETE, torrent.totalSeedsCount()},"
+          ]
+        },
+        {
+          "key": "num_leechs",
+          "assignments": [
+            "{KEY_TORRENT_LEECHS, torrent.leechsCount()},"
+          ]
+        },
+        {
+          "key": "num_incomplete",
+          "assignments": [
+            "{KEY_TORRENT_NUM_INCOMPLETE, torrent.totalLeechersCount()},"
+          ]
+        },
+        {
+          "key": "state",
+          "assignments": [
+            "{KEY_TORRENT_STATE, torrentStateToString(torrent.state())},"
+          ]
+        },
+        {
+          "key": "eta",
+          "assignments": [
+            "{KEY_TORRENT_ETA, torrent.eta()},"
+          ]
+        },
+        {
+          "key": "seq_dl",
+          "assignments": [
+            "{KEY_TORRENT_SEQUENTIAL_DOWNLOAD, torrent.isSequentialDownload()},"
+          ]
+        },
+        {
+          "key": "f_l_piece_prio",
+          "assignments": [
+            "{KEY_TORRENT_FIRST_LAST_PIECE_PRIO, torrent.hasFirstLastPiecePriority()},"
+          ]
+        },
+        {
+          "key": "category",
+          "assignments": [
+            "{KEY_TORRENT_CATEGORY, torrent.category()},"
+          ]
+        },
+        {
+          "key": "tags",
+          "assignments": [
+            "{KEY_TORRENT_TAGS, Utils::String::joinIntoString(torrent.tags(), u\", \"_s)},"
+          ]
+        },
+        {
+          "key": "super_seeding",
+          "assignments": [
+            "{KEY_TORRENT_SUPER_SEEDING, torrent.superSeeding()},"
+          ]
+        },
+        {
+          "key": "force_start",
+          "assignments": [
+            "{KEY_TORRENT_FORCE_START, torrent.isForced()},"
+          ]
+        },
+        {
+          "key": "save_path",
+          "assignments": [
+            "{KEY_TORRENT_SAVE_PATH, torrent.savePath().toString()},"
+          ]
+        },
+        {
+          "key": "download_path",
+          "assignments": [
+            "{KEY_TORRENT_DOWNLOAD_PATH, torrent.downloadPath().toString()},"
+          ]
+        },
+        {
+          "key": "content_path",
+          "assignments": [
+            "{KEY_TORRENT_CONTENT_PATH, torrent.contentPath().toString()},"
+          ]
+        },
+        {
+          "key": "root_path",
+          "assignments": [
+            "{KEY_TORRENT_ROOT_PATH, torrent.rootPath().toString()},"
+          ]
+        },
+        {
+          "key": "added_on",
+          "assignments": [
+            "{KEY_TORRENT_ADDED_ON, Utils::DateTime::toSecsSinceEpoch(torrent.addedTime())},"
+          ]
+        },
+        {
+          "key": "completion_on",
+          "assignments": [
+            "{KEY_TORRENT_COMPLETION_ON, Utils::DateTime::toSecsSinceEpoch(torrent.completedTime())},"
+          ]
+        },
+        {
+          "key": "tracker",
+          "assignments": [
+            "{KEY_TORRENT_TRACKER, torrent.currentTracker()},"
+          ]
+        },
+        {
+          "key": "trackers_count",
+          "assignments": [
+            "{KEY_TORRENT_TRACKERS_COUNT, torrent.trackers().size()},"
+          ]
+        },
+        {
+          "key": "dl_limit",
+          "assignments": [
+            "{KEY_TORRENT_DL_LIMIT, torrent.downloadLimit()},"
+          ]
+        },
+        {
+          "key": "up_limit",
+          "assignments": [
+            "{KEY_TORRENT_UP_LIMIT, torrent.uploadLimit()},"
+          ]
+        },
+        {
+          "key": "downloaded",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_DOWNLOADED, torrent.totalDownload()},"
+          ]
+        },
+        {
+          "key": "uploaded",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_UPLOADED, torrent.totalUpload()},"
+          ]
+        },
+        {
+          "key": "downloaded_session",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_DOWNLOADED_SESSION, torrent.totalPayloadDownload()},"
+          ]
+        },
+        {
+          "key": "uploaded_session",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_UPLOADED_SESSION, torrent.totalPayloadUpload()},"
+          ]
+        },
+        {
+          "key": "amount_left",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_LEFT, torrent.remainingSize()},"
+          ]
+        },
+        {
+          "key": "completed",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_COMPLETED, torrent.completedSize()},"
+          ]
+        },
+        {
+          "key": "max_ratio",
+          "assignments": [
+            "{KEY_TORRENT_MAX_RATIO, torrent.maxRatio()},"
+          ]
+        },
+        {
+          "key": "max_seeding_time",
+          "assignments": [
+            "{KEY_TORRENT_MAX_SEEDING_TIME, torrent.maxSeedingTime()},"
+          ]
+        },
+        {
+          "key": "max_inactive_seeding_time",
+          "assignments": [
+            "{KEY_TORRENT_MAX_INACTIVE_SEEDING_TIME, torrent.maxInactiveSeedingTime()},"
+          ]
+        },
+        {
+          "key": "ratio",
+          "assignments": [
+            "{KEY_TORRENT_RATIO, adjustRatio(torrent.realRatio())},"
+          ]
+        },
+        {
+          "key": "ratio_limit",
+          "assignments": [
+            "{KEY_TORRENT_RATIO_LIMIT, torrent.ratioLimit()},"
+          ]
+        },
+        {
+          "key": "popularity",
+          "assignments": [
+            "{KEY_TORRENT_POPULARITY, torrent.popularity()},"
+          ]
+        },
+        {
+          "key": "seeding_time_limit",
+          "assignments": [
+            "{KEY_TORRENT_SEEDING_TIME_LIMIT, torrent.seedingTimeLimit()},"
+          ]
+        },
+        {
+          "key": "inactive_seeding_time_limit",
+          "assignments": [
+            "{KEY_TORRENT_INACTIVE_SEEDING_TIME_LIMIT, torrent.inactiveSeedingTimeLimit()},"
+          ]
+        },
+        {
+          "key": "seen_complete",
+          "assignments": [
+            "{KEY_TORRENT_LAST_SEEN_COMPLETE_TIME, Utils::DateTime::toSecsSinceEpoch(torrent.lastSeenComplete())},"
+          ]
+        },
+        {
+          "key": "auto_tmm",
+          "assignments": [
+            "{KEY_TORRENT_AUTO_TORRENT_MANAGEMENT, torrent.isAutoTMMEnabled()},"
+          ]
+        },
+        {
+          "key": "time_active",
+          "assignments": [
+            "{KEY_TORRENT_TIME_ACTIVE, torrent.activeTime()},"
+          ]
+        },
+        {
+          "key": "seeding_time",
+          "assignments": [
+            "{KEY_TORRENT_SEEDING_TIME, torrent.finishedTime()},"
+          ]
+        },
+        {
+          "key": "last_activity",
+          "assignments": [
+            "{KEY_TORRENT_LAST_ACTIVITY_TIME, getLastActivityTime()},"
+          ]
+        },
+        {
+          "key": "availability",
+          "assignments": [
+            "{KEY_TORRENT_AVAILABILITY, torrent.distributedCopies()},"
+          ]
+        },
+        {
+          "key": "reannounce",
+          "assignments": [
+            "{KEY_TORRENT_REANNOUNCE, torrent.nextAnnounce()},"
+          ]
+        },
+        {
+          "key": "comment",
+          "assignments": [
+            "{KEY_TORRENT_COMMENT, torrent.comment()},"
+          ]
+        },
+        {
+          "key": "private",
+          "assignments": [
+            "{KEY_TORRENT_PRIVATE, (torrent.hasMetadata() ? torrent.isPrivate() : QVariant())},"
+          ]
+        },
+        {
+          "key": "total_size",
+          "assignments": [
+            "{KEY_TORRENT_TOTAL_SIZE, torrent.totalSize()},"
+          ]
+        },
+        {
+          "key": "has_metadata",
+          "assignments": [
+            "{KEY_TORRENT_HAS_METADATA, torrent.hasMetadata()}"
+          ]
+        }
+      ],
+      "conditions": [
+        "return (position < 0) ? 0 : (position + 1);",
+        "return (ratio > BitTorrent::Torrent::MAX_RATIO) ? -1 : ratio;",
+        "return (timeSinceActivity < 0)",
+        "? Utils::DateTime::toSecsSinceEpoch(torrent.addedTime())",
+        ": (QDateTime::currentDateTime().toSecsSinceEpoch() - timeSinceActivity);"
+      ]
+    },
+    {
+      "cpp_blob": "b589fc05b81e78e34b0ec66e86b8d30acaf12c50",
+      "header_blob": "883efa6dd5cd20298ad21d6bfa647bcc5947675b",
+      "first_release": "5.0.3",
+      "fields": [
+        {
+          "key": "hash",
+          "assignments": [
+            "{KEY_TORRENT_ID, torrent.id().toString()},"
+          ]
+        },
+        {
+          "key": "infohash_v1",
+          "assignments": [
+            "{KEY_TORRENT_INFOHASHV1, torrent.infoHash().v1().toString()},"
+          ]
+        },
+        {
+          "key": "infohash_v2",
+          "assignments": [
+            "{KEY_TORRENT_INFOHASHV2, torrent.infoHash().v2().toString()},"
+          ]
+        },
+        {
+          "key": "name",
+          "assignments": [
+            "{KEY_TORRENT_NAME, torrent.name()},"
+          ]
+        },
+        {
+          "key": "magnet_uri",
+          "assignments": [
+            "{KEY_TORRENT_MAGNET_URI, torrent.createMagnetURI()},"
+          ]
+        },
+        {
+          "key": "size",
+          "assignments": [
+            "{KEY_TORRENT_SIZE, torrent.wantedSize()},"
+          ]
+        },
+        {
+          "key": "progress",
+          "assignments": [
+            "{KEY_TORRENT_PROGRESS, torrent.progress()},"
+          ]
+        },
+        {
+          "key": "dlspeed",
+          "assignments": [
+            "{KEY_TORRENT_DLSPEED, torrent.downloadPayloadRate()},"
+          ]
+        },
+        {
+          "key": "upspeed",
+          "assignments": [
+            "{KEY_TORRENT_UPSPEED, torrent.uploadPayloadRate()},"
+          ]
+        },
+        {
+          "key": "priority",
+          "assignments": [
+            "{KEY_TORRENT_QUEUE_POSITION, adjustQueuePosition(torrent.queuePosition())},"
+          ]
+        },
+        {
+          "key": "num_seeds",
+          "assignments": [
+            "{KEY_TORRENT_SEEDS, torrent.seedsCount()},"
+          ]
+        },
+        {
+          "key": "num_complete",
+          "assignments": [
+            "{KEY_TORRENT_NUM_COMPLETE, torrent.totalSeedsCount()},"
+          ]
+        },
+        {
+          "key": "num_leechs",
+          "assignments": [
+            "{KEY_TORRENT_LEECHS, torrent.leechsCount()},"
+          ]
+        },
+        {
+          "key": "num_incomplete",
+          "assignments": [
+            "{KEY_TORRENT_NUM_INCOMPLETE, torrent.totalLeechersCount()},"
+          ]
+        },
+        {
+          "key": "state",
+          "assignments": [
+            "{KEY_TORRENT_STATE, torrentStateToString(torrent.state())},"
+          ]
+        },
+        {
+          "key": "eta",
+          "assignments": [
+            "{KEY_TORRENT_ETA, torrent.eta()},"
+          ]
+        },
+        {
+          "key": "seq_dl",
+          "assignments": [
+            "{KEY_TORRENT_SEQUENTIAL_DOWNLOAD, torrent.isSequentialDownload()},"
+          ]
+        },
+        {
+          "key": "f_l_piece_prio",
+          "assignments": [
+            "{KEY_TORRENT_FIRST_LAST_PIECE_PRIO, torrent.hasFirstLastPiecePriority()},"
+          ]
+        },
+        {
+          "key": "category",
+          "assignments": [
+            "{KEY_TORRENT_CATEGORY, torrent.category()},"
+          ]
+        },
+        {
+          "key": "tags",
+          "assignments": [
+            "{KEY_TORRENT_TAGS, Utils::String::joinIntoString(torrent.tags(), u\", \"_s)},"
+          ]
+        },
+        {
+          "key": "super_seeding",
+          "assignments": [
+            "{KEY_TORRENT_SUPER_SEEDING, torrent.superSeeding()},"
+          ]
+        },
+        {
+          "key": "force_start",
+          "assignments": [
+            "{KEY_TORRENT_FORCE_START, torrent.isForced()},"
+          ]
+        },
+        {
+          "key": "save_path",
+          "assignments": [
+            "{KEY_TORRENT_SAVE_PATH, torrent.savePath().toString()},"
+          ]
+        },
+        {
+          "key": "download_path",
+          "assignments": [
+            "{KEY_TORRENT_DOWNLOAD_PATH, torrent.downloadPath().toString()},"
+          ]
+        },
+        {
+          "key": "content_path",
+          "assignments": [
+            "{KEY_TORRENT_CONTENT_PATH, torrent.contentPath().toString()},"
+          ]
+        },
+        {
+          "key": "root_path",
+          "assignments": [
+            "{KEY_TORRENT_ROOT_PATH, torrent.rootPath().toString()},"
+          ]
+        },
+        {
+          "key": "added_on",
+          "assignments": [
+            "{KEY_TORRENT_ADDED_ON, Utils::DateTime::toSecsSinceEpoch(torrent.addedTime())},"
+          ]
+        },
+        {
+          "key": "completion_on",
+          "assignments": [
+            "{KEY_TORRENT_COMPLETION_ON, Utils::DateTime::toSecsSinceEpoch(torrent.completedTime())},"
+          ]
+        },
+        {
+          "key": "tracker",
+          "assignments": [
+            "{KEY_TORRENT_TRACKER, torrent.currentTracker()},"
+          ]
+        },
+        {
+          "key": "trackers_count",
+          "assignments": [
+            "{KEY_TORRENT_TRACKERS_COUNT, torrent.trackers().size()},"
+          ]
+        },
+        {
+          "key": "dl_limit",
+          "assignments": [
+            "{KEY_TORRENT_DL_LIMIT, torrent.downloadLimit()},"
+          ]
+        },
+        {
+          "key": "up_limit",
+          "assignments": [
+            "{KEY_TORRENT_UP_LIMIT, torrent.uploadLimit()},"
+          ]
+        },
+        {
+          "key": "downloaded",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_DOWNLOADED, torrent.totalDownload()},"
+          ]
+        },
+        {
+          "key": "uploaded",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_UPLOADED, torrent.totalUpload()},"
+          ]
+        },
+        {
+          "key": "downloaded_session",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_DOWNLOADED_SESSION, torrent.totalPayloadDownload()},"
+          ]
+        },
+        {
+          "key": "uploaded_session",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_UPLOADED_SESSION, torrent.totalPayloadUpload()},"
+          ]
+        },
+        {
+          "key": "amount_left",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_LEFT, torrent.remainingSize()},"
+          ]
+        },
+        {
+          "key": "completed",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_COMPLETED, torrent.completedSize()},"
+          ]
+        },
+        {
+          "key": "max_ratio",
+          "assignments": [
+            "{KEY_TORRENT_MAX_RATIO, torrent.maxRatio()},"
+          ]
+        },
+        {
+          "key": "max_seeding_time",
+          "assignments": [
+            "{KEY_TORRENT_MAX_SEEDING_TIME, torrent.maxSeedingTime()},"
+          ]
+        },
+        {
+          "key": "max_inactive_seeding_time",
+          "assignments": [
+            "{KEY_TORRENT_MAX_INACTIVE_SEEDING_TIME, torrent.maxInactiveSeedingTime()},"
+          ]
+        },
+        {
+          "key": "ratio",
+          "assignments": [
+            "{KEY_TORRENT_RATIO, adjustRatio(torrent.realRatio())},"
+          ]
+        },
+        {
+          "key": "ratio_limit",
+          "assignments": [
+            "{KEY_TORRENT_RATIO_LIMIT, torrent.ratioLimit()},"
+          ]
+        },
+        {
+          "key": "popularity",
+          "assignments": [
+            "{KEY_TORRENT_POPULARITY, torrent.popularity()},"
+          ]
+        },
+        {
+          "key": "seeding_time_limit",
+          "assignments": [
+            "{KEY_TORRENT_SEEDING_TIME_LIMIT, torrent.seedingTimeLimit()},"
+          ]
+        },
+        {
+          "key": "inactive_seeding_time_limit",
+          "assignments": [
+            "{KEY_TORRENT_INACTIVE_SEEDING_TIME_LIMIT, torrent.inactiveSeedingTimeLimit()},"
+          ]
+        },
+        {
+          "key": "seen_complete",
+          "assignments": [
+            "{KEY_TORRENT_LAST_SEEN_COMPLETE_TIME, Utils::DateTime::toSecsSinceEpoch(torrent.lastSeenComplete())},"
+          ]
+        },
+        {
+          "key": "auto_tmm",
+          "assignments": [
+            "{KEY_TORRENT_AUTO_TORRENT_MANAGEMENT, torrent.isAutoTMMEnabled()},"
+          ]
+        },
+        {
+          "key": "time_active",
+          "assignments": [
+            "{KEY_TORRENT_TIME_ACTIVE, torrent.activeTime()},"
+          ]
+        },
+        {
+          "key": "seeding_time",
+          "assignments": [
+            "{KEY_TORRENT_SEEDING_TIME, torrent.finishedTime()},"
+          ]
+        },
+        {
+          "key": "last_activity",
+          "assignments": [
+            "{KEY_TORRENT_LAST_ACTIVITY_TIME, getLastActivityTime()},"
+          ]
+        },
+        {
+          "key": "availability",
+          "assignments": [
+            "{KEY_TORRENT_AVAILABILITY, torrent.distributedCopies()},"
+          ]
+        },
+        {
+          "key": "reannounce",
+          "assignments": [
+            "{KEY_TORRENT_REANNOUNCE, torrent.nextAnnounce()},"
+          ]
+        },
+        {
+          "key": "comment",
+          "assignments": [
+            "{KEY_TORRENT_COMMENT, torrent.comment()},"
+          ]
+        },
+        {
+          "key": "private",
+          "assignments": [
+            "{KEY_TORRENT_PRIVATE, (torrent.hasMetadata() ? torrent.isPrivate() : QVariant())},"
+          ]
+        },
+        {
+          "key": "total_size",
+          "assignments": [
+            "{KEY_TORRENT_TOTAL_SIZE, torrent.totalSize()},"
+          ]
+        },
+        {
+          "key": "has_metadata",
+          "assignments": [
+            "{KEY_TORRENT_HAS_METADATA, torrent.hasMetadata()}"
+          ]
+        }
+      ],
+      "conditions": [
+        "return (position < 0) ? 0 : (position + 1);",
+        "return (ratio > BitTorrent::Torrent::MAX_RATIO) ? -1 : ratio;",
+        "return (timeSinceActivity < 0)",
+        "? Utils::DateTime::toSecsSinceEpoch(torrent.addedTime())",
+        ": (QDateTime::currentSecsSinceEpoch() - timeSinceActivity);"
+      ]
+    },
+    {
+      "cpp_blob": "bc75a76985dda8eb372d5026e968f249ba17af29",
+      "header_blob": "883efa6dd5cd20298ad21d6bfa647bcc5947675b",
+      "first_release": "5.1.0",
+      "fields": [
+        {
+          "key": "hash",
+          "assignments": [
+            "{KEY_TORRENT_ID, torrent.id().toString()},"
+          ]
+        },
+        {
+          "key": "infohash_v1",
+          "assignments": [
+            "{KEY_TORRENT_INFOHASHV1, torrent.infoHash().v1().toString()},"
+          ]
+        },
+        {
+          "key": "infohash_v2",
+          "assignments": [
+            "{KEY_TORRENT_INFOHASHV2, torrent.infoHash().v2().toString()},"
+          ]
+        },
+        {
+          "key": "name",
+          "assignments": [
+            "{KEY_TORRENT_NAME, torrent.name()},"
+          ]
+        },
+        {
+          "key": "magnet_uri",
+          "assignments": [
+            "{KEY_TORRENT_MAGNET_URI, torrent.createMagnetURI()},"
+          ]
+        },
+        {
+          "key": "size",
+          "assignments": [
+            "{KEY_TORRENT_SIZE, torrent.wantedSize()},"
+          ]
+        },
+        {
+          "key": "progress",
+          "assignments": [
+            "{KEY_TORRENT_PROGRESS, torrent.progress()},"
+          ]
+        },
+        {
+          "key": "dlspeed",
+          "assignments": [
+            "{KEY_TORRENT_DLSPEED, torrent.downloadPayloadRate()},"
+          ]
+        },
+        {
+          "key": "upspeed",
+          "assignments": [
+            "{KEY_TORRENT_UPSPEED, torrent.uploadPayloadRate()},"
+          ]
+        },
+        {
+          "key": "priority",
+          "assignments": [
+            "{KEY_TORRENT_QUEUE_POSITION, adjustQueuePosition(torrent.queuePosition())},"
+          ]
+        },
+        {
+          "key": "num_seeds",
+          "assignments": [
+            "{KEY_TORRENT_SEEDS, torrent.seedsCount()},"
+          ]
+        },
+        {
+          "key": "num_complete",
+          "assignments": [
+            "{KEY_TORRENT_NUM_COMPLETE, torrent.totalSeedsCount()},"
+          ]
+        },
+        {
+          "key": "num_leechs",
+          "assignments": [
+            "{KEY_TORRENT_LEECHS, torrent.leechsCount()},"
+          ]
+        },
+        {
+          "key": "num_incomplete",
+          "assignments": [
+            "{KEY_TORRENT_NUM_INCOMPLETE, torrent.totalLeechersCount()},"
+          ]
+        },
+        {
+          "key": "state",
+          "assignments": [
+            "{KEY_TORRENT_STATE, torrentStateToString(torrent.state())},"
+          ]
+        },
+        {
+          "key": "eta",
+          "assignments": [
+            "{KEY_TORRENT_ETA, torrent.eta()},"
+          ]
+        },
+        {
+          "key": "seq_dl",
+          "assignments": [
+            "{KEY_TORRENT_SEQUENTIAL_DOWNLOAD, torrent.isSequentialDownload()},"
+          ]
+        },
+        {
+          "key": "f_l_piece_prio",
+          "assignments": [
+            "{KEY_TORRENT_FIRST_LAST_PIECE_PRIO, torrent.hasFirstLastPiecePriority()},"
+          ]
+        },
+        {
+          "key": "category",
+          "assignments": [
+            "{KEY_TORRENT_CATEGORY, torrent.category()},"
+          ]
+        },
+        {
+          "key": "tags",
+          "assignments": [
+            "{KEY_TORRENT_TAGS, Utils::String::joinIntoString(torrent.tags(), u\", \"_s)},"
+          ]
+        },
+        {
+          "key": "super_seeding",
+          "assignments": [
+            "{KEY_TORRENT_SUPER_SEEDING, torrent.superSeeding()},"
+          ]
+        },
+        {
+          "key": "force_start",
+          "assignments": [
+            "{KEY_TORRENT_FORCE_START, torrent.isForced()},"
+          ]
+        },
+        {
+          "key": "save_path",
+          "assignments": [
+            "{KEY_TORRENT_SAVE_PATH, torrent.savePath().toString()},"
+          ]
+        },
+        {
+          "key": "download_path",
+          "assignments": [
+            "{KEY_TORRENT_DOWNLOAD_PATH, torrent.downloadPath().toString()},"
+          ]
+        },
+        {
+          "key": "content_path",
+          "assignments": [
+            "{KEY_TORRENT_CONTENT_PATH, torrent.contentPath().toString()},"
+          ]
+        },
+        {
+          "key": "root_path",
+          "assignments": [
+            "{KEY_TORRENT_ROOT_PATH, torrent.rootPath().toString()},"
+          ]
+        },
+        {
+          "key": "added_on",
+          "assignments": [
+            "{KEY_TORRENT_ADDED_ON, Utils::DateTime::toSecsSinceEpoch(torrent.addedTime())},"
+          ]
+        },
+        {
+          "key": "completion_on",
+          "assignments": [
+            "{KEY_TORRENT_COMPLETION_ON, Utils::DateTime::toSecsSinceEpoch(torrent.completedTime())},"
+          ]
+        },
+        {
+          "key": "tracker",
+          "assignments": [
+            "{KEY_TORRENT_TRACKER, torrent.currentTracker()},"
+          ]
+        },
+        {
+          "key": "trackers_count",
+          "assignments": [
+            "{KEY_TORRENT_TRACKERS_COUNT, torrent.trackers().size()},"
+          ]
+        },
+        {
+          "key": "dl_limit",
+          "assignments": [
+            "{KEY_TORRENT_DL_LIMIT, torrent.downloadLimit()},"
+          ]
+        },
+        {
+          "key": "up_limit",
+          "assignments": [
+            "{KEY_TORRENT_UP_LIMIT, torrent.uploadLimit()},"
+          ]
+        },
+        {
+          "key": "downloaded",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_DOWNLOADED, torrent.totalDownload()},"
+          ]
+        },
+        {
+          "key": "uploaded",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_UPLOADED, torrent.totalUpload()},"
+          ]
+        },
+        {
+          "key": "downloaded_session",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_DOWNLOADED_SESSION, torrent.totalPayloadDownload()},"
+          ]
+        },
+        {
+          "key": "uploaded_session",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_UPLOADED_SESSION, torrent.totalPayloadUpload()},"
+          ]
+        },
+        {
+          "key": "amount_left",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_LEFT, torrent.remainingSize()},"
+          ]
+        },
+        {
+          "key": "completed",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_COMPLETED, torrent.completedSize()},"
+          ]
+        },
+        {
+          "key": "max_ratio",
+          "assignments": [
+            "{KEY_TORRENT_MAX_RATIO, torrent.maxRatio()},"
+          ]
+        },
+        {
+          "key": "max_seeding_time",
+          "assignments": [
+            "{KEY_TORRENT_MAX_SEEDING_TIME, torrent.maxSeedingTime()},"
+          ]
+        },
+        {
+          "key": "max_inactive_seeding_time",
+          "assignments": [
+            "{KEY_TORRENT_MAX_INACTIVE_SEEDING_TIME, torrent.maxInactiveSeedingTime()},"
+          ]
+        },
+        {
+          "key": "ratio",
+          "assignments": [
+            "{KEY_TORRENT_RATIO, adjustRatio(torrent.realRatio())},"
+          ]
+        },
+        {
+          "key": "ratio_limit",
+          "assignments": [
+            "{KEY_TORRENT_RATIO_LIMIT, torrent.ratioLimit()},"
+          ]
+        },
+        {
+          "key": "popularity",
+          "assignments": [
+            "{KEY_TORRENT_POPULARITY, torrent.popularity()},"
+          ]
+        },
+        {
+          "key": "seeding_time_limit",
+          "assignments": [
+            "{KEY_TORRENT_SEEDING_TIME_LIMIT, torrent.seedingTimeLimit()},"
+          ]
+        },
+        {
+          "key": "inactive_seeding_time_limit",
+          "assignments": [
+            "{KEY_TORRENT_INACTIVE_SEEDING_TIME_LIMIT, torrent.inactiveSeedingTimeLimit()},"
+          ]
+        },
+        {
+          "key": "seen_complete",
+          "assignments": [
+            "{KEY_TORRENT_LAST_SEEN_COMPLETE_TIME, Utils::DateTime::toSecsSinceEpoch(torrent.lastSeenComplete())},"
+          ]
+        },
+        {
+          "key": "auto_tmm",
+          "assignments": [
+            "{KEY_TORRENT_AUTO_TORRENT_MANAGEMENT, torrent.isAutoTMMEnabled()},"
+          ]
+        },
+        {
+          "key": "time_active",
+          "assignments": [
+            "{KEY_TORRENT_TIME_ACTIVE, torrent.activeTime()},"
+          ]
+        },
+        {
+          "key": "seeding_time",
+          "assignments": [
+            "{KEY_TORRENT_SEEDING_TIME, torrent.finishedTime()},"
+          ]
+        },
+        {
+          "key": "last_activity",
+          "assignments": [
+            "{KEY_TORRENT_LAST_ACTIVITY_TIME, getLastActivityTime()},"
+          ]
+        },
+        {
+          "key": "availability",
+          "assignments": [
+            "{KEY_TORRENT_AVAILABILITY, torrent.distributedCopies()},"
+          ]
+        },
+        {
+          "key": "reannounce",
+          "assignments": [
+            "{KEY_TORRENT_REANNOUNCE, torrent.nextAnnounce()},"
+          ]
+        },
+        {
+          "key": "comment",
+          "assignments": [
+            "{KEY_TORRENT_COMMENT, torrent.comment()},"
+          ]
+        },
+        {
+          "key": "private",
+          "assignments": [
+            "{KEY_TORRENT_PRIVATE, (torrent.hasMetadata() ? torrent.isPrivate() : QVariant())},"
+          ]
+        },
+        {
+          "key": "total_size",
+          "assignments": [
+            "{KEY_TORRENT_TOTAL_SIZE, torrent.totalSize()},"
+          ]
+        },
+        {
+          "key": "has_metadata",
+          "assignments": [
+            "{KEY_TORRENT_HAS_METADATA, torrent.hasMetadata()}"
+          ]
+        }
+      ],
+      "conditions": [
+        "return (position < 0) ? 0 : (position + 1);",
+        "return (ratio > BitTorrent::Torrent::MAX_RATIO) ? -1 : ratio;",
+        "return (timeSinceActivity < 0)",
+        "? Utils::DateTime::toSecsSinceEpoch(torrent.addedTime())",
+        ": (QDateTime::currentSecsSinceEpoch() - timeSinceActivity);"
+      ]
+    },
+    {
+      "cpp_blob": "1543170d4e9df0649f67a5729d711d24a7427a52",
+      "header_blob": "883efa6dd5cd20298ad21d6bfa647bcc5947675b",
+      "first_release": "5.1.1",
+      "fields": [
+        {
+          "key": "hash",
+          "assignments": [
+            "{KEY_TORRENT_ID, torrent.id().toString()},"
+          ]
+        },
+        {
+          "key": "infohash_v1",
+          "assignments": [
+            "{KEY_TORRENT_INFOHASHV1, torrent.infoHash().v1().toString()},"
+          ]
+        },
+        {
+          "key": "infohash_v2",
+          "assignments": [
+            "{KEY_TORRENT_INFOHASHV2, torrent.infoHash().v2().toString()},"
+          ]
+        },
+        {
+          "key": "name",
+          "assignments": [
+            "{KEY_TORRENT_NAME, torrent.name()},"
+          ]
+        },
+        {
+          "key": "magnet_uri",
+          "assignments": [
+            "{KEY_TORRENT_MAGNET_URI, torrent.createMagnetURI()},"
+          ]
+        },
+        {
+          "key": "size",
+          "assignments": [
+            "{KEY_TORRENT_SIZE, torrent.wantedSize()},"
+          ]
+        },
+        {
+          "key": "progress",
+          "assignments": [
+            "{KEY_TORRENT_PROGRESS, torrent.progress()},"
+          ]
+        },
+        {
+          "key": "dlspeed",
+          "assignments": [
+            "{KEY_TORRENT_DLSPEED, torrent.downloadPayloadRate()},"
+          ]
+        },
+        {
+          "key": "upspeed",
+          "assignments": [
+            "{KEY_TORRENT_UPSPEED, torrent.uploadPayloadRate()},"
+          ]
+        },
+        {
+          "key": "priority",
+          "assignments": [
+            "{KEY_TORRENT_QUEUE_POSITION, adjustQueuePosition(torrent.queuePosition())},"
+          ]
+        },
+        {
+          "key": "num_seeds",
+          "assignments": [
+            "{KEY_TORRENT_SEEDS, torrent.seedsCount()},"
+          ]
+        },
+        {
+          "key": "num_complete",
+          "assignments": [
+            "{KEY_TORRENT_NUM_COMPLETE, torrent.totalSeedsCount()},"
+          ]
+        },
+        {
+          "key": "num_leechs",
+          "assignments": [
+            "{KEY_TORRENT_LEECHS, torrent.leechsCount()},"
+          ]
+        },
+        {
+          "key": "num_incomplete",
+          "assignments": [
+            "{KEY_TORRENT_NUM_INCOMPLETE, torrent.totalLeechersCount()},"
+          ]
+        },
+        {
+          "key": "state",
+          "assignments": [
+            "{KEY_TORRENT_STATE, torrentStateToString(torrent.state())},"
+          ]
+        },
+        {
+          "key": "eta",
+          "assignments": [
+            "{KEY_TORRENT_ETA, torrent.eta()},"
+          ]
+        },
+        {
+          "key": "seq_dl",
+          "assignments": [
+            "{KEY_TORRENT_SEQUENTIAL_DOWNLOAD, torrent.isSequentialDownload()},"
+          ]
+        },
+        {
+          "key": "f_l_piece_prio",
+          "assignments": [
+            "{KEY_TORRENT_FIRST_LAST_PIECE_PRIO, torrent.hasFirstLastPiecePriority()},"
+          ]
+        },
+        {
+          "key": "category",
+          "assignments": [
+            "{KEY_TORRENT_CATEGORY, torrent.category()},"
+          ]
+        },
+        {
+          "key": "tags",
+          "assignments": [
+            "{KEY_TORRENT_TAGS, Utils::String::joinIntoString(torrent.tags(), u\", \"_s)},"
+          ]
+        },
+        {
+          "key": "super_seeding",
+          "assignments": [
+            "{KEY_TORRENT_SUPER_SEEDING, torrent.superSeeding()},"
+          ]
+        },
+        {
+          "key": "force_start",
+          "assignments": [
+            "{KEY_TORRENT_FORCE_START, torrent.isForced()},"
+          ]
+        },
+        {
+          "key": "save_path",
+          "assignments": [
+            "{KEY_TORRENT_SAVE_PATH, torrent.savePath().toString()},"
+          ]
+        },
+        {
+          "key": "download_path",
+          "assignments": [
+            "{KEY_TORRENT_DOWNLOAD_PATH, torrent.downloadPath().toString()},"
+          ]
+        },
+        {
+          "key": "content_path",
+          "assignments": [
+            "{KEY_TORRENT_CONTENT_PATH, torrent.contentPath().toString()},"
+          ]
+        },
+        {
+          "key": "root_path",
+          "assignments": [
+            "{KEY_TORRENT_ROOT_PATH, torrent.rootPath().toString()},"
+          ]
+        },
+        {
+          "key": "added_on",
+          "assignments": [
+            "{KEY_TORRENT_ADDED_ON, Utils::DateTime::toSecsSinceEpoch(torrent.addedTime())},"
+          ]
+        },
+        {
+          "key": "completion_on",
+          "assignments": [
+            "{KEY_TORRENT_COMPLETION_ON, Utils::DateTime::toSecsSinceEpoch(torrent.completedTime())},"
+          ]
+        },
+        {
+          "key": "tracker",
+          "assignments": [
+            "{KEY_TORRENT_TRACKER, torrent.currentTracker()},"
+          ]
+        },
+        {
+          "key": "trackers_count",
+          "assignments": [
+            "{KEY_TORRENT_TRACKERS_COUNT, torrent.trackers().size()},"
+          ]
+        },
+        {
+          "key": "dl_limit",
+          "assignments": [
+            "{KEY_TORRENT_DL_LIMIT, torrent.downloadLimit()},"
+          ]
+        },
+        {
+          "key": "up_limit",
+          "assignments": [
+            "{KEY_TORRENT_UP_LIMIT, torrent.uploadLimit()},"
+          ]
+        },
+        {
+          "key": "downloaded",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_DOWNLOADED, torrent.totalDownload()},"
+          ]
+        },
+        {
+          "key": "uploaded",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_UPLOADED, torrent.totalUpload()},"
+          ]
+        },
+        {
+          "key": "downloaded_session",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_DOWNLOADED_SESSION, torrent.totalPayloadDownload()},"
+          ]
+        },
+        {
+          "key": "uploaded_session",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_UPLOADED_SESSION, torrent.totalPayloadUpload()},"
+          ]
+        },
+        {
+          "key": "amount_left",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_LEFT, torrent.remainingSize()},"
+          ]
+        },
+        {
+          "key": "completed",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_COMPLETED, torrent.completedSize()},"
+          ]
+        },
+        {
+          "key": "max_ratio",
+          "assignments": [
+            "{KEY_TORRENT_MAX_RATIO, torrent.maxRatio()},"
+          ]
+        },
+        {
+          "key": "max_seeding_time",
+          "assignments": [
+            "{KEY_TORRENT_MAX_SEEDING_TIME, torrent.maxSeedingTime()},"
+          ]
+        },
+        {
+          "key": "max_inactive_seeding_time",
+          "assignments": [
+            "{KEY_TORRENT_MAX_INACTIVE_SEEDING_TIME, torrent.maxInactiveSeedingTime()},"
+          ]
+        },
+        {
+          "key": "ratio",
+          "assignments": [
+            "{KEY_TORRENT_RATIO, adjustRatio(torrent.realRatio())},"
+          ]
+        },
+        {
+          "key": "ratio_limit",
+          "assignments": [
+            "{KEY_TORRENT_RATIO_LIMIT, torrent.ratioLimit()},"
+          ]
+        },
+        {
+          "key": "popularity",
+          "assignments": [
+            "{KEY_TORRENT_POPULARITY, torrent.popularity()},"
+          ]
+        },
+        {
+          "key": "seeding_time_limit",
+          "assignments": [
+            "{KEY_TORRENT_SEEDING_TIME_LIMIT, torrent.seedingTimeLimit()},"
+          ]
+        },
+        {
+          "key": "inactive_seeding_time_limit",
+          "assignments": [
+            "{KEY_TORRENT_INACTIVE_SEEDING_TIME_LIMIT, torrent.inactiveSeedingTimeLimit()},"
+          ]
+        },
+        {
+          "key": "seen_complete",
+          "assignments": [
+            "{KEY_TORRENT_LAST_SEEN_COMPLETE_TIME, Utils::DateTime::toSecsSinceEpoch(torrent.lastSeenComplete())},"
+          ]
+        },
+        {
+          "key": "auto_tmm",
+          "assignments": [
+            "{KEY_TORRENT_AUTO_TORRENT_MANAGEMENT, torrent.isAutoTMMEnabled()},"
+          ]
+        },
+        {
+          "key": "time_active",
+          "assignments": [
+            "{KEY_TORRENT_TIME_ACTIVE, torrent.activeTime()},"
+          ]
+        },
+        {
+          "key": "seeding_time",
+          "assignments": [
+            "{KEY_TORRENT_SEEDING_TIME, torrent.finishedTime()},"
+          ]
+        },
+        {
+          "key": "last_activity",
+          "assignments": [
+            "{KEY_TORRENT_LAST_ACTIVITY_TIME, getLastActivityTime()},"
+          ]
+        },
+        {
+          "key": "availability",
+          "assignments": [
+            "{KEY_TORRENT_AVAILABILITY, torrent.distributedCopies()},"
+          ]
+        },
+        {
+          "key": "reannounce",
+          "assignments": [
+            "{KEY_TORRENT_REANNOUNCE, torrent.nextAnnounce()},"
+          ]
+        },
+        {
+          "key": "comment",
+          "assignments": [
+            "{KEY_TORRENT_COMMENT, torrent.comment()},"
+          ]
+        },
+        {
+          "key": "private",
+          "assignments": [
+            "{KEY_TORRENT_PRIVATE, (torrent.hasMetadata() ? torrent.isPrivate() : QVariant())},"
+          ]
+        },
+        {
+          "key": "total_size",
+          "assignments": [
+            "{KEY_TORRENT_TOTAL_SIZE, torrent.totalSize()},"
+          ]
+        },
+        {
+          "key": "has_metadata",
+          "assignments": [
+            "{KEY_TORRENT_HAS_METADATA, torrent.hasMetadata()}"
+          ]
+        }
+      ],
+      "conditions": [
+        "return (position < 0) ? 0 : (position + 1);",
+        "return (ratio >= BitTorrent::Torrent::MAX_RATIO) ? -1 : ratio;",
+        "return (timeSinceActivity < 0)",
+        "? Utils::DateTime::toSecsSinceEpoch(torrent.addedTime())",
+        ": (QDateTime::currentSecsSinceEpoch() - timeSinceActivity);"
+      ]
+    },
+    {
+      "cpp_blob": "36c9a990c911aaa60cee89e8b3a8b4c0e888ae23",
+      "header_blob": "6f57a994078765ed388c030a43816d7c9f593a9c",
+      "first_release": "5.2.0",
+      "fields": [
+        {
+          "key": "hash",
+          "assignments": [
+            "{KEY_TORRENT_ID, torrent.id().toString()},"
+          ]
+        },
+        {
+          "key": "infohash_v1",
+          "assignments": [
+            "{KEY_TORRENT_INFOHASHV1, torrent.infoHash().v1().toString()},"
+          ]
+        },
+        {
+          "key": "infohash_v2",
+          "assignments": [
+            "{KEY_TORRENT_INFOHASHV2, torrent.infoHash().v2().toString()},"
+          ]
+        },
+        {
+          "key": "name",
+          "assignments": [
+            "{KEY_TORRENT_NAME, torrent.name()},"
+          ]
+        },
+        {
+          "key": "has_metadata",
+          "assignments": [
+            "{KEY_TORRENT_HAS_METADATA, hasMetadata},"
+          ]
+        },
+        {
+          "key": "created_by",
+          "assignments": [
+            "{KEY_TORRENT_CREATED_BY, torrent.creator()},"
+          ]
+        },
+        {
+          "key": "creation_date",
+          "assignments": [
+            "{KEY_TORRENT_CREATION_DATE, Utils::DateTime::toSecsSinceEpoch(torrent.creationDate())},"
+          ]
+        },
+        {
+          "key": "private",
+          "assignments": [
+            "{KEY_TORRENT_PRIVATE, (hasMetadata ? torrent.isPrivate() : QVariant())},"
+          ]
+        },
+        {
+          "key": "total_size",
+          "assignments": [
+            "{KEY_TORRENT_TOTAL_SIZE, torrent.totalSize()},"
+          ]
+        },
+        {
+          "key": "pieces_num",
+          "assignments": [
+            "{KEY_TORRENT_PIECES_NUM, torrent.piecesCount()},"
+          ]
+        },
+        {
+          "key": "piece_size",
+          "assignments": [
+            "{KEY_TORRENT_PIECE_SIZE, torrent.pieceLength()},"
+          ]
+        },
+        {
+          "key": "magnet_uri",
+          "assignments": [
+            "{KEY_TORRENT_MAGNET_URI, torrent.createMagnetURI()},"
+          ]
+        },
+        {
+          "key": "size",
+          "assignments": [
+            "{KEY_TORRENT_SIZE, torrent.wantedSize()},"
+          ]
+        },
+        {
+          "key": "progress",
+          "assignments": [
+            "{KEY_TORRENT_PROGRESS, torrent.progress()},"
+          ]
+        },
+        {
+          "key": "total_wasted",
+          "assignments": [
+            "{KEY_TORRENT_TOTAL_WASTED, torrent.wastedSize()},"
+          ]
+        },
+        {
+          "key": "pieces_have",
+          "assignments": [
+            "{KEY_TORRENT_PIECES_HAVE, torrent.piecesHave()},"
+          ]
+        },
+        {
+          "key": "dlspeed",
+          "assignments": [
+            "{KEY_TORRENT_DLSPEED, torrent.downloadPayloadRate()},"
+          ]
+        },
+        {
+          "key": "upspeed",
+          "assignments": [
+            "{KEY_TORRENT_UPSPEED, torrent.uploadPayloadRate()},"
+          ]
+        },
+        {
+          "key": "priority",
+          "assignments": [
+            "{KEY_TORRENT_QUEUE_POSITION, adjustQueuePosition(torrent.queuePosition())},"
+          ]
+        },
+        {
+          "key": "num_seeds",
+          "assignments": [
+            "{KEY_TORRENT_SEEDS, torrent.seedsCount()},"
+          ]
+        },
+        {
+          "key": "num_complete",
+          "assignments": [
+            "{KEY_TORRENT_NUM_COMPLETE, torrent.totalSeedsCount()},"
+          ]
+        },
+        {
+          "key": "num_leechs",
+          "assignments": [
+            "{KEY_TORRENT_LEECHS, torrent.leechsCount()},"
+          ]
+        },
+        {
+          "key": "num_incomplete",
+          "assignments": [
+            "{KEY_TORRENT_NUM_INCOMPLETE, torrent.totalLeechersCount()},"
+          ]
+        },
+        {
+          "key": "state",
+          "assignments": [
+            "{KEY_TORRENT_STATE, torrentStateToString(torrent.state())},"
+          ]
+        },
+        {
+          "key": "eta",
+          "assignments": [
+            "{KEY_TORRENT_ETA, torrent.eta()},"
+          ]
+        },
+        {
+          "key": "seq_dl",
+          "assignments": [
+            "{KEY_TORRENT_SEQUENTIAL_DOWNLOAD, torrent.isSequentialDownload()},"
+          ]
+        },
+        {
+          "key": "f_l_piece_prio",
+          "assignments": [
+            "{KEY_TORRENT_FIRST_LAST_PIECE_PRIO, torrent.hasFirstLastPiecePriority()},"
+          ]
+        },
+        {
+          "key": "category",
+          "assignments": [
+            "{KEY_TORRENT_CATEGORY, torrent.category()},"
+          ]
+        },
+        {
+          "key": "tags",
+          "assignments": [
+            "{KEY_TORRENT_TAGS, Utils::String::joinIntoString(torrent.tags(), u\", \"_s)},"
+          ]
+        },
+        {
+          "key": "super_seeding",
+          "assignments": [
+            "{KEY_TORRENT_SUPER_SEEDING, torrent.superSeeding()},"
+          ]
+        },
+        {
+          "key": "force_start",
+          "assignments": [
+            "{KEY_TORRENT_FORCE_START, torrent.isForced()},"
+          ]
+        },
+        {
+          "key": "save_path",
+          "assignments": [
+            "{KEY_TORRENT_SAVE_PATH, torrent.savePath().toString()},"
+          ]
+        },
+        {
+          "key": "download_path",
+          "assignments": [
+            "{KEY_TORRENT_DOWNLOAD_PATH, torrent.downloadPath().toString()},"
+          ]
+        },
+        {
+          "key": "content_path",
+          "assignments": [
+            "{KEY_TORRENT_CONTENT_PATH, torrent.contentPath().toString()},"
+          ]
+        },
+        {
+          "key": "root_path",
+          "assignments": [
+            "{KEY_TORRENT_ROOT_PATH, torrent.rootPath().toString()},"
+          ]
+        },
+        {
+          "key": "added_on",
+          "assignments": [
+            "{KEY_TORRENT_ADDED_ON, Utils::DateTime::toSecsSinceEpoch(torrent.addedTime())},"
+          ]
+        },
+        {
+          "key": "completion_on",
+          "assignments": [
+            "{KEY_TORRENT_COMPLETION_ON, Utils::DateTime::toSecsSinceEpoch(torrent.completedTime())},"
+          ]
+        },
+        {
+          "key": "tracker",
+          "assignments": [
+            "{KEY_TORRENT_TRACKER, torrent.currentTracker()},"
+          ]
+        },
+        {
+          "key": "trackers_count",
+          "assignments": [
+            "{KEY_TORRENT_TRACKERS_COUNT, torrent.trackers().size()},"
+          ]
+        },
+        {
+          "key": "dl_limit",
+          "assignments": [
+            "{KEY_TORRENT_DL_LIMIT, torrent.downloadLimit()},"
+          ]
+        },
+        {
+          "key": "up_limit",
+          "assignments": [
+            "{KEY_TORRENT_UP_LIMIT, torrent.uploadLimit()},"
+          ]
+        },
+        {
+          "key": "downloaded",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_DOWNLOADED, torrent.totalDownload()},"
+          ]
+        },
+        {
+          "key": "uploaded",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_UPLOADED, torrent.totalUpload()},"
+          ]
+        },
+        {
+          "key": "downloaded_session",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_DOWNLOADED_SESSION, torrent.totalPayloadDownload()},"
+          ]
+        },
+        {
+          "key": "uploaded_session",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_UPLOADED_SESSION, torrent.totalPayloadUpload()},"
+          ]
+        },
+        {
+          "key": "amount_left",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_LEFT, torrent.remainingSize()},"
+          ]
+        },
+        {
+          "key": "completed",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_COMPLETED, torrent.completedSize()},"
+          ]
+        },
+        {
+          "key": "connections_count",
+          "assignments": [
+            "{KEY_TORRENT_CONNECTIONS_COUNT, torrent.connectionsCount()},"
+          ]
+        },
+        {
+          "key": "connections_limit",
+          "assignments": [
+            "{KEY_TORRENT_CONNECTIONS_LIMIT, torrent.connectionsLimit()},"
+          ]
+        },
+        {
+          "key": "max_ratio",
+          "assignments": [
+            "{KEY_TORRENT_MAX_RATIO, torrent.effectiveRatioLimit()},"
+          ]
+        },
+        {
+          "key": "max_seeding_time",
+          "assignments": [
+            "{KEY_TORRENT_MAX_SEEDING_TIME, torrent.effectiveSeedingTimeLimit()},"
+          ]
+        },
+        {
+          "key": "max_inactive_seeding_time",
+          "assignments": [
+            "{KEY_TORRENT_MAX_INACTIVE_SEEDING_TIME, torrent.effectiveInactiveSeedingTimeLimit()},"
+          ]
+        },
+        {
+          "key": "ratio",
+          "assignments": [
+            "{KEY_TORRENT_RATIO, adjustRatio(torrent.realRatio())},"
+          ]
+        },
+        {
+          "key": "ratio_limit",
+          "assignments": [
+            "{KEY_TORRENT_RATIO_LIMIT, torrent.ratioLimit()},"
+          ]
+        },
+        {
+          "key": "popularity",
+          "assignments": [
+            "{KEY_TORRENT_POPULARITY, torrent.popularity()},"
+          ]
+        },
+        {
+          "key": "seeding_time_limit",
+          "assignments": [
+            "{KEY_TORRENT_SEEDING_TIME_LIMIT, torrent.seedingTimeLimit()},"
+          ]
+        },
+        {
+          "key": "inactive_seeding_time_limit",
+          "assignments": [
+            "{KEY_TORRENT_INACTIVE_SEEDING_TIME_LIMIT, torrent.inactiveSeedingTimeLimit()},"
+          ]
+        },
+        {
+          "key": "share_limit_action",
+          "assignments": [
+            "{KEY_TORRENT_SHARE_LIMIT_ACTION, Utils::String::fromEnum(torrent.shareLimitAction())},"
+          ]
+        },
+        {
+          "key": "seen_complete",
+          "assignments": [
+            "{KEY_TORRENT_LAST_SEEN_COMPLETE_TIME, Utils::DateTime::toSecsSinceEpoch(torrent.lastSeenComplete())},"
+          ]
+        },
+        {
+          "key": "auto_tmm",
+          "assignments": [
+            "{KEY_TORRENT_AUTO_TORRENT_MANAGEMENT, torrent.isAutoTMMEnabled()},"
+          ]
+        },
+        {
+          "key": "time_active",
+          "assignments": [
+            "{KEY_TORRENT_TIME_ACTIVE, torrent.activeTime()},"
+          ]
+        },
+        {
+          "key": "seeding_time",
+          "assignments": [
+            "{KEY_TORRENT_SEEDING_TIME, torrent.finishedTime()},"
+          ]
+        },
+        {
+          "key": "last_activity",
+          "assignments": [
+            "{KEY_TORRENT_LAST_ACTIVITY_TIME, getLastActivityTime()},"
+          ]
+        },
+        {
+          "key": "availability",
+          "assignments": [
+            "{KEY_TORRENT_AVAILABILITY, torrent.distributedCopies()},"
+          ]
+        },
+        {
+          "key": "reannounce",
+          "assignments": [
+            "{KEY_TORRENT_REANNOUNCE, torrent.nextAnnounce()},"
+          ]
+        },
+        {
+          "key": "comment",
+          "assignments": [
+            "{KEY_TORRENT_COMMENT, torrent.comment()}"
+          ]
+        }
+      ],
+      "conditions": [
+        "return (position < 0) ? 0 : (position + 1);",
+        "return (ratio >= BitTorrent::Torrent::MAX_RATIO) ? -1 : ratio;",
+        "return (timeSinceActivity < 0)",
+        "? Utils::DateTime::toSecsSinceEpoch(torrent.addedTime())",
+        ": (QDateTime::currentSecsSinceEpoch() - timeSinceActivity);"
+      ]
+    },
+    {
+      "cpp_blob": "651abf8ef5d69e872fa9ee78ce237cc8ed4ce579",
+      "header_blob": "1d38bf136a81afa14ad7244059312434458e2d8c",
+      "first_release": "5.3.0",
+      "fields": [
+        {
+          "key": "hash",
+          "assignments": [
+            "{KEY_TORRENT_ID, torrent.id().toString()},"
+          ]
+        },
+        {
+          "key": "infohash_v1",
+          "assignments": [
+            "{KEY_TORRENT_INFOHASHV1, torrent.infoHash().v1().toString()},"
+          ]
+        },
+        {
+          "key": "infohash_v2",
+          "assignments": [
+            "{KEY_TORRENT_INFOHASHV2, torrent.infoHash().v2().toString()},"
+          ]
+        },
+        {
+          "key": "name",
+          "assignments": [
+            "{KEY_TORRENT_NAME, torrent.name()},"
+          ]
+        },
+        {
+          "key": "has_metadata",
+          "assignments": [
+            "{KEY_TORRENT_HAS_METADATA, hasMetadata},"
+          ]
+        },
+        {
+          "key": "created_by",
+          "assignments": [
+            "{KEY_TORRENT_CREATED_BY, torrent.creator()},"
+          ]
+        },
+        {
+          "key": "creation_date",
+          "assignments": [
+            "{KEY_TORRENT_CREATION_DATE, Utils::DateTime::toSecsSinceEpoch(torrent.creationDate())},"
+          ]
+        },
+        {
+          "key": "private",
+          "assignments": [
+            "{KEY_TORRENT_PRIVATE, (hasMetadata ? torrent.isPrivate() : QVariant())},"
+          ]
+        },
+        {
+          "key": "total_size",
+          "assignments": [
+            "{KEY_TORRENT_TOTAL_SIZE, torrent.totalSize()},"
+          ]
+        },
+        {
+          "key": "pieces_num",
+          "assignments": [
+            "{KEY_TORRENT_PIECES_NUM, torrent.piecesCount()},"
+          ]
+        },
+        {
+          "key": "piece_size",
+          "assignments": [
+            "{KEY_TORRENT_PIECE_SIZE, torrent.pieceLength()},"
+          ]
+        },
+        {
+          "key": "magnet_uri",
+          "assignments": [
+            "{KEY_TORRENT_MAGNET_URI, torrent.createMagnetURI()},"
+          ]
+        },
+        {
+          "key": "size",
+          "assignments": [
+            "{KEY_TORRENT_SIZE, torrent.wantedSize()},"
+          ]
+        },
+        {
+          "key": "progress",
+          "assignments": [
+            "{KEY_TORRENT_PROGRESS, torrent.progress()},"
+          ]
+        },
+        {
+          "key": "total_wasted",
+          "assignments": [
+            "{KEY_TORRENT_TOTAL_WASTED, torrent.wastedSize()},"
+          ]
+        },
+        {
+          "key": "pieces_have",
+          "assignments": [
+            "{KEY_TORRENT_PIECES_HAVE, torrent.piecesHave()},"
+          ]
+        },
+        {
+          "key": "dlspeed",
+          "assignments": [
+            "{KEY_TORRENT_DLSPEED, torrent.downloadPayloadRate()},"
+          ]
+        },
+        {
+          "key": "upspeed",
+          "assignments": [
+            "{KEY_TORRENT_UPSPEED, torrent.uploadPayloadRate()},"
+          ]
+        },
+        {
+          "key": "priority",
+          "assignments": [
+            "{KEY_TORRENT_QUEUE_POSITION, adjustQueuePosition(torrent.queuePosition())},"
+          ]
+        },
+        {
+          "key": "num_seeds",
+          "assignments": [
+            "{KEY_TORRENT_SEEDS, torrent.seedsCount()},"
+          ]
+        },
+        {
+          "key": "num_complete",
+          "assignments": [
+            "{KEY_TORRENT_NUM_COMPLETE, torrent.totalSeedsCount()},"
+          ]
+        },
+        {
+          "key": "num_leechs",
+          "assignments": [
+            "{KEY_TORRENT_LEECHS, torrent.leechsCount()},"
+          ]
+        },
+        {
+          "key": "num_incomplete",
+          "assignments": [
+            "{KEY_TORRENT_NUM_INCOMPLETE, torrent.totalLeechersCount()},"
+          ]
+        },
+        {
+          "key": "state",
+          "assignments": [
+            "{KEY_TORRENT_STATE, torrentStateToString(torrent.state())},"
+          ]
+        },
+        {
+          "key": "eta",
+          "assignments": [
+            "{KEY_TORRENT_ETA, torrent.eta()},"
+          ]
+        },
+        {
+          "key": "seq_dl",
+          "assignments": [
+            "{KEY_TORRENT_SEQUENTIAL_DOWNLOAD, torrent.isSequentialDownload()},"
+          ]
+        },
+        {
+          "key": "f_l_piece_prio",
+          "assignments": [
+            "{KEY_TORRENT_FIRST_LAST_PIECE_PRIO, torrent.hasFirstLastPiecePriority()},"
+          ]
+        },
+        {
+          "key": "category",
+          "assignments": [
+            "{KEY_TORRENT_CATEGORY, torrent.category()},"
+          ]
+        },
+        {
+          "key": "tags",
+          "assignments": [
+            "{KEY_TORRENT_TAGS, Utils::String::joinIntoString(torrent.tags(), u\", \"_s)},"
+          ]
+        },
+        {
+          "key": "super_seeding",
+          "assignments": [
+            "{KEY_TORRENT_SUPER_SEEDING, torrent.superSeeding()},"
+          ]
+        },
+        {
+          "key": "force_start",
+          "assignments": [
+            "{KEY_TORRENT_FORCE_START, torrent.isForced()},"
+          ]
+        },
+        {
+          "key": "save_path",
+          "assignments": [
+            "{KEY_TORRENT_SAVE_PATH, torrent.savePath().toString()},"
+          ]
+        },
+        {
+          "key": "download_path",
+          "assignments": [
+            "{KEY_TORRENT_DOWNLOAD_PATH, torrent.downloadPath().toString()},"
+          ]
+        },
+        {
+          "key": "content_path",
+          "assignments": [
+            "{KEY_TORRENT_CONTENT_PATH, torrent.contentPath().toString()},"
+          ]
+        },
+        {
+          "key": "root_path",
+          "assignments": [
+            "{KEY_TORRENT_ROOT_PATH, torrent.rootPath().toString()},"
+          ]
+        },
+        {
+          "key": "added_on",
+          "assignments": [
+            "{KEY_TORRENT_ADDED_ON, Utils::DateTime::toSecsSinceEpoch(torrent.addedTime())},"
+          ]
+        },
+        {
+          "key": "completion_on",
+          "assignments": [
+            "{KEY_TORRENT_COMPLETION_ON, Utils::DateTime::toSecsSinceEpoch(torrent.completedTime())},"
+          ]
+        },
+        {
+          "key": "tracker",
+          "assignments": [
+            "{KEY_TORRENT_TRACKER, torrent.currentTracker()},"
+          ]
+        },
+        {
+          "key": "trackers_count",
+          "assignments": [
+            "{KEY_TORRENT_TRACKERS_COUNT, torrent.trackers().size()},"
+          ]
+        },
+        {
+          "key": "dl_limit",
+          "assignments": [
+            "{KEY_TORRENT_DL_LIMIT, torrent.downloadLimit()},"
+          ]
+        },
+        {
+          "key": "up_limit",
+          "assignments": [
+            "{KEY_TORRENT_UP_LIMIT, torrent.uploadLimit()},"
+          ]
+        },
+        {
+          "key": "downloaded",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_DOWNLOADED, torrent.totalDownload()},"
+          ]
+        },
+        {
+          "key": "uploaded",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_UPLOADED, torrent.totalUpload()},"
+          ]
+        },
+        {
+          "key": "downloaded_session",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_DOWNLOADED_SESSION, torrent.totalPayloadDownload()},"
+          ]
+        },
+        {
+          "key": "uploaded_session",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_UPLOADED_SESSION, torrent.totalPayloadUpload()},"
+          ]
+        },
+        {
+          "key": "amount_left",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_LEFT, torrent.remainingSize()},"
+          ]
+        },
+        {
+          "key": "completed",
+          "assignments": [
+            "{KEY_TORRENT_AMOUNT_COMPLETED, torrent.completedSize()},"
+          ]
+        },
+        {
+          "key": "connections_count",
+          "assignments": [
+            "{KEY_TORRENT_CONNECTIONS_COUNT, torrent.connectionsCount()},"
+          ]
+        },
+        {
+          "key": "connections_limit",
+          "assignments": [
+            "{KEY_TORRENT_CONNECTIONS_LIMIT, torrent.connectionsLimit()},"
+          ]
+        },
+        {
+          "key": "max_ratio",
+          "assignments": [
+            "{KEY_TORRENT_MAX_RATIO, effectiveShareLimits.ratioLimit},"
+          ]
+        },
+        {
+          "key": "max_seeding_time",
+          "assignments": [
+            "{KEY_TORRENT_MAX_SEEDING_TIME, effectiveShareLimits.seedingTimeLimit},"
+          ]
+        },
+        {
+          "key": "max_inactive_seeding_time",
+          "assignments": [
+            "{KEY_TORRENT_MAX_INACTIVE_SEEDING_TIME, effectiveShareLimits.inactiveSeedingTimeLimit},"
+          ]
+        },
+        {
+          "key": "ratio",
+          "assignments": [
+            "{KEY_TORRENT_RATIO, adjustRatio(torrent.realRatio())},"
+          ]
+        },
+        {
+          "key": "ratio_limit",
+          "assignments": [
+            "{KEY_TORRENT_RATIO_LIMIT, shareLimits.ratioLimit},"
+          ]
+        },
+        {
+          "key": "popularity",
+          "assignments": [
+            "{KEY_TORRENT_POPULARITY, torrent.popularity()},"
+          ]
+        },
+        {
+          "key": "seeding_time_limit",
+          "assignments": [
+            "{KEY_TORRENT_SEEDING_TIME_LIMIT, shareLimits.seedingTimeLimit},"
+          ]
+        },
+        {
+          "key": "inactive_seeding_time_limit",
+          "assignments": [
+            "{KEY_TORRENT_INACTIVE_SEEDING_TIME_LIMIT, shareLimits.inactiveSeedingTimeLimit},"
+          ]
+        },
+        {
+          "key": "share_limits_mode",
+          "assignments": [
+            "{KEY_TORRENT_SHARE_LIMITS_MODE, Utils::String::fromEnum(shareLimits.mode)},"
+          ]
+        },
+        {
+          "key": "share_limit_action",
+          "assignments": [
+            "{KEY_TORRENT_SHARE_LIMIT_ACTION, Utils::String::fromEnum(shareLimits.action)},"
+          ]
+        },
+        {
+          "key": "seen_complete",
+          "assignments": [
+            "{KEY_TORRENT_LAST_SEEN_COMPLETE_TIME, Utils::DateTime::toSecsSinceEpoch(torrent.lastSeenComplete())},"
+          ]
+        },
+        {
+          "key": "auto_tmm",
+          "assignments": [
+            "{KEY_TORRENT_AUTO_TORRENT_MANAGEMENT, torrent.isAutoTMMEnabled()},"
+          ]
+        },
+        {
+          "key": "time_active",
+          "assignments": [
+            "{KEY_TORRENT_TIME_ACTIVE, torrent.activeTime()},"
+          ]
+        },
+        {
+          "key": "seeding_time",
+          "assignments": [
+            "{KEY_TORRENT_SEEDING_TIME, torrent.finishedTime()},"
+          ]
+        },
+        {
+          "key": "last_activity",
+          "assignments": [
+            "{KEY_TORRENT_LAST_ACTIVITY_TIME, getLastActivityTime()},"
+          ]
+        },
+        {
+          "key": "availability",
+          "assignments": [
+            "{KEY_TORRENT_AVAILABILITY, torrent.distributedCopies()},"
+          ]
+        },
+        {
+          "key": "reannounce",
+          "assignments": [
+            "{KEY_TORRENT_REANNOUNCE, torrent.nextAnnounce()},"
+          ]
+        },
+        {
+          "key": "comment",
+          "assignments": [
+            "{KEY_TORRENT_COMMENT, torrent.comment()}"
+          ]
+        }
+      ],
+      "conditions": [
+        "return (position < 0) ? 0 : (position + 1);",
+        "return (ratio >= BitTorrent::Torrent::MAX_RATIO) ? -1 : ratio;",
+        "return (timeSinceActivity < 0)",
+        "? Utils::DateTime::toSecsSinceEpoch(torrent.addedTime())",
+        ": (QDateTime::currentSecsSinceEpoch() - timeSinceActivity);"
+      ]
+    }
+  ],
+  "review_notes": [
+    {
+      "boundary": "4.1.0",
+      "finding": "42 keys; f_l_piece_prio is conditional on metadata. last_activity is zero while paused/checking. Hash is torrent.hash(), not a separately reported protocol hash."
+    },
+    {
+      "boundary": "4.2.0",
+      "finding": "availability introduced; timestamps move from toTime_t to toSecsSinceEpoch."
+    },
+    {
+      "boundary": "4.3.1",
+      "finding": "content_path added; remainingSize replaces incompletedSize."
+    },
+    {
+      "boundary": "4.3.4",
+      "finding": "seeding_time introduced, hash uses torrent ID, queue conversion moves from backend helper to serializer; paused/checking last_activity still zero."
+    },
+    {
+      "boundary": "4.3.8",
+      "finding": "last_activity changes to added time fallback when timeSinceActivity is negative; no explicit paused/checking zero."
+    },
+    {
+      "boundary": "4.4.0",
+      "finding": "Separate infohash_v1, infohash_v2 and download_path appear."
+    },
+    {
+      "boundary": "4.5.0",
+      "finding": "Path serialization moves from toNativePath to Path::toString; seeding_time uses finishedTime."
+    },
+    {
+      "boundary": "5.0.0",
+      "finding": "Metadata flag, nullable privacy, popularity, root_path, reannounce and comment added; timestamp conversion uses Utils::DateTime."
+    },
+    {
+      "boundary": "5.1.1",
+      "finding": "Ratio infinity comparison changes from > to >= MAX_RATIO."
+    },
+    {
+      "boundary": "5.2.0",
+      "finding": "Creation date, creator, piece and connection statistics, wasted size and share_limit_action added; effective share-limit getters used."
+    },
+    {
+      "boundary": "5.3.0",
+      "finding": "share_limits_mode added; configured and effective limit structs serialized separately."
+    }
+  ]
+}
