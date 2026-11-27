@@ -1,0 +1,457 @@
+{
+  "schema": 1,
+  "coverage": "Partial source findings; not a complete baseline or adjacent release contract review.",
+  "records": [
+    {
+      "id": "baseline-auth",
+      "scope": "auth/login and auth/logout",
+      "status": "source-reviewed-partial",
+      "findings": "Login reads username/password, returns Ok. for existing or newly authenticated session, Fails. on wrong credentials, throws access denied when banned. Logout ends session. Public login route; protected controller actions require a session.",
+      "evidence": [
+        {
+          "release": "4.1.0",
+          "commit": "e9ed621178af841114a045887c5ce1e6b50cb366",
+          "path": "src/webui/api/authcontroller.cpp",
+          "lines": "41-77"
+        },
+        {
+          "release": "4.1.0",
+          "commit": "e9ed621178af841114a045887c5ce1e6b50cb366",
+          "path": "src/webui/webapplication.cpp",
+          "lines": "355-414"
+        }
+      ],
+      "live_status": "Successful WebUI login and HTTP 200 capture confirmed; negative cases untested."
+    },
+    {
+      "id": "baseline-routing",
+      "scope": "WebUI dispatch",
+      "status": "source-reviewed-partial",
+      "findings": "Action name plus Action suffix is invoked through Qt metaobject. Unknown method throws NotFound. AccessDenied, BadData, BadParams, Conflict and NotFound map to corresponding HTTP exceptions. GET query and POST parameter extraction differ; Host/cross-site validation precedes dispatch. Preserve valid Host and origin rather than disable protections.",
+      "evidence": [
+        {
+          "release": "4.1.0",
+          "commit": "e9ed621178af841114a045887c5ce1e6b50cb366",
+          "path": "src/webui/api/apicontroller.cpp",
+          "lines": "42-80"
+        },
+        {
+          "release": "4.1.0",
+          "commit": "e9ed621178af841114a045887c5ce1e6b50cb366",
+          "path": "src/webui/webapplication.cpp",
+          "lines": "355-414,489-540"
+        }
+      ],
+      "live_status": "Port mismatch 401 observed; matching 8080 successful"
+    },
+    {
+      "id": "baseline-categories",
+      "scope": "sync/maindata",
+      "status": "source-reviewed-partial",
+      "findings": "4.1.0 serializes categories as a list of names, not a name-to-object map. Torrent state is keyed by hash and includes per-torrent serialization; server_state contains transfer info, queueing, alternate-speed mode and refresh interval. rid selects incremental response.",
+      "evidence": [
+        {
+          "release": "4.1.0",
+          "commit": "e9ed621178af841114a045887c5ce1e6b50cb366",
+          "path": "src/webui/api/synccontroller.cpp",
+          "lines": "374-421"
+        }
+      ],
+      "live_status": "Empty full sync observed in compatibility/evidence/qbt-4.1.0-baseline.json; categories array, torrents object, tags absent. Populated and incremental behavior unverified."
+    },
+    {
+      "id": "4.1.1-rss-preferences",
+      "scope": "app/preferences and app/setPreferences",
+      "status": "source-reviewed-partial",
+      "findings": "4.1.0 uses RSSRefreshInterval, RSSMaxArticlesPerFeed, RSSProcessingEnabled, RSSAutoDownloadingEnabled and unconditionally passes their values to setters even when absent. 4.1.1 replaces them with rss_refresh_interval, rss_max_articles_per_feed, rss_processing_enabled, rss_auto_downloading_enabled and guards setters by presence. Unrelated sparse writes on 4.1.0 risk RSS changes; preserve all four original values or gate the operation if preservation cannot be guaranteed. Backend effects still need review and isolated live testing.",
+      "evidence": [
+        {
+          "release": "4.1.0",
+          "commit": "e9ed621178af841114a045887c5ce1e6b50cb366",
+          "path": "src/webui/api/appcontroller.cpp",
+          "lines": "216-219,497-500"
+        },
+        {
+          "release": "4.1.1",
+          "commit": "ea5a29018fba738223d0f1143ac97722e3ee9b5f",
+          "path": "src/webui/api/appcontroller.cpp",
+          "lines": "216-219,497-505"
+        }
+      ],
+      "live_status": "unverified"
+    },
+    {
+      "id": "4.1.1-torrent-hashes",
+      "scope": "torrents/info",
+      "status": "source-reviewed-partial",
+      "findings": "4.1.0 constructs TorrentFilter with AnyHash; 4.1.1 reads hashes split by | and uses it when nonempty. Client targeting selected hashes on 4.1.0 must filter returned list locally, not assume server enforcement.",
+      "evidence": [
+        {
+          "release": "4.1.0",
+          "commit": "e9ed621178af841114a045887c5ce1e6b50cb366",
+          "path": "src/webui/api/torrentscontroller.cpp",
+          "lines": "157-171"
+        },
+        {
+          "release": "4.1.1",
+          "commit": "ea5a29018fba738223d0f1143ac97722e3ee9b5f",
+          "path": "src/webui/api/torrentscontroller.cpp",
+          "lines": "158-174"
+        }
+      ],
+      "live_status": "unverified"
+    },
+    {
+      "id": "4.1.1-moving-state",
+      "scope": "torrent serialization",
+      "status": "source-reviewed-partial",
+      "findings": "4.1.1 adds explicit Moving -> moving serialization case absent in 4.1.0. Backend state availability and fallback need review.",
+      "evidence": [
+        {
+          "release": "4.1.1",
+          "commit": "ea5a29018fba738223d0f1143ac97722e3ee9b5f",
+          "path": "src/webui/api/serialize/serialize_torrent.cpp",
+          "lines": "79-80"
+        }
+      ],
+      "live_status": "unverified"
+    }
+  ],
+  "adjacent_status": [
+    {
+      "from": "4.1.0",
+      "to": "4.1.1",
+      "status": "partial"
+    },
+    {
+      "from": "4.1.1",
+      "to": "4.1.2",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.1.2",
+      "to": "4.1.3",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.1.3",
+      "to": "4.1.4",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.1.4",
+      "to": "4.1.5",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.1.5",
+      "to": "4.1.6",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.1.6",
+      "to": "4.1.7",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.1.7",
+      "to": "4.1.8",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.1.8",
+      "to": "4.1.9",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.1.9",
+      "to": "4.1.9.1",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.1.9.1",
+      "to": "4.2.0",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.2.0",
+      "to": "4.2.1",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.2.1",
+      "to": "4.2.2",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.2.2",
+      "to": "4.2.3",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.2.3",
+      "to": "4.2.4",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.2.4",
+      "to": "4.2.5",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.2.5",
+      "to": "4.3.0",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.3.0",
+      "to": "4.3.0.1",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.3.0.1",
+      "to": "4.3.1",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.3.1",
+      "to": "4.3.2",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.3.2",
+      "to": "4.3.3",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.3.3",
+      "to": "4.3.4",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.3.4",
+      "to": "4.3.4.1",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.3.4.1",
+      "to": "4.3.5",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.3.5",
+      "to": "4.3.6",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.3.6",
+      "to": "4.3.7",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.3.7",
+      "to": "4.3.8",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.3.8",
+      "to": "4.3.9",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.3.9",
+      "to": "4.4.0",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.4.0",
+      "to": "4.4.1",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.4.1",
+      "to": "4.4.2",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.4.2",
+      "to": "4.4.3",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.4.3",
+      "to": "4.4.3.1",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.4.3.1",
+      "to": "4.4.4",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.4.4",
+      "to": "4.4.5",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.4.5",
+      "to": "4.5.0",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.5.0",
+      "to": "4.5.1",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.5.1",
+      "to": "4.5.2",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.5.2",
+      "to": "4.5.3",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.5.3",
+      "to": "4.5.4",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.5.4",
+      "to": "4.5.5",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.5.5",
+      "to": "4.6.0",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.6.0",
+      "to": "4.6.1",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.6.1",
+      "to": "4.6.2",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.6.2",
+      "to": "4.6.3",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.6.3",
+      "to": "4.6.4",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.6.4",
+      "to": "4.6.5",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.6.5",
+      "to": "4.6.6",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.6.6",
+      "to": "4.6.7",
+      "status": "unreviewed"
+    },
+    {
+      "from": "4.6.7",
+      "to": "5.0.0",
+      "status": "unreviewed"
+    },
+    {
+      "from": "5.0.0",
+      "to": "5.0.1",
+      "status": "unreviewed"
+    },
+    {
+      "from": "5.0.1",
+      "to": "5.0.2",
+      "status": "unreviewed"
+    },
+    {
+      "from": "5.0.2",
+      "to": "5.0.3",
+      "status": "unreviewed"
+    },
+    {
+      "from": "5.0.3",
+      "to": "5.0.4",
+      "status": "unreviewed"
+    },
+    {
+      "from": "5.0.4",
+      "to": "5.0.5",
+      "status": "unreviewed"
+    },
+    {
+      "from": "5.0.5",
+      "to": "5.1.0",
+      "status": "unreviewed"
+    },
+    {
+      "from": "5.1.0",
+      "to": "5.1.1",
+      "status": "unreviewed"
+    },
+    {
+      "from": "5.1.1",
+      "to": "5.1.2",
+      "status": "unreviewed"
+    },
+    {
+      "from": "5.1.2",
+      "to": "5.1.3",
+      "status": "unreviewed"
+    },
+    {
+      "from": "5.1.3",
+      "to": "5.1.4",
+      "status": "unreviewed"
+    },
+    {
+      "from": "5.1.4",
+      "to": "5.2.0",
+      "status": "unreviewed"
+    },
+    {
+      "from": "5.2.0",
+      "to": "5.2.1",
+      "status": "unreviewed"
+    },
+    {
+      "from": "5.2.1",
+      "to": "5.2.2",
+      "status": "unreviewed"
+    },
+    {
+      "from": "5.2.2",
+      "to": "5.2.3",
+      "status": "unreviewed"
+    },
+    {
+      "from": "5.2.3",
+      "to": "5.2.4",
+      "status": "unreviewed"
+    },
+    {
+      "from": "5.2.4",
+      "to": "5.3.0",
+      "status": "unreviewed"
+    },
+    {
+      "from": "5.3.0",
+      "to": "5.3.1",
+      "status": "unreviewed"
+    }
+  ]
+}
