@@ -10,6 +10,7 @@
 #include "gui/upstream/progressbarpainter.h"
 
 #include <QAction>
+#include <QActionGroup>
 #include <QApplication>
 #include <QClipboard>
 #include <QShortcut>
@@ -815,7 +816,9 @@ TorrentDetailsWidget::TorrentDetailsWidget(QWidget *parent)
     tree->header()->setStretchLastSection(false);
     tree->header()->setSectionsMovable(true);
     tree->header()->setHighlightSections(false);
-    tree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+    tree->header()->setFirstSectionMovable(true);
+    tree->header()->setSectionResizeMode(QHeaderView::Interactive);
+    tree->setColumnWidth(0, 260);
     tree->setColumnWidth(1, 105);
     tree->setColumnWidth(2, 112);
     tree->setColumnWidth(3, 125);
@@ -832,6 +835,36 @@ TorrentDetailsWidget::TorrentDetailsWidget(QWidget *parent)
     tree->setSortingEnabled(true);
     tree->setExpandsOnDoubleClick(false);
     tree->sortItems(0, Qt::AscendingOrder);
+    auto *contentHeader = tree->header();
+    contentHeader->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(contentHeader, &QWidget::customContextMenuRequested, this, [this, tree, contentHeader](const QPoint &pos) {
+        QMenu menu(this);
+        menu.setObjectName(QStringLiteral("contentHeaderMenu"));
+        menu.setTitle(tr("Column visibility"));
+        menu.setToolTipsVisible(true);
+        for (int col = 0; col < tree->columnCount(); ++col)
+        {
+            auto *action = menu.addAction(tree->headerItem()->text(col));
+            action->setObjectName(QStringLiteral("contentColumn%1").arg(col));
+            action->setCheckable(true);
+            action->setChecked(!tree->isColumnHidden(col));
+            action->setEnabled(col != 0);
+            connect(action, &QAction::triggered, this, [tree, col](bool visible) {
+                tree->setColumnHidden(col, !visible);
+                if (visible && tree->columnWidth(col) <= 5)
+                    tree->resizeColumnToContents(col);
+            });
+        }
+        menu.addSeparator();
+        auto *resize = menu.addAction(tr("Resize columns"));
+        resize->setObjectName(QStringLiteral("resizeContentColumns"));
+        resize->setToolTip(tr("Resize all non-hidden columns to the size of their contents"));
+        connect(resize, &QAction::triggered, this, [tree]() {
+            for (int col = 0; col < tree->columnCount(); ++col)
+                if (!tree->isColumnHidden(col)) tree->resizeColumnToContents(col);
+        });
+        menu.exec(contentHeader->mapToGlobal(pos));
+    });
     connect(tree, &QWidget::customContextMenuRequested, this, [this](const QPoint &pos) {
         if (m_hash.isEmpty() || m_ui->filesList->selectedItems().isEmpty())
             return;
@@ -938,21 +971,34 @@ TorrentDetailsWidget::TorrentDetailsWidget(QWidget *parent)
     fileFilter->setObjectName(QStringLiteral("torrentFileFilter"));
     fileFilter->setPlaceholderText(tr("Filter files..."));
     fileFilter->setClearButtonEnabled(true);
-    fileFilter->setMaximumWidth(220);
+    fileFilter->setMaximumWidth(300);
     m_ui->contentFilterLayout->addWidget(fileFilter);
+    fileFilter->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(fileFilter, &QLineEdit::textChanged, this,
-            [this](const QString &needle) {
-        auto *view = m_ui->filesList;
-        const auto filterItem = [&needle](QTreeWidgetItem *item,
-                                          const auto &self) -> bool {
-            bool hasMatch = item->text(0).contains(needle, Qt::CaseInsensitive);
-            for (int i = 0; i < item->childCount(); ++i)
-                hasMatch = self(item->child(i), self) || hasMatch;
-            item->setHidden(!hasMatch);
-            return hasMatch;
-        };
-        for (int i = 0; i < view->topLevelItemCount(); ++i)
-            filterItem(view->topLevelItem(i), filterItem);
+            [this]() { applyContentFilter(true); });
+    connect(fileFilter, &QWidget::customContextMenuRequested, this, [this, fileFilter](const QPoint &pos) {
+        auto *menu = fileFilter->createStandardContextMenu();
+        menu->setObjectName(QStringLiteral("contentFilterMenu"));
+        menu->addSeparator();
+        auto *formats = menu->addMenu(tr("Pattern format"));
+        auto *group = new QActionGroup(formats);
+        group->setExclusive(true);
+        for (const auto &option : {
+                qMakePair(QStringLiteral("plain"), tr("Plain text")),
+                qMakePair(QStringLiteral("wildcards"), tr("Wildcards")),
+                qMakePair(QStringLiteral("regex"), tr("Regular expression"))})
+        {
+            auto *action = formats->addAction(option.second);
+            action->setObjectName(QStringLiteral("contentFilter_") + option.first);
+            group->addAction(action);
+            action->setCheckable(true);
+            action->setChecked(m_contentFilterFormat == option.first);
+            connect(action, &QAction::triggered, this, [this, option]() {
+                setContentFilterFormat(option.first);
+            });
+        }
+        menu->exec(fileFilter->mapToGlobal(pos));
+        delete menu;
     });
 
     auto *commentLabel = findChild<QLabel *>(QStringLiteral("labelCommentVal"));
@@ -1952,6 +1998,54 @@ void TorrentDetailsWidget::finishContentRename(const QString &hash, const QStrin
     }
 }
 
+void TorrentDetailsWidget::setContentFilterFormat(const QString &format)
+{
+    m_contentFilterFormat = (format == QLatin1String("plain") || format == QLatin1String("regex"))
+        ? format : QStringLiteral("wildcards");
+    applyContentFilter(true);
+}
+
+void TorrentDetailsWidget::applyContentFilter(bool adjustExpansion)
+{
+    auto *filter = findChild<QLineEdit *>(QStringLiteral("torrentFileFilter"));
+    if (!filter) return;
+    auto *tree = m_ui->filesList;
+    const QString needle = filter->text();
+    QString pattern = needle;
+    if (m_contentFilterFormat == QLatin1String("plain"))
+        pattern = QRegularExpression::escape(needle);
+    else if (m_contentFilterFormat == QLatin1String("wildcards"))
+    {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 1)
+        pattern = QRegularExpression::wildcardToRegularExpression(needle,
+            QRegularExpression::UnanchoredWildcardConversion | QRegularExpression::NonPathWildcardConversion);
+#else
+        pattern = QRegularExpression::wildcardToRegularExpression(needle,
+            QRegularExpression::UnanchoredWildcardConversion);
+#endif
+    }
+    const QRegularExpression re(pattern, QRegularExpression::CaseInsensitiveOption);
+    filter->setToolTip(re.isValid() ? QString() : re.errorString());
+    const auto visit = [&re, &needle](QTreeWidgetItem *item, const auto &self) -> bool {
+        bool match = needle.isEmpty() || (re.isValid() && re.match(item->text(0)).hasMatch());
+        for (int i = 0; i < item->childCount(); ++i)
+            match = self(item->child(i), self) || match;
+        item->setHidden(!match);
+        if (!match) item->setSelected(false);
+        return match;
+    };
+    for (int i = 0; i < tree->topLevelItemCount(); ++i) visit(tree->topLevelItem(i), visit);
+    if (adjustExpansion)
+    {
+        if (needle.isEmpty())
+        {
+            tree->collapseAll();
+            if (tree->topLevelItemCount()) tree->expandItem(tree->topLevelItem(0));
+        }
+        else tree->expandAll();
+    }
+}
+
 void TorrentDetailsWidget::displayFiles(const QJsonArray &files)
 {
     auto *tree = m_ui->filesList;
@@ -2100,24 +2194,9 @@ void TorrentDetailsWidget::displayFiles(const QJsonArray &files)
     tree->setSortingEnabled(wasSorting);
     if (firstDisplay)
         tree->expandToDepth(0);
-    // Preserve a user's active filename filter across server refreshes.
-    if (auto *filter = findChild<QLineEdit *>(QStringLiteral("torrentFileFilter")))
-    {
-        const QString needle = filter->text();
-        if (!needle.isEmpty())
-        {
-            const auto filterItem = [&needle](QTreeWidgetItem *item,
-                                              const auto &self) -> bool {
-                bool hasMatch = item->text(0).contains(needle, Qt::CaseInsensitive);
-                for (int i = 0; i < item->childCount(); ++i)
-                    hasMatch = self(item->child(i), self) || hasMatch;
-                item->setHidden(!hasMatch);
-                return hasMatch;
-            };
-            for (int i = 0; i < tree->topLevelItemCount(); ++i)
-                filterItem(tree->topLevelItem(i), filterItem);
-        }
-    }
+    // Reapply exactly the same matcher on live updates without disturbing
+    // the user's current expansion or scroll position.
+    applyContentFilter(false);
 
     if (!firstDisplay)
     {
