@@ -19,13 +19,17 @@ dist="$build_root/dist"
 exe="$build_root/qbittorrent-remote.exe"
 
 cd "$source_root"
+echo "Configure started: $(date -u +%FT%TZ)"
 cmake --preset windows-ucrt
+echo "Build started: $(date -u +%FT%TZ)"
 cmake --build --preset windows-ucrt
+echo "CTest started: $(date -u +%FT%TZ)"
 # QtTest GUI workflows run offscreen and never access real Windows secrets.
 # Always emit the Qt GUI workflow output on Windows; Qt failures in an
 # offscreen test can otherwise appear as only "***Failed" in Actions logs.
 QT_QPA_PLATFORM=offscreen ctest --preset windows-ucrt --output-on-failure --verbose
 
+echo "Deployment started: $(date -u +%FT%TZ)"
 test -f "$exe" || { echo "Windows executable not generated: $exe" >&2; exit 1; }
 
 # Never reuse old runtime DLLs or plugins from a prior installer.
@@ -56,19 +60,28 @@ rm -f -- "$deploy/tls/qopensslbackend.dll" "$deploy/tls/qcertonlybackend.dll"
 
 # Bundle transitive MinGW/Qt dependency DLLs, including dependencies of
 # plugins and QtKeychain. Leave Windows system DLLs on Windows itself.
-while :; do
-  copied=0
-  while IFS= read -r -d '' binary; do
+# Scan each binary once, in bounded batches, instead of starting a new
+# objdump/awk pair for every DLL on every pass. Keep the same transitive
+# closure, including dependencies of plugins in subdirectories.
+echo "Dependency scan started: $(date -u +%FT%TZ)"
+mapfile -d '' -t pending < <(find "$deploy" -type f \( -iname '*.exe' -o -iname '*.dll' \) -print0)
+while ((${#pending[@]})); do
+  next=()
+  for ((offset=0; offset<${#pending[@]}; offset+=16)); do
+    # Bound Windows command-line length; pipefail makes inspection failures
+    # fatal rather than silently producing an incomplete installer.
+    dependencies="$(objdump -p "${pending[@]:offset:16}" | awk '$1=="DLL" && $2=="Name:" {print $3}' | sort -u)"
     while IFS= read -r dependency; do
       [[ -z "$dependency" || -f "$deploy/$dependency" ]] && continue
       if [[ -f "/ucrt64/bin/$dependency" ]]; then
         cp -- "/ucrt64/bin/$dependency" "$deploy/"
-        copied=1
+        next+=("$deploy/$dependency")
       fi
-    done < <(objdump -p "$binary" | awk '$1=="DLL" && $2=="Name:" {print $3}')
-  done < <(find "$deploy" -type f \( -iname '*.exe' -o -iname '*.dll' \) -print0)
-  [[ "$copied" -eq 0 ]] && break
+    done <<< "$dependencies"
+  done
+  pending=("${next[@]}")
 done
+echo "Dependency scan completed: $(date -u +%FT%TZ)"
 
 for essential in \
   "$deploy/Qt6Core.dll" \
@@ -96,6 +109,7 @@ for directory in /ucrt64/share/licenses/qt6-base /ucrt64/share/licenses/qt6-svg 
 done
 
 installer="$dist/qBittorrent-Remote-0.1.0-Windows-x64-Setup.exe"
+echo "Installer compression started: $(date -u +%FT%TZ)"
 makensis \
   "-DPAYLOAD_DIR=$(cygpath -w "$deploy")" \
   "-DOUTPUT_FILE=$(cygpath -w "$installer")" \
