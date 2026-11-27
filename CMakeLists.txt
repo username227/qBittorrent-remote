@@ -330,6 +330,7 @@ if(BUILD_TESTING)
         contentRefreshPreservesUserFolderExpansion
         contentDragPreferenceIsEnabledAndControlsNativeDragMode
         userDragsOnlyExistingMappedContentAsCopyUris
+        incompletePreviewUsesActualMappedStorage
         userOpensMappedRemoteTorrentLocationInDesktopFileManager
         userSetsRemoteLocationUsingActualTorrentContextMenu
         nativeManageContentAndTorrentOptionsChangeServerState

@@ -12,6 +12,9 @@
 #include <QDrag>
 #include <QFileInfo>
 #include <QMimeData>
+#include <QMimeDatabase>
+#include <QPersistentModelIndex>
+#include <QTreeWidgetItemIterator>
 #include <QMouseEvent>
 #include <QKeyEvent>
 #include <QSet>
@@ -120,27 +123,7 @@ QMimeData *MappedContentTreeWidget::mappedSelectionMimeData() const
         QString resolvedPath;
         for (const QString &remote : candidates)
         {
-            if (!remote.startsWith(QLatin1Char('/'))) continue;
-            const QString local = Remote::PathMappingStore::toLocal(remote, m_mappings);
-            if (local.isEmpty()) continue;
-            const QFileInfo localInfo(local);
-            if (!(folder ? localInfo.isDir() : localInfo.isFile()) || !localInfo.isReadable())
-                continue;
-            const QString canonical = localInfo.canonicalFilePath();
-            if (canonical.isEmpty()) continue;
-
-            // Symlinks must not lead outside every configured local mount.
-            for (const auto &mapping : m_mappings)
-            {
-                const QString root = QFileInfo(mapping.localRoot).canonicalFilePath();
-                if (root.isEmpty()) continue;
-                if (canonical == root || canonical.startsWith(
-                    root.endsWith(QLatin1Char('/')) ? root : root + QLatin1Char('/')))
-                {
-                    resolvedPath = canonical;
-                    break;
-                }
-            }
+            resolvedPath = mappedExistingPath(remote, folder);
             if (!resolvedPath.isEmpty()) break;
         }
         // Never promise partially accessible collections to the file manager.
@@ -155,6 +138,90 @@ QMimeData *MappedContentTreeWidget::mappedSelectionMimeData() const
     auto *mime = new QMimeData;
     mime->setUrls(urls); // Interoperable text/uri-list, not custom Qt MIME.
     return mime;
+}
+
+QString MappedContentTreeWidget::mappedExistingPath(const QString &remote, bool folder) const
+{
+    if (!remote.startsWith(QLatin1Char('/'))) return {};
+    const QString local = Remote::PathMappingStore::toLocal(remote, m_mappings);
+    if (local.isEmpty()) return {};
+    const QFileInfo localInfo(local);
+    if (!(folder ? localInfo.isDir() : localInfo.isFile()) || !localInfo.isReadable())
+        return {};
+    const QString canonical = localInfo.canonicalFilePath();
+    if (canonical.isEmpty()) return {};
+
+    // Symlinks must not lead outside every configured local mount.
+    for (const auto &mapping : m_mappings)
+    {
+        const QString root = QFileInfo(mapping.localRoot).canonicalFilePath();
+        if (root.isEmpty()) continue;
+        if (canonical == root || canonical.startsWith(
+            root.endsWith(QLatin1Char('/')) ? root : root + QLatin1Char('/')))
+            return canonical;
+    }
+    return {};
+}
+
+QString MappedContentTreeWidget::mappedIncompletePreviewPath() const
+{
+    const auto selected = selectedItems();
+    if (selected.size() != 1 || !m_contentPath.startsWith(QLatin1Char('/'))) return {};
+    auto *item = selected.first();
+    if (!item->data(0, Qt::UserRole).isValid()) return {};
+    const QVariant progress = item->data(2, Qt::UserRole);
+    if (!progress.isValid() || !(progress.toDouble() > 0.0 && progress.toDouble() < 1.0))
+        return {};
+    const QString mime = QMimeDatabase().mimeTypeForFile(
+        item->text(0), QMimeDatabase::MatchExtension).name();
+    if (!mime.startsWith(QLatin1String("audio/")) && !mime.startsWith(QLatin1String("video/")))
+        return {};
+
+    QStringList parts;
+    for (auto *node = item; node; node = node->parent())
+    {
+        const QString part = node->text(0);
+        if (part.isEmpty() || part == QLatin1String(".") || part == QLatin1String("..")
+            || part.contains(QLatin1Char('/')) || part.contains(QLatin1Char('\\')))
+            return {};
+        parts.prepend(part);
+    }
+    // Upstream TorrentImpl::contentPath() is actualStorageLocation plus
+    // the sole file's logical path, or the common first-level folder
+    // (if any). Unlike save_path, it follows temporary download storage.
+    int fileCount = 0;
+    for (QTreeWidgetItemIterator it(const_cast<MappedContentTreeWidget *>(this)); *it; ++it)
+        if ((*it)->data(0, Qt::UserRole).isValid() && ++fileCount > 1) break;
+    const QString content = QDir::cleanPath(m_contentPath);
+    QString remote;
+    const QString relative = parts.join(QLatin1Char('/'));
+    if (fileCount == 1)
+    {
+        if (!content.endsWith(QLatin1Char('/') + relative)) return {};
+        remote = content;
+    }
+    else if (topLevelItemCount() == 1 && parts.size() > 1)
+    {
+        if (!content.endsWith(QLatin1Char('/') + parts.first())) return {};
+        parts.removeFirst();
+        remote = content + QLatin1Char('/') + parts.join(QLatin1Char('/'));
+    }
+    else
+        remote = content + QLatin1Char('/') + relative;
+    remote = QDir::cleanPath(remote);
+
+    // The files endpoint exposes logical names, not actualFilePath().
+    // Try only the two known on-disk names at the authoritative location.
+    // Do not guess between them if both exist, or fall back to save_path.
+    const QString partial = remote + QStringLiteral(".!qB");
+    const QString plainLocal = Remote::PathMappingStore::toLocal(remote, m_mappings);
+    const QString partialLocal = Remote::PathMappingStore::toLocal(partial, m_mappings);
+    if (!plainLocal.isEmpty() && !partialLocal.isEmpty()
+        && QFileInfo::exists(plainLocal) && QFileInfo::exists(partialLocal))
+        return {};
+    const QString plain = mappedExistingPath(remote, false);
+    const QString suffixed = mappedExistingPath(partial, false);
+    return plain.isEmpty() ? suffixed : plain;
 }
 
 QString MappedContentTreeWidget::mappedSinglePath() const
@@ -219,6 +286,19 @@ void MappedContentTreeWidget::addMappedOpenActions(QMenu &menu)
         [this, path]() {
             if (!path.isEmpty() && mappedSinglePath() == path) openMappedPath(path);
         });
+    const QString preview = mappedIncompletePreviewPath();
+    const QPersistentModelIndex previewIndex(selectedItems().size() == 1
+        ? indexFromItem(selectedItems().first(), 0) : QModelIndex());
+    auto *previewAction = menu.addAction(tr("Preview incomplete file"));
+    previewAction->setObjectName(QStringLiteral("contentPreviewIncomplete"));
+    previewAction->setEnabled(!preview.isEmpty());
+    previewAction->setToolTip(tr("Preview a partially downloaded audio or video file at its actual mapped storage location. Requires an associated local application."));
+    connect(previewAction, &QAction::triggered, this, [this, preview, previewIndex]() {
+        if (previewIndex.isValid() && selectedItems().size() == 1
+            && indexFromItem(selectedItems().first(), 0) == previewIndex
+            && !preview.isEmpty() && mappedIncompletePreviewPath() == preview)
+            openMappedPath(preview);
+    });
     add(QStringLiteral("contentOpenMappedParent"), tr("Open containing folder"),
         QStringLiteral(":/icons/directory.svg"), !parent.isEmpty(),
         [this, path, parent]() {
