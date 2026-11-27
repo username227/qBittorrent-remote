@@ -135,10 +135,13 @@ public:
         m_historicalConnection = true;
         m_modernResponses = modernLogin;
         m_listCategories = listCategories;
-        m_sessionCookie = modernLogin ? QByteArrayLiteral("QBT_SID_fixture")
-                                     : QByteArrayLiteral("SID");
+        m_sessionCookie = QByteArrayLiteral("SID");
+        m_modernSessionCookie = modernLogin;
     }
     int invalidHistoricalSyncReplies() const { return m_invalidHistoricalSyncReplies; }
+    void expireHistoricalSession() { m_historicalAuthenticated = false; }
+    int historicalLogins() const { return m_historicalLogins; }
+    int buildInfoRequests() const { return m_buildInfoRequests; }
 
     explicit DemoQbittorrentServer(bool acceptPassword, QObject *parent = nullptr,
                                    bool acceptBlank = false)
@@ -172,7 +175,7 @@ public:
                         const QByteArray requestLine = headers.split('\n').first().trimmed();
                         const QList<QByteArray> fields = requestLine.split(' ');
                         const QByteArray path = fields.value(1);
-                        const bool hasCookie = headers.contains(m_sessionCookie + "=demo-session")
+                        const bool hasCookie = headers.contains(m_sessionCookie + "=" + m_sessionToken)
                             && (!m_historicalConnection || m_historicalAuthenticated);
 
                         int code = 200;
@@ -204,8 +207,10 @@ public:
                             if (good)
                             {
                                 m_historicalAuthenticated = true;
+                                if (m_historicalConnection)
+                                    m_sessionToken = "historical-" + QByteArray::number(++m_historicalLogins);
                                 cookieHeader = "Set-Cookie: " + m_sessionCookie
-                                    + "=demo-session; Path=/; HttpOnly\r\n";
+                                    + "=" + m_sessionToken + "; Path=/; HttpOnly\r\n";
                             }
                         }
                         else if (path == "/api/v2/app/version" && hasCookie)
@@ -282,6 +287,7 @@ public:
                         }
                         else if (path == "/api/v2/app/buildInfo" && hasCookie)
                         {
+                            ++m_buildInfoRequests;
                             if (m_buildInfo.isEmpty())
                             {
                                 code = 404;
@@ -1195,7 +1201,13 @@ public:
         });
     }
 
-    bool start() { return m_server.listen(QHostAddress::LocalHost, 0); }
+    bool start()
+    {
+        if (!m_server.listen(QHostAddress::LocalHost, 0)) return false;
+        if (m_modernSessionCookie)
+            m_sessionCookie = "QBT_SID_" + QByteArray::number(m_server.serverPort());
+        return true;
+    }
     QString url() const { return QStringLiteral("http://127.0.0.1:%1").arg(m_server.serverPort()); }
     int logouts() const noexcept { return m_logouts; }
     int syncRequests() const noexcept { return m_syncRequests; }
@@ -1458,6 +1470,10 @@ private:
     bool m_listCategories = false;
     int m_invalidHistoricalSyncReplies = 0;
     QByteArray m_sessionCookie = QByteArrayLiteral("QBT_SID");
+    QByteArray m_sessionToken = QByteArrayLiteral("demo-session");
+    bool m_modernSessionCookie = false;
+    int m_historicalLogins = 0;
+    int m_buildInfoRequests = 0;
     QByteArray m_reportedQbtVersion = QByteArrayLiteral("v5.1.4");
     QByteArray m_reportedApiVersion = QByteArrayLiteral("2.11.3");
     int m_logouts = 0;
@@ -1910,6 +1926,9 @@ private slots:
             QVERIFY2(caps.versionWarning().isEmpty(), qPrintable(version));
             const bool modern = version.startsWith("5.2.") || version.startsWith("5.3.");
             const bool newest = version.startsWith("5.3.");
+            QCOMPARE(caps.status(Feature::BuildInfo), version.startsWith("4.1.")
+                ? Status::Unsupported : Status::Supported);
+            QCOMPARE(caps.status(Feature::ProcessInfo), modern ? Status::Supported : Status::Unsupported);
             const bool beforeTrackerEdit = version == "4.1.0" || version == "4.1.1"
                 || version == "4.1.2" || version == "4.1.3" || version == "4.1.4";
             QCOMPARE(caps.trackerEditSyntax(), beforeTrackerEdit ? Syntax::Unsupported
@@ -2766,6 +2785,163 @@ private slots:
         disconnect->trigger();
         QTRY_COMPARE_WITH_TIMEOUT(server.logouts(), 1, 6000);
         QTRY_VERIFY_WITH_TIMEOUT(!pane->isEnabled(), 6000);
+    }
+
+    void historicalStatisticsAvailability_data()
+    {
+        QTest::addColumn<QString>("version");
+        QTest::addColumn<QString>("api");
+        QTest::addColumn<bool>("build");
+        QTest::addColumn<bool>("process");
+        QTest::newRow("4.1.9.1") << QString("4.1.9.1") << QString("2.2.1") << false << false;
+        QTest::newRow("4.2.0") << QString("4.2.0") << QString("2.3.0") << true << false;
+        QTest::newRow("5.1.4") << QString("5.1.4") << QString("2.11.4") << true << false;
+        QTest::newRow("5.2.0") << QString("5.2.0") << QString("2.15.1") << true << true;
+    }
+
+    void historicalStatisticsAvailability()
+    {
+        QFETCH(QString, version);
+        QFETCH(QString, api);
+        QFETCH(bool, build);
+        QFETCH(bool, process);
+        DemoQbittorrentServer server(true);
+        server.setHistoricalConnectionProfile(version, api, process, false);
+        if (build)
+        {
+            QJsonObject info{{"qt", "5.15.2"}, {"libtorrent", "1.2.20.0"},
+                {"boost", "1.80"}, {"openssl", "1.1.1"}, {"zlib", "1.2.13"}, {"bitness", 64}};
+            if (version.startsWith("5.")) info.insert("platform", "linux");
+            server.setBuildInfo(info);
+        }
+        const qint64 launched = QDateTime::currentSecsSinceEpoch() - 600;
+        if (process) server.setProcessInfo({{"launch_time", QJsonValue(launched)}});
+        QVERIFY(server.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath("historical-statistics.ini"), QSettings::IniFormat);
+        settings.setValue("Preferences/Advanced/RefreshInterval", 100);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, server.url());
+        auto *action = window.findChild<QAction *>("actionStatistics");
+        QVERIFY(action);
+        QTRY_VERIFY_WITH_TIMEOUT(action->isEnabled(), 6000);
+        action->trigger();
+        auto *dialog = window.findChild<RemoteStatisticsDialog *>();
+        QVERIFY(dialog && dialog->isVisible());
+        auto *qt = dialog->findChild<QLabel *>("labelQtVersion");
+        auto *launch = dialog->findChild<QLabel *>("labelLaunchTime");
+        QVERIFY(qt && launch);
+        if (build)
+            QTRY_COMPARE_WITH_TIMEOUT(qt->text(), QString("5.15.2"), 6000);
+        else
+        {
+            QCOMPARE(qt->text(), QString("—"));
+            QVERIFY(qt->toolTip().contains("not supported"));
+        }
+        if (process)
+            QTRY_COMPARE_WITH_TIMEOUT(launch->text(),
+                QLocale().toString(QDateTime::fromSecsSinceEpoch(launched), QLocale::ShortFormat), 6000);
+        else
+        {
+            QCOMPARE(launch->text(), QString("—"));
+            QVERIFY(launch->toolTip().contains("not supported"));
+        }
+        const int sync = server.syncRequests();
+        QTRY_VERIFY_WITH_TIMEOUT(server.syncRequests() > sync, 6000);
+        QCOMPARE(server.buildInfoRequests(), build ? 1 : 0);
+        QCOMPARE(server.processInfoRequests(), process ? 1 : 0);
+        QVERIFY(window.statusBar()->currentMessage().contains("Connected to Demo seedbox"));
+        dialog->close();
+    }
+
+    void historicalSessionExpiryIsolation()
+    {
+        DemoQbittorrentServer legacy(true), modern(true);
+        legacy.setHistoricalConnectionProfile("4.1.0", "2.0", false, true);
+        modern.setHistoricalConnectionProfile("5.3.1", "2.16.2", true, false);
+        const QString hash(40, QLatin1Char('a'));
+        const auto snapshot = [&](const QString &name) {
+            return QJsonObject{{"torrents", QJsonObject{{hash, QJsonObject{
+                {"name", name}, {"state", "uploading"}, {"progress", 1}}}}}};
+        };
+        legacy.setCompletionSnapshot(snapshot("Legacy torrent"));
+        modern.setCompletionSnapshot(snapshot("Modern torrent"));
+        QVERIFY(legacy.start() && modern.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath("historical-expiry.ini"), QSettings::IniFormat);
+        settings.setValue("Preferences/Advanced/RefreshInterval", 100);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, legacy.url());
+        auto *tabs = window.findChild<QTabWidget *>("serverTabs");
+        QVERIFY(tabs);
+        QTRY_COMPARE_WITH_TIMEOUT(tabs->count(), 1, 6000);
+        auto *oldPane = qobject_cast<ServerPane *>(tabs->widget(0));
+        QVERIFY(oldPane);
+        QTRY_COMPARE_WITH_TIMEOUT(oldPane->table()->model()->rowCount(), 1, 6000);
+        openConnectDialog(window, modern.url(), false, true, true, "Modern");
+        QTRY_COMPARE_WITH_TIMEOUT(tabs->count(), 2, 6000);
+        auto *newPane = qobject_cast<ServerPane *>(tabs->widget(1));
+        QVERIFY(newPane);
+        QTRY_COMPARE_WITH_TIMEOUT(newPane->table()->model()->rowCount(), 1, 6000);
+        for (int i = 0; i < 2; ++i)
+        {
+            auto &expired = i == 0 ? legacy : modern;
+            auto &other = i == 0 ? modern : legacy;
+            // Reconnect replaces the stale pane in its original tab slot.
+            // Resolve current widgets for each iteration, not deleted ones.
+            QPointer<ServerPane> pane(qobject_cast<ServerPane *>(tabs->widget(i)));
+            QPointer<ServerPane> otherPane(qobject_cast<ServerPane *>(tabs->widget(1 - i)));
+            QVERIFY(pane && otherPane);
+            const int logins = expired.historicalLogins();
+            const int otherPolls = other.syncRequests();
+            tabs->setCurrentWidget(otherPane.data());
+            expired.expireHistoricalSession();
+            QTRY_VERIFY_WITH_TIMEOUT(pane && !pane->isEnabled(), 6000);
+            QVERIFY(otherPane->isEnabled());
+            QTRY_VERIFY_WITH_TIMEOUT(other.syncRequests() > otherPolls, 6000);
+            QCOMPARE(expired.historicalLogins(), logins); // never auto-retry credentials
+            QCOMPARE(pane->table()->model()->rowCount(), 1); // stale read-only snapshot
+            tabs->setCurrentWidget(pane.data());
+            QVERIFY(window.statusBar()->currentMessage().contains("HTTP 403"));
+            QVERIFY(window.statusBar()->currentMessage().contains("session may have expired"));
+            QVERIFY(window.statusBar()->currentMessage().contains("stale"));
+            auto *reconnect = window.findChild<QAction *>("reconnectServer");
+            QVERIFY(reconnect && reconnect->isEnabled());
+            expired.setCompletionSnapshot(snapshot(i == 0 ? "Legacy refreshed" : "Modern refreshed"));
+            bool entered = false;
+            QTimer::singleShot(0, &window, [&]() {
+                auto *dialog = qobject_cast<ConnectionDialog *>(QApplication::activeModalWidget());
+                QVERIFY(dialog);
+                const auto cleanup = qScopeGuard([dialog]() { if (dialog->isVisible()) dialog->reject(); });
+                auto *password = dialog->findChild<QLineEdit *>("serverPassword");
+                auto *button = dialog->findChild<QPushButton *>("connectServer");
+                QVERIFY(password && button);
+                password->setText("demo-password");
+                entered = true;
+                button->click();
+            });
+            reconnect->trigger();
+            QVERIFY(entered);
+            QTRY_COMPARE_WITH_TIMEOUT(expired.historicalLogins(), logins + 1, 6000);
+            QTRY_COMPARE_WITH_TIMEOUT(tabs->count(), 2, 6000);
+            QTRY_VERIFY_WITH_TIMEOUT(pane.isNull(), 6000);
+            auto *recovered = qobject_cast<ServerPane *>(tabs->widget(i));
+            QVERIFY(recovered);
+            QTRY_VERIFY_WITH_TIMEOUT(recovered->isEnabled() && recovered->hasFullSync(), 6000);
+            QTRY_COMPARE_WITH_TIMEOUT(recovered->model()->torrents().value(hash).value("name").toString(),
+                i == 0 ? QString("Legacy refreshed") : QString("Modern refreshed"), 6000);
+            QVERIFY(otherPane && otherPane->isEnabled());
+            QCOMPARE(tabs->widget(1 - i), static_cast<QWidget *>(otherPane.data()));
+            QCOMPARE(otherPane->model()->torrents().value(hash).value("name").toString(),
+                i == 0 ? QString("Modern torrent") : QString("Legacy refreshed"));
+            QCOMPARE(tabs->count(), 2);
+        }
     }
 
     void historicalLoginFailures()
@@ -10790,7 +10966,7 @@ private slots:
         QCOMPARE(label(alpha, "labelApiVersion")->text(), legacy.reportedApiVersion());
         QCOMPARE(label(alpha, "labelLibtorrentVersion")->text(), QStringLiteral("1.2.20.0"));
         QCOMPARE(label(alpha, "labelQtVersion")->text(), QStringLiteral("6.8.1"));
-        QTRY_COMPARE_WITH_TIMEOUT(legacy.processInfoRequests(), 1, 6000);
+        QCOMPARE(legacy.processInfoRequests(), 0);
         const auto legacySyncAfterProbe = legacy.syncRequests();
         QTRY_VERIFY_WITH_TIMEOUT(legacy.syncRequests() > legacySyncAfterProbe, 6000);
         QCOMPARE(label(alpha, "labelLaunchTime")->text(), QStringLiteral("—"));
@@ -11258,7 +11434,9 @@ private slots:
             auto *missingStatus = unavailable.findChild<QLabel *>("remoteBrowserStatus");
             auto *missingButtons = unavailable.findChild<QDialogButtonBox *>();
             QVERIFY(missingStatus && missingButtons);
-            QTRY_VERIFY_WITH_TIMEOUT(missingStatus->text().contains("Cannot reach the server"), 6000);
+            QTRY_VERIFY_WITH_TIMEOUT(missingStatus->text().contains("HTTP 404"), 6000);
+            QVERIFY(missingStatus->text().contains("could not find"));
+            QVERIFY(!missingStatus->text().contains("Cannot reach the server"));
             QVERIFY(!missingButtons->button(QDialogButtonBox::Ok)->isEnabled());
             unavailable.reject();
 

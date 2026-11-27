@@ -70,6 +70,24 @@ class EvidenceTests(unittest.TestCase):
             self.assertIn(r["login_controller_contract"], ("Ok./Fails. text", "APIStatus::Ok/Unauthorized"))
             self.assertEqual(r["full_connection_contract"], "pending")
 
+    def test_app_session_review_covers_release_lock(self):
+        lock = json.loads((ROOT / "releases.lock.json").read_text(encoding="utf-8"))
+        review = json.loads((ROOT / "app-session-review.json").read_text(encoding="utf-8"))
+        rows = review["releases"]
+        self.assertEqual([(r["version"], r["commit"]) for r in rows],
+                         [(r["version"], r["commit"]) for r in lock["releases"]])
+        self.assertEqual(len({r["app_controller_blob"] for r in rows}), 33)
+        self.assertEqual(len({r["web_application_blob"] for r in rows}), 28)
+        for r in rows:
+            v = tuple(map(int, r["version"].split(".")))
+            self.assertEqual(r["build_info"], "absent" if v < (4, 2, 0) else
+                             "object-without-platform" if v < (5, 0, 0) else "object-with-platform")
+            self.assertEqual(r["process_info"], "absent" if v < (5, 2, 0) else "object-launch_time")
+            self.assertEqual(r["protected_no_session_http"], 403)
+            self.assertRegex(r["app_controller_blob"], r"^[0-9a-f]{40}$")
+            self.assertRegex(r["web_application_blob"], r"^[0-9a-f]{40}$")
+        self.assertEqual(rows[-1]["qt_version_source"], "runtime-helper")
+
     def test_empty_4_1_0_live_evidence(self):
         evidence = json.loads((ROOT / "evidence/qbt-4.1.0-baseline.json").read_text(encoding="utf-8"))
         self.assertEqual(evidence["expected_daemon"], "4.1.0")

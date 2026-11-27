@@ -18,7 +18,7 @@ public:
     {
         TrackerUrlEditing, TrackerTierEditing, SelectedTrackerReannounce,
         PieceAvailability, CommentEditing, PathFreeSpace,
-        AdvancedModernPreferences, BanRanges
+        AdvancedModernPreferences, BanRanges, BuildInfo, ProcessInfo
     };
     enum class TrackerEditSyntax { Unknown, Unsupported, LegacyOrigUrl, ModernUrl };
 

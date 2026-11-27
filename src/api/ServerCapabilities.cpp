@@ -99,6 +99,8 @@ ServerCapabilities::Status ServerCapabilities::status(Feature feature) const noe
         case TrackerEditSyntax::Unknown: return Status::Unknown;
         }
         break;
+    case Feature::BuildInfo: return sinceDaemon(4, 2, 0);
+    case Feature::ProcessInfo: return sinceDaemon(5, 2, 0);
     case Feature::TrackerTierEditing: return sinceDaemonAndApi(5, 2, 0, 13, 0);
     case Feature::PathFreeSpace: return sinceDaemonAndApi(5, 3, 0, 16, 0);
     case Feature::SelectedTrackerReannounce:

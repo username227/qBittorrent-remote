@@ -389,12 +389,27 @@ void RemoteSession::checkReply(
     }
     if (status == 403)
     {
-        reject(tr("Access denied (HTTP 403). Too many failed logins may have triggered an IP ban."));
+        // Missing/expired sessions and operation-specific permissions can
+        // both produce 403. Only a failed core poll ends an active session.
+        if (m_connected && !onFailure)
+            reject(tr("Server synchronization denied (HTTP 403). The session may have expired or access was revoked. Reconnect to continue."));
+        else if (m_connected)
+            reject(tr("Access denied (HTTP 403). Permission or session validity could not be confirmed."));
+        else
+            reject(tr("Access denied (HTTP 403). Check server access restrictions or an authentication IP ban."));
         return;
     }
     if (status == 401)
     {
-        reject(tr("Authentication was rejected (HTTP 401)."));
+        if (m_connected && !onFailure)
+            reject(tr("Server synchronization rejected (HTTP 401). The session is no longer authorized. Reconnect to continue."));
+        else
+            reject(tr("Authentication was rejected (HTTP 401)."));
+        return;
+    }
+    if (status == 404)
+    {
+        reject(tr("The server could not find the requested resource (HTTP 404)."));
         return;
     }
     if (error != QNetworkReply::NoError)
@@ -628,6 +643,14 @@ void RemoteSession::requestBuildInfo(PreferencesResult received, PreferencesErro
             rejected(tr("The selected server is not connected."));
         return;
     }
+    // Known absent read endpoints need no speculative request. An unknown
+    // version may still expose this read-only information, so allow probing.
+    if (m_capabilities.status(ServerCapabilities::Feature::BuildInfo)
+        == ServerCapabilities::Status::Unsupported)
+    {
+        if (rejected) rejected(m_capabilities.unavailableReason(ServerCapabilities::Feature::BuildInfo));
+        return;
+    }
     QueuedOperation request;
     request.endpoint = QStringLiteral("api/v2/app/buildInfo");
     request.description = tr("Read server build information");
@@ -645,6 +668,14 @@ void RemoteSession::requestProcessInfo(PreferencesResult received, PreferencesEr
     {
         if (rejected)
             rejected(tr("The selected server is not connected."));
+        return;
+    }
+    // Known absent read endpoints need no speculative request. An unknown
+    // version may still expose this read-only information, so allow probing.
+    if (m_capabilities.status(ServerCapabilities::Feature::ProcessInfo)
+        == ServerCapabilities::Status::Unsupported)
+    {
+        if (rejected) rejected(m_capabilities.unavailableReason(ServerCapabilities::Feature::ProcessInfo));
         return;
     }
     QueuedOperation request;

@@ -294,6 +294,32 @@
         "historicalCategorySynchronization",
         "historicalLoginFailures"
       ]
+    },
+    {
+      "id": "app-version-build-process",
+      "scope": "app/version, webapiVersion, buildInfo, processInfo",
+      "status": "source-reviewed-partial",
+      "findings": "All 33 unique appcontroller revisions inspected. Version and API version return text throughout. BuildInfo absent through 4.1.9.1; 4.2.0 adds qt, libtorrent, boost, openssl, zlib (strings), bitness (integer); 5.0.0 adds platform string; 5.3.1 changes qt from QT_VERSION_STR to Utils::Misc::qtVersionString(). ProcessInfo absent through 5.1.4; 5.2.0 adds launch_time from app launchTimeSecsSinceEpoch. Known absent reads skipped; unknown versions may safely probe read-only endpoints. Missing build fields are not invented. Underlying library helper values and method routing remain pending.",
+      "release_matrix": "app-session-review.json",
+      "live_status": "4.1.0 version and webapiVersion success and buildInfo 404 captured. Other releases not live verified.",
+      "regression_tests": [
+        "lockedReleaseCapabilityPolicy",
+        "historicalStatisticsAvailability",
+        "nativeStatisticsTracksIndependentServerSnapshots"
+      ]
+    },
+    {
+      "id": "protected-session-403",
+      "scope": "webapplication protected-route authentication guard",
+      "status": "source-reviewed-partial",
+      "findings": "All 28 distinct webapplication.cpp blobs checked: no session plus nonpublic API route throws ForbiddenHTTPError. This includes expired/removed sessions and does not prove an IP ban or distinguish permission failures. 5.2 introduces port-suffixed QBT_SID_ cookies; earlier default SID, 4.6+ configurable name logic. Qt cookie jar remains per session. Core sync denial stops the affected session and offers reconnect without auto-login; per-operation 403 is not definitive expiry. Test both old and new sessions with explicit expiry and new cookie on reauthentication. Other dispatch and session refresh/backend details remain pending.",
+      "release_matrix": "app-session-review.json",
+      "live_status": "Simulated expiry only; real expiry unverified.",
+      "regression_tests": [
+        "historicalSessionExpiryIsolation",
+        "historicalLoginFailures",
+        "simultaneousServersHaveIndependentTabsAndKeepPolling"
+      ]
     }
   ],
   "adjacent_status": [
