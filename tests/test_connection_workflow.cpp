@@ -3282,6 +3282,67 @@ private slots:
         QCOMPARE(indexFor("Paused torrent", 6).data(Qt::UserRole).toInt(), 0);
     }
 
+    void historicalTorrentNumericPresentation_data()
+    {
+        QTest::addColumn<QString>("version");
+        QTest::addColumn<QString>("api");
+        QTest::addColumn<bool>("modern");
+        QTest::newRow("4.1.0") << QString("4.1.0") << QString("2.0") << false;
+        QTest::newRow("5.3.1") << QString("5.3.1") << QString("2.16.2") << true;
+    }
+
+    void historicalTorrentNumericPresentation()
+    {
+        QFETCH(QString, version);
+        QFETCH(QString, api);
+        QFETCH(bool, modern);
+        DemoQbittorrentServer server(true);
+        server.setHistoricalConnectionProfile(version, api, modern, !modern);
+        const QString hash(40, QLatin1Char('a'));
+        QJsonObject torrent{{"name", "Limit presentation"}, {"state", modern ? "stoppedDL" : "pausedDL"},
+            {"ratio_limit", -2}, {"max_ratio", 2.75}, {"dl_limit", 0}, {"up_limit", -1},
+            {"priority", 0}, {"eta", 8640000}};
+        if (modern)
+            torrent.insert("popularity", 1.25);
+        server.setCompletionSnapshot({{"torrents", QJsonObject{{hash, torrent}}}});
+        QVERIFY(server.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath("historical-numeric.ini"), QSettings::IniFormat);
+        settings.setValue("Preferences/Advanced/RefreshInterval", 100);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, server.url());
+        auto *pane = window.findChild<ServerPane *>();
+        QVERIFY(pane);
+        auto *table = pane->table();
+        QVERIFY(table);
+        QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 1, 6000);
+        pane->model()->setHideZeroValues(false, 0);
+        const auto cell = [table](int col) { return table->model()->index(0, col).data().toString(); };
+        QCOMPARE(cell(28), QLocale().toString(2.75, 'f', 2));
+        QCOMPARE(table->model()->index(0, 28).data(Qt::UserRole).toDouble(), 2.75);
+        QCOMPARE(pane->model()->torrents().value(hash).value("ratio_limit").toInt(), -2);
+        QCOMPARE(cell(17), QString("∞"));
+        QCOMPARE(cell(18), QString("∞"));
+        QCOMPARE(cell(37), QString("*"));
+        QCOMPARE(cell(36), modern ? QLocale().toString(1.25, 'f', 2) : QString("—"));
+        pane->model()->setHideZeroValues(true, 0);
+        QCOMPARE(cell(8), QString());
+        QCOMPARE(cell(17), QString());
+        QCOMPARE(cell(18), QString());
+        pane->model()->setHideZeroValues(false, 0);
+        server.queueCompletionPatch({{"torrents", QJsonObject{{hash, QJsonObject{
+            {"max_ratio", -1}, {"priority", 1}}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(cell(28), QString("∞"), 6000);
+        QCOMPARE(cell(37), QString("1"));
+        server.queueCompletionPatch({{"torrents", QJsonObject{{hash, QJsonObject{
+            {"max_ratio", QJsonValue(QJsonValue::Null)}}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(cell(28), QString("—"), 6000);
+        QCOMPARE(pane->model()->torrents().value(hash).value("ratio_limit").toInt(), -2);
+    }
+
     void historicalLoginFailures()
     {
         for (const bool modern : {false, true})

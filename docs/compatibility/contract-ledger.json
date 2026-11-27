@@ -391,6 +391,66 @@
       "regression_tests": [
         "historicalTorrentStatePresentation"
       ]
+    },
+    {
+      "id": "torrent-numeric-presentation",
+      "scope": "Selected torrent-list numeric fields: effective ratio limits, rate limits, queue position, popularity, ETA",
+      "status": "source-reviewed-partial",
+      "findings": "4.1.0 max_ratio resolves the inherited global ratio (-2 configured; -1 unlimited); 5.2.0 serializes effectiveRatioLimit and 5.3.1 effectiveShareLimits.ratioLimit. Native 5.3.1 displays effective ratio, nonpositive speed limits as unlimited, queue zero as *, fractional popularity and hides infinite ETA. 4.1.0 queuePosition helper already normalizes to one-based or zero; 4.4.0 helper returns native position and serializer normalizes it. No extra offset applied to wire value. 4.1.0 totalSeedsCount/totalLeechersCount use positive-only fallback; 5.3.1 uses >=0 as valid tracker counts. Do not reconstruct swarm counts from local assumptions. 4.1.0 ratio MAX_RATIO=9999, 5.3.1 infinity. Remaining intermediate release boundaries, complete field inventory and helper semantics still pending.",
+      "evidence": [
+        {
+          "release": "4.1.0",
+          "commit": "e9ed621178af841114a045887c5ce1e6b50cb366",
+          "path": "src/webui/api/serialize/serialize_torrent.cpp",
+          "blob": "124d9e1f4c56daeaff853f80c377fcc462b603ea"
+        },
+        {
+          "release": "4.1.0",
+          "commit": "e9ed621178af841114a045887c5ce1e6b50cb366",
+          "path": "src/base/bittorrent/torrenthandle.cpp",
+          "blob": "4f49f5c887ec597ec4d526f5271b475720f96fdb"
+        },
+        {
+          "release": "4.4.0",
+          "commit": "b9164adb7ae933e81c278cd40d2c529848494e22",
+          "path": "src/webui/api/serialize/serialize_torrent.cpp",
+          "blob": "3317c591d24e94efe4bcebde5341a28206fef06c"
+        },
+        {
+          "release": "4.4.0",
+          "commit": "b9164adb7ae933e81c278cd40d2c529848494e22",
+          "path": "src/base/bittorrent/torrentimpl.cpp",
+          "blob": "48597dab5ab2d7aae4741f28b37deb12fad5263d"
+        },
+        {
+          "release": "5.2.0",
+          "commit": "b2270f7f6fec1b10117564f642b961621ae0058a",
+          "path": "src/webui/api/serialize/serialize_torrent.cpp",
+          "blob": "36c9a990c911aaa60cee89e8b3a8b4c0e888ae23"
+        },
+        {
+          "release": "5.3.1",
+          "commit": "f3cfbccd42dc07e7aa174b525f6d6dfd2d0595a0",
+          "path": "src/webui/api/serialize/serialize_torrent.cpp",
+          "blob": "651abf8ef5d69e872fa9ee78ce237cc8ed4ce579"
+        },
+        {
+          "release": "5.3.1",
+          "commit": "f3cfbccd42dc07e7aa174b525f6d6dfd2d0595a0",
+          "path": "src/base/bittorrent/torrentimpl.cpp",
+          "blob": "6361a4bdc27448845aa76a82ed2af5ac3fcb3883"
+        },
+        {
+          "release": "5.3.1",
+          "commit": "f3cfbccd42dc07e7aa174b525f6d6dfd2d0595a0",
+          "path": "src/gui/transferlistmodel.cpp",
+          "blob": "0d4ff80e59d3121feb48a1fb322c7b9b93f8c94f"
+        }
+      ],
+      "regression_tests": [
+        "historicalTorrentNumericPresentation"
+      ],
+      "live_status": "Simulated authenticated workflow; live daemon validation pending."
     }
   ],
   "adjacent_status": [
