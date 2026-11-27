@@ -15,7 +15,6 @@
 #include <QNetworkCookieJar>
 #include <QSslConfiguration>
 #include <QUrlQuery>
-#include <QVersionNumber>
 #include <memory>
 
 #include <algorithm>
@@ -301,6 +300,7 @@ void RemoteSession::connectToServer(const ServerProfile &profile,
 
     m_syncTimer.stop();
     m_operations.clear();
+    m_capabilities = {};
     ++m_detailGeneration;
     m_detailHash.clear();
     m_detailPage = -1;
@@ -443,20 +443,7 @@ void RemoteSession::requestApiVersion(const QString &version)
                 fail(tr("The server returned an empty Web API version."));
                 return;
             }
-            static const QRegularExpression numericVersion(
-                QStringLiteral("^\\d+\\.\\d+\\.\\d+$"));
-            m_trackerTierEditing = numericVersion.match(apiVersion).hasMatch()
-                && QVersionNumber::fromString(apiVersion) >= QVersionNumber(2, 13, 0);
-            m_pathFreeSpace = numericVersion.match(apiVersion).hasMatch()
-                && QVersionNumber::fromString(apiVersion) >= QVersionNumber(2, 16, 0);
-            QString numeric = version;
-            if (numeric.startsWith(QLatin1Char('v'))) numeric.remove(0, 1);
-            const auto qbtVersion = QVersionNumber::fromString(numeric);
-            m_pieceAvailability = qbtVersion.segmentCount() >= 3
-                && qbtVersion >= QVersionNumber(5, 2, 0);
-            m_commentEditing = qbtVersion.segmentCount() >= 3
-                && qbtVersion >= QVersionNumber(5, 2, 0);
-            m_selectedTrackerReannounce = m_commentEditing;
+            m_capabilities = ServerCapabilities::fromVersions(version, apiVersion);
             m_connected = true;
             emit connected(version, apiVersion);
             // The first request uses rid=0 for the full server snapshot.
@@ -1144,7 +1131,7 @@ void RemoteSession::requestTorrentDetails(const QString &hash, int tab, bool ava
         && tab >= 0 && tab <= 4;
     const QString selected = valid ? hash : QString();
     const int page = valid ? tab : -1;
-    availability = valid && page == 0 && availability && m_pieceAvailability;
+    availability = valid && page == 0 && availability && m_capabilities.pieceAvailability();
     if (m_detailHash != selected || m_detailPage != page || m_detailAvailability != availability)
     {
         ++m_detailGeneration;
@@ -1976,7 +1963,7 @@ void RemoteSession::editTorrentTracker(const QString &hash, const QString &oldUr
         return;
     }
     queueOperation(QStringLiteral("api/v2/torrents/editTracker"),
-                   trackerUrlEditBody(m_selectedTrackerReannounce, hash, oldUrl, newUrl),
+                   trackerUrlEditBody(m_capabilities.selectedTrackerReannounce(), hash, oldUrl, newUrl),
                    QByteArrayLiteral("application/x-www-form-urlencoded"),
                    tr("Edit torrent tracker"), true,
                    [this, hash, oldUrl]() {
@@ -2055,7 +2042,7 @@ void RemoteSession::changeDetailTrackers(const QString &hash, TrackerDetailActio
         break;
     case TrackerDetailAction::Edit:
         endpoint = QStringLiteral("editTracker");
-        body = trackerUrlEditBody(m_selectedTrackerReannounce, hash, unique.first(), replacement);
+        body = trackerUrlEditBody(m_capabilities.selectedTrackerReannounce(), hash, unique.first(), replacement);
         break;
     case TrackerDetailAction::Remove:
     case TrackerDetailAction::ReannounceSelected:
@@ -2310,7 +2297,7 @@ void RemoteSession::replaceTorrentTrackers(const QString &hash,
         if (!removed.isEmpty() && !added.isEmpty())
         {
             queueOperation(QStringLiteral("api/v2/torrents/editTracker"),
-                trackerUrlEditBody(m_selectedTrackerReannounce, hash, removed, added),
+                trackerUrlEditBody(m_capabilities.selectedTrackerReannounce(), hash, removed, added),
                 QByteArrayLiteral("application/x-www-form-urlencoded"),
                 tr("Replace private torrent tracker"), true,
                 [this, hash, existing, removed, added, removeThenAdd]() {
@@ -2318,7 +2305,7 @@ void RemoteSession::replaceTorrentTrackers(const QString &hash,
                     currentlyOnServer.replace(currentlyOnServer.indexOf(removed), added);
                     const auto undoEdit = [this, hash, removed, added]() {
                         queueOperation(QStringLiteral("api/v2/torrents/editTracker"),
-                            trackerUrlEditBody(m_selectedTrackerReannounce, hash, added, removed),
+                            trackerUrlEditBody(m_capabilities.selectedTrackerReannounce(), hash, added, removed),
                             QByteArrayLiteral("application/x-www-form-urlencoded"),
                             tr("Restore original private tracker"), true);
                     };
@@ -2447,6 +2434,7 @@ void RemoteSession::disconnectFromServer()
         return;
     }
     m_connected = false;
+    m_capabilities = {};
     emit disconnected();
     QNetworkReply *reply = m_network.post(
         requestFor(QStringLiteral("api/v2/auth/logout")), QByteArray());
@@ -2463,6 +2451,7 @@ void RemoteSession::fail(const QString &reason)
     m_syncTimer.stop();
     m_operations.clear();
     m_connected = false;
+    m_capabilities = {};
     emit failed(reason);
 }
 

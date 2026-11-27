@@ -74,6 +74,8 @@ add_library(qbittorrent_remote_core STATIC
     src/api/PathMappingStore.h
     src/api/TorrentMetadataReader.cpp
     src/api/TorrentMetadataReader.h
+    src/api/ServerCapabilities.cpp
+    src/api/ServerCapabilities.h
     src/api/RemoteSession.cpp
     src/api/RemoteSession.h
     src/api/CredentialVault.cpp
