@@ -512,6 +512,30 @@
               </property>
               <layout class="QVBoxLayout" name="layoutTorrentContent">
                <item>
+                <layout class="QHBoxLayout" name="layoutContentDoubleClick">
+                 <item>
+                  <widget class="QLabel" name="labelContentDoubleClick">
+                   <property name="text">
+                    <string>Action on double-click:</string>
+                   </property>
+                   <property name="buddy">
+                    <cstring>comboContentDoubleClick</cstring>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QComboBox" name="comboContentDoubleClick"/>
+                 </item>
+                </layout>
+               </item>
+               <item>
+                <widget class="QCheckBox" name="checkContentOpenByEnter">
+                 <property name="text">
+                  <string>Open selected content by pressing Enter</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
                 <widget class="QCheckBox" name="checkTorrentContentDrag">
                  <property name="toolTip">
                   <string>Replaces multi-selection (hold Alt key to invert)</string>

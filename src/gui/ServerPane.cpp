@@ -724,6 +724,11 @@ void ServerPane::setContentPathMappings(const QList<Remote::PathMapping> &mappin
     m_details->setContentPathMappings(mappings);
 }
 
+void ServerPane::setContentInteraction(bool doubleClickRename, bool openByEnter)
+{
+    m_details->setContentInteraction(doubleClickRename, openByEnter);
+}
+
 void ServerPane::setContentDragEnabled(bool enabled)
 {
     m_details->setContentDragEnabled(enabled);

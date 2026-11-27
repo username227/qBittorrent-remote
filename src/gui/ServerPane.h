@@ -73,6 +73,7 @@ public:
     void refreshBytePresentation();
     void setContentPathMappings(const QList<Remote::PathMapping> &mappings);
     void setContentDragEnabled(bool enabled);
+    void setContentInteraction(bool doubleClickRename, bool openByEnter);
     void setSeparateTrackerStatusFilter(bool enabled);
     void setSearchTerm(const QString &text);
     const QString &searchTerm() const noexcept { return m_search; }

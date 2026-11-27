@@ -11459,6 +11459,77 @@ private slots:
             QVERIFY(mime);
             QCOMPARE(mime->urls().size(), 2);
         }
+        // Native Properties defaults: double-click and Enter open a single
+        // mapped item. The local preferences can switch double-click to
+        // remote rename and disable opening with either Enter key.
+        const auto setInteraction = [&](const QString &mode, bool enter) {
+            bool found = false;
+            QTimer::singleShot(0, &window, [&]() {
+                auto *dialog = qobject_cast<RemotePreferencesDialog *>(QApplication::activeModalWidget());
+                if (!dialog) return;
+                auto *combo = dialog->findChild<QComboBox *>("comboContentDoubleClick");
+                auto *check = dialog->findChild<QCheckBox *>("checkContentOpenByEnter");
+                auto *buttons = dialog->findChild<QDialogButtonBox *>("buttonBox");
+                if (!combo || !check || !buttons || !combo->isEnabled() || !check->isEnabled())
+                { dialog->reject(); return; }
+                found = true;
+                combo->setCurrentIndex(combo->findData(mode));
+                check->setChecked(enter);
+                buttons->button(QDialogButtonBox::Ok)->click();
+            });
+            preferences->trigger();
+            QVERIFY(found);
+            QCOMPARE(settings.value("Preferences/Behavior/ContentDoubleClick").toString(), mode);
+            QCOMPARE(settings.value("Preferences/Behavior/ContentOpenByEnter").toBool(), enter);
+        };
+        content->clearSelection();
+        content->expandItem(content->topLevelItem(0));
+        content->setCurrentItem(first);
+        content->setFocus();
+        content->scrollToItem(first);
+        QTRY_VERIFY(content->visualItemRect(first).isValid());
+        const auto doubleClick = [&]() {
+            const QRect rect = content->visualItemRect(first);
+            // Use the filename cell (not its checkbox or disclosure arrow).
+            const QPoint pos(qMin(rect.right() - 2, rect.left() + 80), rect.center().y());
+            QTest::mouseClick(content->viewport(), Qt::LeftButton, Qt::NoModifier, pos);
+            QTest::mouseDClick(content->viewport(), Qt::LeftButton, Qt::NoModifier, pos);
+        };
+        doubleClick();
+        QTRY_COMPARE(m_fileOpenRequests.size(), 4);
+        QCOMPARE(m_fileOpenRequests.last(), QUrl::fromLocalFile(firstPath));
+        QTest::keyClick(content, Qt::Key_Return);
+        QTRY_COMPARE(m_fileOpenRequests.size(), 5);
+        QTest::keyClick(content, Qt::Key_Enter);
+        QTRY_COMPARE(m_fileOpenRequests.size(), 6);
+        setInteraction(QStringLiteral("rename"), false);
+        content->setCurrentItem(first);
+        content->setFocus();
+        QTest::keyClick(content, Qt::Key_Return);
+        QTest::keyClick(content, Qt::Key_Enter);
+        QCOMPARE(m_fileOpenRequests.size(), 6);
+        bool renameOpened = false;
+        QTimer renameDriver;
+        connect(&renameDriver, &QTimer::timeout, &window, [&]() {
+            auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+            if (dialog && dialog->objectName() == QLatin1String("contentRenameDialog"))
+            {
+                renameOpened = true;
+                dialog->reject();
+            }
+        });
+        renameDriver.start(10);
+        doubleClick();
+        QTRY_VERIFY_WITH_TIMEOUT(renameOpened, 3000);
+        renameDriver.stop();
+        QCOMPARE(server.commandsFor("/api/v2/torrents/renameFile"), 0);
+        QCOMPARE(m_fileOpenRequests.size(), 6);
+        setInteraction(QStringLiteral("open"), true);
+        content->clearSelection();
+        first->setSelected(true);
+        second->setSelected(true);
+        QTest::keyClick(content, Qt::Key_Return);
+        QCOMPARE(m_fileOpenRequests.size(), 6);
         // No partial drag if one selected file vanished from the mount.
         QVERIFY(QFile::remove(local.at(1)));
         QVERIFY(content->mappedSelectionMimeData() == nullptr);
@@ -11473,7 +11544,8 @@ private slots:
         menuAction(QStringLiteral("contentOpenMappedItem"), false);
         menuAction(QStringLiteral("contentOpenMappedParent"), false);
         menuAction(QStringLiteral("contentCopyMappedPath"), false);
-        QCOMPARE(m_fileOpenRequests.size(), 3);
+        QTest::keyClick(content, Qt::Key_Return);
+        QCOMPARE(m_fileOpenRequests.size(), 6);
         QCOMPARE(server.commandsFor("/api/v2/torrents/add"), 0);
         QCOMPARE(server.commandsFor("/api/v2/torrents/setLocation"), 0);
     }

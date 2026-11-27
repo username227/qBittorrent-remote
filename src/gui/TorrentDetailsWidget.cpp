@@ -830,6 +830,7 @@ TorrentDetailsWidget::TorrentDetailsWidget(QWidget *parent)
     tree->setAlternatingRowColors(true);
     tree->setUniformRowHeights(true);
     tree->setSortingEnabled(true);
+    tree->setExpandsOnDoubleClick(false);
     tree->sortItems(0, Qt::AscendingOrder);
     connect(tree, &QWidget::customContextMenuRequested, this, [this](const QPoint &pos) {
         if (m_hash.isEmpty() || m_ui->filesList->selectedItems().isEmpty())
@@ -882,6 +883,15 @@ TorrentDetailsWidget::TorrentDetailsWidget(QWidget *parent)
     auto *renameShortcut = new QShortcut(QKeySequence(Qt::Key_F2), tree);
     renameShortcut->setContext(Qt::WidgetShortcut);
     connect(renameShortcut, &QShortcut::activated, this, &TorrentDetailsWidget::renameSelectedContent);
+    connect(tree, &QTreeWidget::itemDoubleClicked, this, [this, tree](QTreeWidgetItem *item, int) {
+        if (!item || tree->selectedItems().size() != 1 || tree->selectedItems().first() != item
+            || selectedContentPath().isEmpty()) return;
+        if (m_contentDoubleClickRename) renameSelectedContent();
+        else tree->openSelectedMappedItem();
+    });
+    connect(tree, &MappedContentTreeWidget::openByEnterRequested, this, [this, tree]() {
+        if (!selectedContentPath().isEmpty()) tree->openSelectedMappedItem();
+    });
     connect(m_ui->selectAllButton, &QPushButton::clicked, this,
             [this]() { chooseFilePriorities(1, true); });
     connect(m_ui->selectNoneButton, &QPushButton::clicked, this,
@@ -1796,6 +1806,12 @@ void TorrentDetailsWidget::setContentPathMappings(
     const QList<Remote::PathMapping> &mappings)
 {
     m_ui->filesList->setPathMappings(mappings);
+}
+
+void TorrentDetailsWidget::setContentInteraction(bool doubleClickRename, bool openByEnter)
+{
+    m_contentDoubleClickRename = doubleClickRename;
+    m_ui->filesList->setOpenByEnter(openByEnter);
 }
 
 void TorrentDetailsWidget::setContentDragEnabled(bool enabled)
