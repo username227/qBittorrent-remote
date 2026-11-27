@@ -136,7 +136,8 @@ bool statusMatches(const QString &key, const QJsonObject &torrent)
         || state == QLatin1String("forcedDL") || state == QLatin1String("metaDL")
         || state == QLatin1String("forcedMetaDL") || state == QLatin1String("stalledDL")
         || state == QLatin1String("checkingDL") || state == QLatin1String("queuedDL")
-        || state == QLatin1String("stoppedDL") || state == QLatin1String("pausedDL");
+        || state == QLatin1String("stoppedDL") || state == QLatin1String("pausedDL")
+        || state == QLatin1String("allocating");
     const bool seeding = state == QLatin1String("uploading")
         || state == QLatin1String("forcedUP") || state == QLatin1String("stalledUP")
         || state == QLatin1String("queuedUP") || state == QLatin1String("checkingUP");
@@ -159,7 +160,8 @@ bool statusMatches(const QString &key, const QJsonObject &torrent)
     if (key == QLatin1String("stalled")) return state.startsWith(QLatin1String("stalled"));
     if (key == QLatin1String("stalledUP")) return state == QLatin1String("stalledUP");
     if (key == QLatin1String("stalledDL")) return state == QLatin1String("stalledDL");
-    if (key == QLatin1String("checking")) return state.startsWith(QLatin1String("checking"));
+    if (key == QLatin1String("checking")) return state.startsWith(QLatin1String("checking"))
+        || state == QLatin1String("queuedForChecking");
     if (key == QLatin1String("moving")) return state == QLatin1String("moving");
     if (key == QLatin1String("errored"))
         return state == QLatin1String("error") || state == QLatin1String("missingFiles");

@@ -362,6 +362,35 @@
         "historicalPeerCountryAndRecovery",
         "nativeTorrentDetailsUseSelectedRemoteServerAndFilePriorityApis"
       ]
+    },
+    {
+      "id": "torrent-serializer-state-and-presentation",
+      "scope": "selected historical torrent state and presentation fields",
+      "status": "source-reviewed-partial",
+      "findings": "4.1.0 serializer includes allocating and conditionally queuedForChecking (libtorrent <1.1); 4.1.1 adds moving; 4.2.0 removes queuedForChecking and adds availability; 4.3.1 removes allocating; 4.4.0 adds forcedMetaDL; 5.0.0 replaces pausedDL/UP with stoppedDL/UP. Legacy paused states now honor hide-zero preference, allocating and queuedForChecking get meaningful display/filter behavior, and canonical creation_date/private keys take precedence over historical client aliases. Missing fields retain placeholders. Complete serializer mapping, backend helper review and real-daemon validation remain outstanding.",
+      "evidence": [
+        {
+          "release": "4.1.0",
+          "commit": "e9ed621178af841114a045887c5ce1e6b50cb366",
+          "path": "src/webui/api/serialize/serialize_torrent.cpp",
+          "blob": "124d9e1f4c56daeaff853f80c377fcc462b603ea"
+        },
+        {
+          "release": "5.3.1",
+          "commit": "f3cfbccd42dc07e7aa174b525f6d6dfd2d0595a0",
+          "path": "src/webui/api/serialize/serialize_torrent.cpp",
+          "blob": "651abf8ef5d69e872fa9ee78ce237cc8ed4ce579"
+        },
+        {
+          "release": "5.2.0",
+          "commit": "b2270f7f6fec1b10117564f642b961621ae0058a",
+          "path": "src/webui/api/serialize/serialize_torrent.h",
+          "blob": "6f57a994078765ed388c030a43816d7c9f593a9c"
+        }
+      ],
+      "regression_tests": [
+        "historicalTorrentStatePresentation"
+      ]
     }
   ],
   "adjacent_status": [

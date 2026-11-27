@@ -47,7 +47,7 @@ const QStringList &fieldKeys()
         QStringLiteral("dlspeed"), QStringLiteral("upspeed"), QStringLiteral("eta"),
         QStringLiteral("ratio"), QStringLiteral("category"), QStringLiteral("tags"),
         QStringLiteral("availability"), QStringLiteral("added_on"),
-        QStringLiteral("completion_on"), QStringLiteral("created_on"),
+        QStringLiteral("completion_on"), QStringLiteral("creation_date"),
         QStringLiteral("tracker"), QStringLiteral("dl_limit"), QStringLiteral("up_limit"),
         QStringLiteral("downloaded"), QStringLiteral("uploaded"),
         QStringLiteral("downloaded_session"), QStringLiteral("uploaded_session"),
@@ -56,7 +56,7 @@ const QStringList &fieldKeys()
         QStringLiteral("ratio_limit"), QStringLiteral("seen_complete"),
         QStringLiteral("last_activity"), QStringLiteral("total_size"),
         QStringLiteral("infohash_v1"), QStringLiteral("infohash_v2"),
-        QStringLiteral("reannounce"), QStringLiteral("is_private"),
+        QStringLiteral("reannounce"), QStringLiteral("private"),
         QStringLiteral("popularity"), QStringLiteral("priority")
     };
     return keys;
@@ -87,6 +87,9 @@ QString stateText(const QString &state)
     static const QHash<QString, QString> friendly {
         {QStringLiteral("downloading"), QStringLiteral("Downloading")},
         {QStringLiteral("metaDL"), QStringLiteral("Downloading metadata")},
+        {QStringLiteral("forcedMetaDL"), QStringLiteral("Forced downloading metadata")},
+        {QStringLiteral("allocating"), QStringLiteral("Allocating")},
+        {QStringLiteral("queuedForChecking"), QStringLiteral("Queued for checking")},
         {QStringLiteral("forcedDL"), QStringLiteral("Forced downloading")},
         {QStringLiteral("stalledDL"), QStringLiteral("Stalled downloading")},
         {QStringLiteral("uploading"), QStringLiteral("Seeding")},
@@ -110,11 +113,12 @@ QString stateText(const QString &state)
 
 QString stateIcon(const QString &state)
 {
-    if (state == QLatin1String("downloading") || state == QLatin1String("forcedDL"))
+    if (state == QLatin1String("downloading") || state == QLatin1String("forcedDL")
+        || state == QLatin1String("metaDL") || state == QLatin1String("forcedMetaDL"))
         return QStringLiteral("downloading");
     if (state == QLatin1String("uploading") || state == QLatin1String("forcedUP"))
         return QStringLiteral("upload");
-    if (state.startsWith(QLatin1String("stalled")))
+    if (state.startsWith(QLatin1String("stalled")) || state == QLatin1String("allocating"))
         return QStringLiteral("filter-stalled");
     if (state.startsWith(QLatin1String("paused")) || state.startsWith(QLatin1String("stopped")))
         return QStringLiteral("stopped");
@@ -161,7 +165,13 @@ QVariant TorrentModel::data(const QModelIndex &index, int role) const
 
     const QJsonObject record = m_torrents.value(m_hashes.at(index.row()));
     const int col = index.column();
-    const QJsonValue value = record.value(fieldKeys().at(col));
+    // Canonical upstream serializer keys take precedence, including explicit
+    // null privacy. Retain compatibility with the older client aliases.
+    QJsonValue value = record.value(fieldKeys().at(col));
+    if (value.isUndefined() && col == 15)
+        value = record.value(QStringLiteral("created_on"));
+    if (value.isUndefined() && col == 35)
+        value = record.value(QStringLiteral("is_private"));
 
     if (role == Qt::DecorationRole && col == 0)
         return QIcon(QStringLiteral(":/icons/") + stateIcon(record.value(QStringLiteral("state")).toString())
@@ -224,7 +234,7 @@ QVariant TorrentModel::data(const QModelIndex &index, int role) const
         const qint64 totalCount = static_cast<qint64>(total.toDouble());
         const QString state = record.value(QStringLiteral("state")).toString();
         const bool hideZeros = m_hideZeroValues && (m_hideZeroMode == 0
-            || state.startsWith(QLatin1String("stopped")));
+            || state.startsWith(QLatin1String("stopped")) || state.startsWith(QLatin1String("paused")));
         if (role == Qt::DisplayRole && hideZeros && connected == 0 && totalCount == 0)
             return QString();
         return QStringLiteral("%1 (%2)").arg(QString::number(connected),
@@ -238,7 +248,7 @@ QVariant TorrentModel::data(const QModelIndex &index, int role) const
     {
         const QString state = record.value(QStringLiteral("state")).toString();
         const bool applies = m_hideZeroMode == 0
-            || state.startsWith(QLatin1String("stopped"));
+            || state.startsWith(QLatin1String("stopped")) || state.startsWith(QLatin1String("paused"));
         const double number = value.toDouble();
         const bool numericColumn = col == 4 || col == 5 || col == 6
             || col == 7 || col == 8 || col == 9 || col == 12
