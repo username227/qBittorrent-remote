@@ -320,6 +320,36 @@
         "historicalLoginFailures",
         "simultaneousServersHaveIndependentTabsAndKeepPolling"
       ]
+    },
+    {
+      "id": "maindata-envelope-and-server-state-history",
+      "scope": "sync/maindata response IDs, collection updates and selected server-state fields",
+      "status": "source-reviewed-partial",
+      "findings": "All 26 distinct sync controller revisions inspected for selected maindata assignments. RID cycles 1..1000000; initial request RID 0 requires full_update. 4.1.4 adds free_space_on_disk, 4.2.0 tags, 4.3.0 tracker-to-torrent lists (whole changed URL membership, not additions only), 4.6.0 event-buffer synchronization and use_subcategories, 4.6.1 cached free space, 5.1.0 external addresses, 5.2.0 drops use_subcategories, 5.3.0 adds session_state, request_latency and queued_tracker_announces. Existing client already merges most state fields and clears on full replacement. Validate envelope and all nested collection shapes atomically before advancing RID. Known stable RID range enforced; unknown release permits positive IDs outside historical range. Do not invent missing fields or reject unknown future fields. Remaining serializers/backend meanings and gating of unsupported mutation actions deferred to their relevant audit.",
+      "release_matrix": "main-sync-review.json",
+      "evidence": [
+        {
+          "release": "4.3.0",
+          "commit": "b925cffddb386b2ca10e58fc9c55d99721cfa2ff",
+          "path": "src/webui/api/synccontroller.cpp",
+          "blob": "86b9008939e6a01268fa62b0421378c9de321a1d",
+          "lines": "224–279,311–339,487–501"
+        },
+        {
+          "release": "4.6.0",
+          "commit": "7bc49423c7e6a69554a27b75fdc2f4ea7606ad84",
+          "path": "src/webui/api/synccontroller.cpp",
+          "blob": "830614b289f5d419ac8f7c4f6be4306345d4c173",
+          "lines": "490–529,636–654,665–713"
+        }
+      ],
+      "live_status": "Only empty 4.1.0 snapshot captured; simulated populated delta and recovery tests, pending live verification.",
+      "regression_tests": [
+        "historicalSyncMembershipAndRollover",
+        "malformedMainDataIsNotApplied",
+        "historicalCategorySynchronization",
+        "nativeStatisticsTracksIndependentServerSnapshots"
+      ]
     }
   ],
   "adjacent_status": [

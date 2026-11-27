@@ -88,6 +88,31 @@ class EvidenceTests(unittest.TestCase):
             self.assertRegex(r["web_application_blob"], r"^[0-9a-f]{40}$")
         self.assertEqual(rows[-1]["qt_version_source"], "runtime-helper")
 
+    def test_main_sync_review_covers_release_lock(self):
+        lock = json.loads((ROOT / "releases.lock.json").read_text(encoding="utf-8"))
+        review = json.loads((ROOT / "main-sync-review.json").read_text(encoding="utf-8"))
+        controllers = json.loads((ROOT / "connection-controller-review.json").read_text(encoding="utf-8"))
+        rows = review["releases"]
+        self.assertEqual([(r["version"], r["commit"]) for r in rows],
+                         [(r["version"], r["commit"]) for r in lock["releases"]])
+        self.assertEqual([r["sync_controller_blob"] for r in rows],
+                         [r["sync_controller_blob"] for r in controllers["releases"]])
+        self.assertEqual(len({r["sync_controller_blob"] for r in rows}), 26)
+        for r in rows:
+            v = tuple(map(int, r["version"].split(".")))
+            for field, boundary in (("free_space_on_disk", (4, 1, 4)),
+                                    ("tags", (4, 2, 0)),
+                                    ("tracker_memberships", (4, 3, 0)),
+                                    ("external_addresses", (5, 1, 0)),
+                                    ("session_state", (5, 3, 0)),
+                                    ("request_latency", (5, 3, 0)),
+                                    ("queued_tracker_announces", (5, 3, 0))):
+                self.assertEqual(r[field], v >= boundary, (r["version"], field))
+            self.assertEqual(r["use_subcategories"], (4, 6, 0) <= v < (5, 2, 0))
+            self.assertEqual(r["delta_engine"], "event-buffer" if v >= (4, 6, 0) else "snapshot-diff")
+            self.assertEqual(r["response_id_cycle"], [1, 1000000])
+            self.assertEqual(r["tracker_delta"], "replace-membership-per-url" if r["tracker_memberships"] else "absent")
+
     def test_empty_4_1_0_live_evidence(self):
         evidence = json.loads((ROOT / "evidence/qbt-4.1.0-baseline.json").read_text(encoding="utf-8"))
         self.assertEqual(evidence["expected_daemon"], "4.1.0")
