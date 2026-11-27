@@ -592,6 +592,14 @@ void RemotePreferencesDialog::loadLocalBehaviorControls()
 #else
     m_ui->comboColorScheme->setToolTip(tr("Requires Qt 6.8 or newer."));
 #endif
+    unlock(m_ui->comboContentDoubleClick, tr("Open accessible mapped content or rename the selected item on the server."));
+    unlock(m_ui->checkContentOpenByEnter, tr("Open a single accessible file or folder through this server's local path mappings."));
+    m_ui->comboContentDoubleClick->addItem(tr("Open"), QStringLiteral("open"));
+    m_ui->comboContentDoubleClick->addItem(tr("Rename"), QStringLiteral("rename"));
+    m_ui->comboContentDoubleClick->setCurrentIndex(qMax(0, m_ui->comboContentDoubleClick->findData(
+        m_settings.value(QStringLiteral("Preferences/Behavior/ContentDoubleClick"), QStringLiteral("open")).toString())));
+    m_ui->checkContentOpenByEnter->setChecked(m_settings.value(
+        QStringLiteral("Preferences/Behavior/ContentOpenByEnter"), true).toBool());
     unlock(m_ui->checkTorrentContentDrag,
         tr("Allow dragging files from the Content tab into a file manager. "
            "Hold Alt to invert drag versus selection behavior. "
@@ -747,6 +755,8 @@ void RemotePreferencesDialog::loadLocalBehaviorControls()
 #endif
     connect(m_ui->checkProgramExitConfirm, &QCheckBox::toggled, this, dirty);
     connect(m_ui->checkTorrentContentDrag, &QCheckBox::toggled, this, dirty);
+    connect(m_ui->comboContentDoubleClick, qOverload<int>(&QComboBox::currentIndexChanged), this, dirty);
+    connect(m_ui->checkContentOpenByEnter, &QCheckBox::toggled, this, dirty);
     connect(m_ui->checkUseTorrentStatesColors, &QCheckBox::toggled, this, dirty);
     connect(m_ui->checkProgressBarFollowsTextColor, &QCheckBox::toggled,
             this, dirty);
@@ -4201,6 +4211,10 @@ bool RemotePreferencesDialog::applyLocalChanges()
             m_ui->checkProgramExitConfirm->isChecked());
         m_settings.setValue(QStringLiteral("Preferences/Behavior/TorrentContentDragEnabled"),
             m_ui->checkTorrentContentDrag->isChecked());
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/ContentDoubleClick"),
+            m_ui->comboContentDoubleClick->currentData().toString());
+        m_settings.setValue(QStringLiteral("Preferences/Behavior/ContentOpenByEnter"),
+            m_ui->checkContentOpenByEnter->isChecked());
         m_settings.setValue(QStringLiteral("Preferences/Behavior/StateColors"),
             m_ui->checkUseTorrentStatesColors->isChecked());
         m_settings.setValue(QStringLiteral("Preferences/Behavior/ProgressFollowsState"),

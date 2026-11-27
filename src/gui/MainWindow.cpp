@@ -568,6 +568,9 @@ void MainWindow::showEmptyPane()
         m_emptyPane->setSpeedGraphsEnabled(m_settings->value(QStringLiteral("Preferences/Advanced/EnableSpeedGraphs"), true).toBool());
         m_emptyPane->setContentDragEnabled(m_settings->value(
             QStringLiteral("Preferences/Behavior/TorrentContentDragEnabled"), true).toBool());
+        m_emptyPane->setContentInteraction(
+            m_settings->value(QStringLiteral("Preferences/Behavior/ContentDoubleClick"), QStringLiteral("open")).toString() == QLatin1String("rename"),
+            m_settings->value(QStringLiteral("Preferences/Behavior/ContentOpenByEnter"), true).toBool());
         m_views->addTab(m_emptyPane, upstreamIcon("folder-remote"), tr("Transfers"));
         m_views->setCurrentWidget(m_emptyPane);
         enableTorrentDrops(m_emptyPane);
@@ -1887,6 +1890,10 @@ void MainWindow::applyLocalBehaviorPreferences()
         m_completionNotifier->setTimeout(m_settings->value(QStringLiteral("Preferences/Advanced/NotificationTimeout"), -1).toInt());
     const bool contentDrag = m_settings->value(
         QStringLiteral("Preferences/Behavior/TorrentContentDragEnabled"), true).toBool();
+    const bool contentDoubleClickRename = m_settings->value(
+        QStringLiteral("Preferences/Behavior/ContentDoubleClick"), QStringLiteral("open")).toString() == QLatin1String("rename");
+    const bool contentOpenByEnter = m_settings->value(
+        QStringLiteral("Preferences/Behavior/ContentOpenByEnter"), true).toBool();
     const bool stateColors = m_settings->value(
         QStringLiteral("Preferences/Behavior/StateColors"), true).toBool();
     const bool progressColor = m_settings->value(
@@ -1906,7 +1913,8 @@ void MainWindow::applyLocalBehaviorPreferences()
     const bool fullTrackerUrl = m_settings->value(QStringLiteral("Preferences/Behavior/FullTrackerURL"), false).toBool();
     const QString dateFormat = m_settings->value(QStringLiteral("Preferences/Behavior/DateFormat")).toString();
     const auto apply = [alternating, hideZero, mode, hideZeroStatus,
-                        stateColors, progressColor, separateTracker, contentDrag, rssImages, speedGraphs,
+                        stateColors, progressColor, separateTracker, contentDrag, contentDoubleClickRename,
+                        contentOpenByEnter, rssImages, speedGraphs,
                         fullTrackerUrl, dateFormat, unitsChanged](ServerPane *pane) {
         if (!pane)
             return;
@@ -1918,6 +1926,7 @@ void MainWindow::applyLocalBehaviorPreferences()
         pane->model()->setUseStateColors(stateColors);
         pane->setProgressFollowsStateColors(progressColor);
         pane->setContentDragEnabled(contentDrag);
+        pane->setContentInteraction(contentDoubleClickRename, contentOpenByEnter);
         pane->setRssLoadExternalImages(rssImages);
         pane->setSpeedGraphsEnabled(speedGraphs);
         pane->setSeparateTrackerStatusFilter(separateTracker);
@@ -2763,6 +2772,9 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
     connection->pane->setRssLoadExternalImages(m_settings->value(QStringLiteral("Preferences/RSS/LoadExternalImages"), false).toBool());
     connection->pane->setContentDragEnabled(m_settings->value(
         QStringLiteral("Preferences/Behavior/TorrentContentDragEnabled"), true).toBool());
+    connection->pane->setContentInteraction(
+        m_settings->value(QStringLiteral("Preferences/Behavior/ContentDoubleClick"), QStringLiteral("open")).toString() == QLatin1String("rename"),
+        m_settings->value(QStringLiteral("Preferences/Behavior/ContentOpenByEnter"), true).toBool());
     connection->pane->setContentPathMappings(
         Remote::PathMappingStore(*m_settings).mappings(profile.id));
     enableTorrentDrops(connection->pane);

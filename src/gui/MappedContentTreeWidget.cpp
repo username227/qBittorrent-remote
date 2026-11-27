@@ -13,6 +13,7 @@
 #include <QFileInfo>
 #include <QMimeData>
 #include <QMouseEvent>
+#include <QKeyEvent>
 #include <QSet>
 #include <QUrl>
 
@@ -46,6 +47,38 @@ void MappedContentTreeWidget::mousePressEvent(QMouseEvent *event)
     // preferred interaction between drag-and-drop and multiple selection.
     setDragEnabled(m_contentDragEnabled != event->modifiers().testFlag(Qt::AltModifier));
     QTreeWidget::mousePressEvent(event);
+}
+
+namespace {
+bool isOpenKey(const QKeyEvent *event)
+{
+    return (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter)
+        && (event->modifiers() == Qt::NoModifier || event->modifiers() == Qt::KeypadModifier);
+}
+}
+
+bool MappedContentTreeWidget::event(QEvent *event)
+{
+    // Reserve unmodified Enter for the focused Content view instead of
+    // depending on window-level shortcut activation or dialog defaults.
+    if (m_openByEnter && event->type() == QEvent::ShortcutOverride
+        && isOpenKey(static_cast<QKeyEvent *>(event)))
+    {
+        event->accept();
+        return true;
+    }
+    return QTreeWidget::event(event);
+}
+
+void MappedContentTreeWidget::keyPressEvent(QKeyEvent *event)
+{
+    if (m_openByEnter && isOpenKey(event))
+    {
+        event->accept();
+        if (!event->isAutoRepeat()) emit openByEnterRequested();
+        return;
+    }
+    QTreeWidget::keyPressEvent(event);
 }
 
 QMimeData *MappedContentTreeWidget::mappedSelectionMimeData() const
@@ -156,6 +189,13 @@ void MappedContentTreeWidget::openMappedPath(const QString &path)
     if (path.isEmpty() || !QDesktopServices::openUrl(QUrl::fromLocalFile(path)))
         QMessageBox::information(this, tr("Cannot open content"),
             tr("The mapped local file or folder could not be opened."));
+}
+
+void MappedContentTreeWidget::openSelectedMappedItem()
+{
+    // Same containment and single-selection checks as the native menu.
+    const QString path = mappedSinglePath();
+    if (!path.isEmpty()) openMappedPath(path);
 }
 
 void MappedContentTreeWidget::addMappedOpenActions(QMenu &menu)

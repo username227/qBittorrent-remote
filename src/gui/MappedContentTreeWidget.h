@@ -5,6 +5,7 @@
 
 class QMimeData;
 class QMouseEvent;
+class QKeyEvent;
 class QMenu;
 
 // Only local files/folders accessible via a selected server's configured
@@ -19,10 +20,17 @@ public:
     void setContentDragEnabled(bool enabled);
     QMimeData *mappedSelectionMimeData() const;
     void addMappedOpenActions(QMenu &menu);
+    void openSelectedMappedItem();
+    void setOpenByEnter(bool enabled) { m_openByEnter = enabled; }
+
+signals:
+    void openByEnterRequested();
 
 protected:
     void startDrag(Qt::DropActions supportedActions) override;
     void mousePressEvent(QMouseEvent *event) override;
+    void keyPressEvent(QKeyEvent *event) override;
+    bool event(QEvent *event) override;
 
 private:
     QString mappedSinglePath() const;
@@ -32,4 +40,5 @@ private:
     QString m_savePath;
     QString m_contentPath;
     bool m_contentDragEnabled = true;
+    bool m_openByEnter = true;
 };

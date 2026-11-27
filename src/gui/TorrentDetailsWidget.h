@@ -38,6 +38,7 @@ public:
     void appendRates(double downloadBytesPerSec, double uploadBytesPerSec);
     void setContentPathMappings(const QList<Remote::PathMapping> &mappings);
     void setContentDragEnabled(bool enabled);
+    void setContentInteraction(bool doubleClickRename, bool openByEnter);
     void setTrackerTierEditingSupported(bool supported);
     void setSelectedTrackerReannounceSupported(bool supported);
     void finishTrackerTierEdit(const QString &hash);
@@ -115,6 +116,7 @@ private:
     quint64 m_contentSelectionGeneration = 0;
     bool m_contentKnown = false;
     bool m_contentRenameDialogOpen = false;
+    bool m_contentDoubleClickRename = false;
     bool m_webSeedsKnown = false;
     SpeedGraphWidget *m_speedGraph = nullptr;
     RemotePiecesBar *m_progressBar = nullptr;
