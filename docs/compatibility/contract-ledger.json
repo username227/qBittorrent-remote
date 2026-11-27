@@ -350,6 +350,18 @@
         "historicalCategorySynchronization",
         "nativeStatisticsTracksIndependentServerSnapshots"
       ]
+    },
+    {
+      "id": "peer-sync-controller-history",
+      "scope": "sync/torrentPeers action serialization and incremental country state",
+      "status": "source-reviewed-partial",
+      "findings": "4.1.0–4.3.0 key built as ip + colon + port; 4.3.1 changes to address helper; 4.3.4 uses TorrentID lookup; 4.4.0 makes files conditional on metadata; 4.5.0 adds peer_id_client and controller-held cursors; 5.2.0 adds host_name/I2P and explicitly empty country fields when disabled; 5.3.0 adds contribution. Earlier serializers omit country fields when disabled and show_flags=false must clear retained values. Client validates boolean envelope and nonempty removal keys before peer delta application; reset only peer cursor on malformed reply. Address-helper details and peer action dispatch remain open.",
+      "release_matrix": "peer-sync-review.json",
+      "live_status": "No real populated peer snapshots yet.",
+      "regression_tests": [
+        "historicalPeerCountryAndRecovery",
+        "nativeTorrentDetailsUseSelectedRemoteServerAndFilePriorityApis"
+      ]
     }
   ],
   "adjacent_status": [

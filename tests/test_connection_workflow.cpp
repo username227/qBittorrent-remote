@@ -522,7 +522,22 @@ public:
                             {
                                 const auto rid = QUrlQuery(QString::fromLatin1(
                                     path.mid(path.indexOf('?') + 1))).queryItemValue(QStringLiteral("rid"));
-                                if (rid == QLatin1String("1"))
+                                if (m_historicalPeerDemo)
+                                {
+                                    QJsonObject payload;
+                                    if (rid == QLatin1String("0"))
+                                    {
+                                        ++m_peerFullRequests;
+                                        payload = m_historicalPeerSnapshot;
+                                        payload.insert("full_update", true);
+                                    }
+                                    else if (!m_historicalPeerPatches.isEmpty())
+                                        payload = m_historicalPeerPatches.takeFirst();
+                                    if (!payload.contains("rid"))
+                                        payload.insert("rid", (rid.toInt() % 1000000) + 1);
+                                    response = QJsonDocument(payload).toJson(QJsonDocument::Compact);
+                                }
+                                else if (rid == QLatin1String("1"))
                                     response = R"({"rid":2,"peers":{"192.0.2.1:61413":{"dl_speed":4096}}})";
                                 else if (rid == QLatin1String("2"))
                                     response = R"({"rid":3})";
@@ -1294,6 +1309,14 @@ public:
     void enableNativePresentationDemo() { m_demoNativePresentation = true; }
     void queueSwarmCountsUpdate() { m_pendingSwarmCountsUpdate = true; }
     void enableDetailsDemo() { m_demoDetails = true; }
+    void setHistoricalPeerSnapshot(const QJsonObject &snapshot)
+    {
+        m_demoDetails = true;
+        m_historicalPeerDemo = true;
+        m_historicalPeerSnapshot = snapshot;
+    }
+    void queueHistoricalPeerPatch(const QJsonObject &patch) { m_historicalPeerPatches.append(patch); }
+    int peerFullRequests() const { return m_peerFullRequests; }
     void enableDistinctTrackerPasskeyDemo() { m_distinctTrackerPasskeys = true; }
     void enableRemoteContentAndOptionsDemo()
     {
@@ -1524,6 +1547,10 @@ private:
     bool m_demoNativePresentation = false;
     bool m_pendingSwarmCountsUpdate = false;
     bool m_demoDetails = false;
+    bool m_historicalPeerDemo = false;
+    QJsonObject m_historicalPeerSnapshot;
+    QList<QJsonObject> m_historicalPeerPatches;
+    int m_peerFullRequests = 0;
     bool m_distinctTrackerPasskeys = false;
     bool m_statefulTrackerDemo = false;
     bool m_statefulContentDemo = false;
@@ -3103,6 +3130,99 @@ private slots:
         QCOMPARE(pane->serverState().value("free_space_on_disk").toInteger(-1), qint64(1048576));
         auto *reconnect = window.findChild<QAction *>("reconnectServer");
         QVERIFY(reconnect && reconnect->isEnabled());
+    }
+
+    void historicalPeerCountryAndRecovery_data()
+    {
+        QTest::addColumn<QString>("version");
+        QTest::addColumn<QString>("api");
+        QTest::addColumn<bool>("modern");
+        QTest::newRow("4.1.0") << QString("4.1.0") << QString("2.0") << false;
+        QTest::newRow("5.2.0") << QString("5.2.0") << QString("2.15.1") << true;
+    }
+
+    void historicalPeerCountryAndRecovery()
+    {
+        QFETCH(QString, version);
+        QFETCH(QString, api);
+        QFETCH(bool, modern);
+        DemoQbittorrentServer server(true);
+        server.setHistoricalConnectionProfile(version, api, modern, !modern);
+        const QString hash(40, QLatin1Char('a'));
+        const QString endpoint = modern ? QString("[2001:db8::1]:6881")
+                                        : QString("2001:db8::1:6881");
+        server.setCompletionSnapshot({{"torrents", QJsonObject{{hash, QJsonObject{
+            {"name", "Peer test"}, {"state", "downloading"}, {"progress", 0.5}}}}}});
+        QJsonObject peer{{"ip", "2001:db8::1"}, {"port", 6881}, {"client", "Fixture"},
+            {"country_code", "us"}, {"country", "United States"}, {"progress", 0.5}};
+        if (modern)
+        {
+            peer.insert("host_name", "peer.example");
+            peer.insert("peer_id_client", "Fixture ID");
+        }
+        server.setHistoricalPeerSnapshot({{"show_flags", true},
+            {"peers", QJsonObject{{endpoint, peer}}}});
+        QVERIFY(server.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath("historical-peers.ini"), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, server.url());
+        auto *tabs = window.findChild<QTabWidget *>("serverTabs");
+        QVERIFY(tabs);
+        QTRY_COMPARE_WITH_TIMEOUT(tabs->count(), 1, 6000);
+        auto *pane = qobject_cast<ServerPane *>(tabs->widget(0));
+        QVERIFY(pane);
+        QTRY_COMPARE_WITH_TIMEOUT(pane->table()->model()->rowCount(), 1, 6000);
+        pane->table()->selectRow(0);
+        auto *tabBar = pane->findChild<PropTabBar *>();
+        auto *table = pane->findChild<QTableWidget *>("torrentPeers");
+        QVERIFY(tabBar && table);
+        tabBar->setCurrentIndex(2);
+        QTRY_COMPARE_WITH_TIMEOUT(table->rowCount(), 1, 6000);
+        QCOMPARE(table->item(0, 0)->text(), modern ? QString("peer.example") : QString("2001:db8::1"));
+        QCOMPARE(table->item(0, 1)->text(), QString("US"));
+        QCOMPARE(table->item(0, 8)->text(), QString("6881"));
+        QCOMPARE(table->item(0, 14)->text(), modern ? QString("Fixture ID") : QString());
+        table->selectRow(0);
+        auto *identity = table->item(0, 0);
+
+        QJsonObject off{{"show_flags", false}};
+        if (modern)
+            off.insert("peers", QJsonObject{{endpoint, QJsonObject{
+                {"country", QJsonValue::Null}, {"country_code", QJsonValue::Null}}}});
+        // Legacy wire omits these fields entirely instead of nulling them.
+        server.queueHistoricalPeerPatch(off);
+        pane->refreshSelectedDetails();
+        QTRY_VERIFY_WITH_TIMEOUT(table->rowCount() == 1 && table->item(0, 1)->text().isEmpty(), 6000);
+        QCOMPARE(table->item(0, 0), identity);
+        QVERIFY(table->item(0, 1)->toolTip().isEmpty());
+        QCOMPARE(table->selectionModel()->selectedRows().size(), 1);
+
+        server.queueHistoricalPeerPatch({{"show_flags", true}, {"peers", QJsonObject{
+            {endpoint, QJsonObject{{"country", "United States"}, {"country_code", "us"}}}}}});
+        pane->refreshSelectedDetails();
+        QTRY_VERIFY_WITH_TIMEOUT(table->rowCount() == 1 && table->item(0, 1)->text() == "US", 6000);
+        QCOMPARE(table->item(0, 0), identity);
+
+        // Invalid peer envelope must reset only its cursor. A later full
+        // snapshot recovers the peer page, without disconnecting the torrent list.
+        const int fullRequests = server.peerFullRequests();
+        peer.insert("client", "Recovered peer");
+        server.setHistoricalPeerSnapshot({{"show_flags", true}, {"peers", QJsonObject{{endpoint, peer}}}});
+        server.queueHistoricalPeerPatch({{"show_flags", "false"}, {"peers_removed", QJsonArray{endpoint}}});
+        pane->refreshSelectedDetails();
+        QTRY_COMPARE_WITH_TIMEOUT(table->rowCount(), 0, 6000);
+        QVERIFY(pane->isEnabled());
+        QCOMPARE(pane->table()->model()->rowCount(), 1);
+        pane->refreshSelectedDetails();
+        QTRY_VERIFY_WITH_TIMEOUT(server.peerFullRequests() > fullRequests, 6000);
+        QTRY_VERIFY_WITH_TIMEOUT(table->rowCount() == 1
+            && table->item(0, 2)->text() == "Recovered peer", 6000);
+        QVERIFY(pane->isEnabled());
+        QVERIFY(window.statusBar()->currentMessage().contains("Connected to Demo seedbox"));
     }
 
     void historicalLoginFailures()

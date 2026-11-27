@@ -320,6 +320,7 @@ if(BUILD_TESTING)
     add_remote_workflow_group(remote_historical_sync_envelope_workflow 120
         historicalSyncMembershipAndRollover
         malformedMainDataIsNotApplied
+        historicalPeerCountryAndRecovery
     )
     add_remote_workflow_group(remote_historical_session_and_statistics_workflow 90
         historicalStatisticsAvailability

@@ -113,6 +113,25 @@ class EvidenceTests(unittest.TestCase):
             self.assertEqual(r["response_id_cycle"], [1, 1000000])
             self.assertEqual(r["tracker_delta"], "replace-membership-per-url" if r["tracker_memberships"] else "absent")
 
+    def test_peer_sync_review_covers_release_lock(self):
+        lock = json.loads((ROOT / "releases.lock.json").read_text(encoding="utf-8"))
+        review = json.loads((ROOT / "peer-sync-review.json").read_text(encoding="utf-8"))
+        controllers = json.loads((ROOT / "connection-controller-review.json").read_text(encoding="utf-8"))
+        rows = review["releases"]
+        self.assertEqual([(r["version"], r["commit"]) for r in rows],
+                         [(r["version"], r["commit"]) for r in lock["releases"]])
+        self.assertEqual([r["sync_controller_blob"] for r in rows],
+                         [r["sync_controller_blob"] for r in controllers["releases"]])
+        self.assertEqual(len({r["sync_controller_blob"] for r in rows}), 26)
+        for r in rows:
+            v = tuple(map(int, r["version"].split(".")))
+            self.assertEqual(r["peer_id_client"], v >= (4, 5, 0))
+            self.assertEqual(r["host_name"], v >= (5, 2, 0))
+            self.assertEqual(r["i2p_dest"], v >= (5, 2, 0))
+            self.assertEqual(r["contribution"], v >= (5, 3, 0))
+            self.assertEqual(r["country_disabled"], "explicit-empty-values" if v >= (5, 2, 0) else "omitted")
+            self.assertTrue(r["show_flags"])
+
     def test_empty_4_1_0_live_evidence(self):
         evidence = json.loads((ROOT / "evidence/qbt-4.1.0-baseline.json").read_text(encoding="utf-8"))
         self.assertEqual(evidence["expected_daemon"], "4.1.0")
