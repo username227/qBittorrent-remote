@@ -75,9 +75,13 @@ RemoteStatisticsDialog::RemoteStatisticsDialog(const QString &serverName,
                 self->m_ui->labelCacheHitsText->show();
                 self->m_ui->labelCacheHits->show();
             }
-        }, [](const QString &) {});
-        // Probe this optional read once per dialog. Older servers may return 404.
-        // The launch timestamp is server-provided; the duration is a local estimate.
+        }, [self](const QString &reason) {
+            if (!self) return;
+            self->m_ui->labelLibtorrentVersion->setToolTip(reason);
+            self->m_ui->labelQtVersion->setToolTip(reason);
+        });
+        // The session suppresses known absent endpoints. Unknown releases may
+        // still provide this optional read. Uptime is derived from server time.
         session->requestProcessInfo([self](const QJsonObject &info) {
             if (!self) return;
             const auto launch = info.value("launch_time").toInteger(-1);
@@ -87,7 +91,11 @@ RemoteStatisticsDialog::RemoteStatisticsDialog(const QString &serverName,
             self->m_launchTime = launch;
             self->m_ui->labelLaunchTime->setText(QLocale().toString(time, QLocale::ShortFormat));
             self->updateUptime();
-        }, [](const QString &) {});
+        }, [self](const QString &reason) {
+            if (!self) return;
+            self->m_ui->labelLaunchTime->setToolTip(reason);
+            self->m_ui->labelUptime->setToolTip(reason);
+        });
     }
 }
 
