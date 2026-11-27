@@ -41,10 +41,11 @@ public:
     void setContentInteraction(bool doubleClickRename, bool openByEnter);
     QString contentFilterFormat() const { return m_contentFilterFormat; }
     void setContentFilterFormat(const QString &format);
-    void setTrackerTierEditingSupported(bool supported);
-    void setSelectedTrackerReannounceSupported(bool supported);
+    void setTrackerUrlEditingSupported(bool supported, const QString &reason = {});
+    void setTrackerTierEditingSupported(bool supported, const QString &reason = {});
+    void setSelectedTrackerReannounceSupported(bool supported, const QString &reason = {});
     void finishTrackerTierEdit(const QString &hash);
-    void setCommentEditingSupported(bool supported);
+    void setCommentEditingSupported(bool supported, const QString &reason = {});
     void finishCommentEdit(const QString &hash);
     void finishPeerAction(const QString &hash, const QString &message);
     void finishWebSeedAction(const QString &hash);
@@ -128,10 +129,15 @@ private:
     QLabel *m_error = nullptr;
     QString m_hash;
     QString m_pendingTrackerTierHash;
+    bool m_trackerUrlEditingSupported = false;
+    QString m_trackerUrlEditingReason;
     bool m_trackerTierSupported = false;
+    QString m_trackerTierReason;
     bool m_selectedTrackerReannounceSupported = false;
+    QString m_selectedTrackerReannounceReason;
     bool m_trackerTiersKnown = false;
     bool m_commentEditingSupported = false;
+    QString m_commentEditingReason;
     bool m_commentKnown = false;
     QString m_pendingCommentHash;
     QJsonObject m_summary;

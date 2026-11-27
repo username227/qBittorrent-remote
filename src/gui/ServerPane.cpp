@@ -1242,9 +1242,9 @@ void ServerPane::requestSelectedDetails()
         emit torrentDetailsRequested({}, -1, false);
 }
 
-void ServerPane::setCommentEditingSupported(bool supported)
+void ServerPane::setCommentEditingSupported(bool supported, const QString &reason)
 {
-    m_details->setCommentEditingSupported(supported);
+    m_details->setCommentEditingSupported(supported, reason);
 }
 
 void ServerPane::finishWebSeedAction(const QString &hash)
@@ -1265,14 +1265,19 @@ void ServerPane::finishCommentEdit(const QString &hash)
     requestSelectedDetails();
 }
 
-void ServerPane::setSelectedTrackerReannounceSupported(bool supported)
+void ServerPane::setSelectedTrackerReannounceSupported(bool supported, const QString &reason)
 {
-    m_details->setSelectedTrackerReannounceSupported(supported);
+    m_details->setSelectedTrackerReannounceSupported(supported, reason);
 }
 
-void ServerPane::setTrackerTierEditingSupported(bool supported)
+void ServerPane::setTrackerUrlEditingSupported(bool supported, const QString &reason)
 {
-    m_details->setTrackerTierEditingSupported(supported);
+    m_details->setTrackerUrlEditingSupported(supported, reason);
+}
+
+void ServerPane::setTrackerTierEditingSupported(bool supported, const QString &reason)
+{
+    m_details->setTrackerTierEditingSupported(supported, reason);
 }
 
 void ServerPane::finishTrackerTierEdit(const QString &hash)

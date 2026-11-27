@@ -2505,9 +2505,13 @@ void MainWindow::updateActiveUi()
     else
     {
         if (ready)
-            m_ui->statusBar->showMessage(
-                tr("Connected to %1 — qBittorrent %2 (Web API %3).")
-                    .arg(connection->profile.name, connection->version, connection->apiVersion));
+        {
+            QString message = tr("Connected to %1 — qBittorrent %2 (Web API %3).")
+                .arg(connection->profile.name, connection->version, connection->apiVersion);
+            const auto warning = connection->session->capabilities().versionWarning();
+            if (!warning.isEmpty()) message += QLatin1Char(' ') + warning;
+            m_ui->statusBar->showMessage(message);
+        }
         else if (connection->session)
             m_ui->statusBar->showMessage(
                 tr("Connecting to %1...").arg(connection->profile.name));
@@ -2582,8 +2586,13 @@ void MainWindow::updateServerTab(const std::shared_ptr<SessionContext> &connecti
     if (connection->statistics) connection->statistics->setServerName(connection->profile.name);
     const bool offline = !connection->session;
     m_views->setTabIcon(index, upstreamIcon(offline ? "disconnected" : "folder-remote"));
-    m_views->setTabToolTip(index, offline ? disconnectedStatus(*connection).toHtmlEscaped()
-        : connection->profile.name.toHtmlEscaped());
+    QString tooltip = offline ? disconnectedStatus(*connection) : connection->profile.name;
+    if (!offline && connection->connected)
+    {
+        const auto warning = connection->session->capabilities().versionWarning();
+        if (!warning.isEmpty()) tooltip += QLatin1Char('\n') + warning;
+    }
+    m_views->setTabToolTip(index, tooltip.toHtmlEscaped());
     if (auto *button = m_views->tabBar()->tabButton(index, QTabBar::RightSide))
         button->setToolTip(offline ? tr("Close tab") : tr("Disconnect and close tab"));
 }
@@ -3610,11 +3619,20 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
             updateServerTab(connection);
             connection->version = version;
             connection->apiVersion = apiVersion;
-            connection->pane->setSelectedTrackerReannounceSupported(connection->session->supportsSelectedTrackerReannounce());
+            using Feature = Remote::ServerCapabilities::Feature;
+            const auto &capabilities = connection->session->capabilities();
+            connection->pane->setTrackerUrlEditingSupported(
+                connection->session->supportsTrackerUrlEditing(),
+                capabilities.unavailableReason(Feature::TrackerUrlEditing));
+            connection->pane->setSelectedTrackerReannounceSupported(
+                connection->session->supportsSelectedTrackerReannounce(),
+                capabilities.unavailableReason(Feature::SelectedTrackerReannounce));
             connection->pane->setTrackerTierEditingSupported(
-                connection->session->supportsTrackerTierEditing());
+                connection->session->supportsTrackerTierEditing(),
+                capabilities.unavailableReason(Feature::TrackerTierEditing));
             connection->pane->setCommentEditingSupported(
-                connection->session->supportsCommentEditing());
+                connection->session->supportsCommentEditing(),
+                capabilities.unavailableReason(Feature::CommentEditing));
             if (activeConnection() == connection)
                 updateActiveUi();
 

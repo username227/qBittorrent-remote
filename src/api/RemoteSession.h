@@ -91,6 +91,7 @@ public:
     void disconnectFromServer();
     bool isConnected() const noexcept;
     const ServerCapabilities &capabilities() const noexcept { return m_capabilities; }
+    bool supportsTrackerUrlEditing() const noexcept { return m_connected && m_capabilities.trackerUrlEditing(); }
     bool supportsTrackerTierEditing() const noexcept { return m_connected && m_capabilities.trackerTierEditing(); }
     bool supportsCommentEditing() const noexcept { return m_connected && m_capabilities.commentEditing(); }
     bool supportsSelectedTrackerReannounce() const noexcept { return m_connected && m_capabilities.selectedTrackerReannounce(); }
