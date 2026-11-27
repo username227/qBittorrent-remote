@@ -1,0 +1,3 @@
+# Compatibility presentation policy
+
+User decision, 2026-11-27: keep one common native interface across supported server versions. Unsupported actions and options remain visible but disabled, with an actionable explanation. Unknown capability is distinct from confirmed absence. Enforce the same decision at dispatch, including shortcuts and alternate entry points. Read-only fields remain visible and display unavailable placeholders, never fabricated values. Do not redesign or hide whole sections solely because a historical server lacks a capability. Normal user-selected visibility, layout and contextual behavior are unchanged. Audit existing exceptions during the remaining subsystem and GUI gating checkpoints.

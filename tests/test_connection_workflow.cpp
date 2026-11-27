@@ -3225,6 +3225,63 @@ private slots:
         QVERIFY(window.statusBar()->currentMessage().contains("Connected to Demo seedbox"));
     }
 
+    void historicalTorrentStatePresentation()
+    {
+        DemoQbittorrentServer server(true);
+        server.setHistoricalConnectionProfile("4.1.0", "2.0", false, true);
+        const QString a(40, QLatin1Char('a')), b(40, QLatin1Char('b')), c(40, QLatin1Char('c'));
+        server.setCompletionSnapshot({{"torrents", QJsonObject{
+            {a, QJsonObject{{"name", "Allocating torrent"}, {"state", "allocating"}, {"progress", 0}}},
+            {b, QJsonObject{{"name", "Checking torrent"}, {"state", "queuedForChecking"}, {"progress", 0}}},
+            {c, QJsonObject{{"name", "Paused torrent"}, {"state", "pausedDL"}, {"progress", 0},
+                {"dlspeed", 0}, {"num_seeds", 0}, {"num_complete", 0}}}}}});
+        QVERIFY(server.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath("historical-state.ini"), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, server.url());
+        auto *pane = window.findChild<ServerPane *>();
+        QVERIFY(pane);
+        auto *table = pane->table();
+        auto *statuses = pane->findChild<QListWidget *>("filterList");
+        QVERIFY(table && statuses);
+        QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 3, 6000);
+        const auto indexFor = [table](const QString &name, int column) {
+            for (int i = 0; i < table->model()->rowCount(); ++i)
+                if (table->model()->index(i, 0).data().toString() == name)
+                    return table->model()->index(i, column);
+            return QModelIndex();
+        };
+        const auto choose = [statuses](const QString &key) {
+            for (int i = 0; i < statuses->count(); ++i)
+                if (statuses->item(i)->data(Qt::UserRole).toString() == key)
+                {
+                    statuses->setCurrentRow(i);
+                    return true;
+                }
+            return false;
+        };
+        QCOMPARE(indexFor("Allocating torrent", 3).data().toString(), QString("Allocating"));
+        QCOMPARE(indexFor("Checking torrent", 3).data().toString(), QString("Queued for checking"));
+        QCOMPARE(indexFor("Paused torrent", 3).data(Qt::UserRole).toString(), QString("pausedDL"));
+        QCOMPARE(indexFor("Paused torrent", 12).data().toString(), QString("—"));
+        QVERIFY(choose("checking"));
+        QTRY_COMPARE(table->model()->rowCount(), 1);
+        QVERIFY(indexFor("Checking torrent", 3).isValid());
+        QVERIFY(choose("downloading"));
+        QTRY_COMPARE(table->model()->rowCount(), 2);
+        QVERIFY(indexFor("Allocating torrent", 3).isValid());
+        QVERIFY(choose("stopped"));
+        QTRY_COMPARE(table->model()->rowCount(), 1);
+        pane->model()->setHideZeroValues(true, 1);
+        QCOMPARE(indexFor("Paused torrent", 6).data().toString(), QString());
+        QCOMPARE(indexFor("Paused torrent", 4).data().toString(), QString());
+        QCOMPARE(indexFor("Paused torrent", 6).data(Qt::UserRole).toInt(), 0);
+    }
+
     void historicalLoginFailures()
     {
         for (const bool modern : {false, true})
