@@ -522,13 +522,43 @@ void RemoteSession::requestMainData()
                 fail(tr("Invalid categories in /sync/maindata response."));
                 return;
             }
+            // Validate the complete envelope before committing the response
+            // ID or exposing any part of the patch to the GUI. Missing
+            // optional fields are legitimate (especially on old servers).
+            // Do not constrain unknown fields or future torrent states.
+            const auto validNames = [](const QJsonValue &value) {
+                if (!value.isArray()) return false;
+                for (const auto &item : value.toArray())
+                    if (!item.isString() || item.toString().isEmpty()) return false;
+                return true;
+            };
+            const auto validMap = [&](const QString &key, bool membership) {
+                const auto value = payload.value(key);
+                if (value.isUndefined()) return true;
+                if (!value.isObject()) return false;
+                const auto map = value.toObject();
+                for (auto it = map.constBegin(); it != map.constEnd(); ++it)
+                    if (it.key().isEmpty() || (membership ? !validNames(it.value()) : !it.value().isObject()))
+                        return false;
+                return true;
+            };
             const qint64 rid = payload.value(QStringLiteral("rid")).toInteger(-1);
-            if (rid < 0
-                || (payload.contains(QStringLiteral("torrents"))
-                    && !payload.value(QStringLiteral("torrents")).isObject())
-                || (payload.contains(QStringLiteral("torrents_removed"))
-                    && !payload.value(QStringLiteral("torrents_removed")).isArray())
-                || (m_syncRid == 0 && !payload.value(QStringLiteral("full_update")).toBool()))
+            const auto full = payload.value(QStringLiteral("full_update"));
+            const auto state = payload.value(QStringLiteral("server_state"));
+            bool valid = rid > 0 && (!m_capabilities.hasKnownRelease() || rid <= 1000000)
+                && (full.isUndefined() || full.isBool())
+                && (m_syncRid != 0 || full.toBool())
+                && (state.isUndefined() || state.isObject())
+                && validMap(QStringLiteral("torrents"), false)
+                && validMap(QStringLiteral("categories"), false)
+                && validMap(QStringLiteral("trackers"), true);
+            for (const auto *key : {"torrents_removed", "categories_removed", "tags",
+                                    "tags_removed", "trackers_removed"})
+            {
+                const auto value = payload.value(QLatin1String(key));
+                if (!value.isUndefined() && !validNames(value)) valid = false;
+            }
+            if (!valid)
             {
                 fail(tr("Invalid or incomplete /sync/maindata response."));
                 return;

@@ -316,7 +316,9 @@ public:
                                 }
                                 else if (!m_completionPatches.isEmpty())
                                     snapshot = m_completionPatches.takeFirst();
-                                snapshot.insert(QStringLiteral("rid"), rid + 1);
+                                if (!snapshot.contains(QStringLiteral("rid")))
+                                    snapshot.insert(QStringLiteral("rid"), (rid % 1000000) + 1);
+                                m_lastCompletionRequestRid = rid;
                                 // Fail fixture mistakes rather than silently
                                 // supplying a modern category map to 4.1.0.
                                 if (m_historicalConnection && snapshot.contains("categories")
@@ -1220,6 +1222,7 @@ public:
         m_completionSnapshot = snapshot;
     }
     void queueCompletionPatch(const QJsonObject &patch) { m_completionPatches.append(patch); }
+    int lastCompletionRequestRid() const { return m_lastCompletionRequestRid; }
     QJsonObject sidebarSnapshot() const { return m_sidebarSnapshot; }
     void setStatusRates(const QJsonObject &rates)
     {
@@ -1482,6 +1485,7 @@ private:
     bool m_completionSyncDemo = false;
     QJsonObject m_completionSnapshot;
     QList<QJsonObject> m_completionPatches;
+    int m_lastCompletionRequestRid = -1;
     bool m_statusRatesDemo = false;
     QJsonObject m_statusRates;
     bool m_trayDemo = false;
@@ -2942,6 +2946,163 @@ private slots:
                 i == 0 ? QString("Modern torrent") : QString("Legacy refreshed"));
             QCOMPARE(tabs->count(), 2);
         }
+    }
+
+    void historicalSyncMembershipAndRollover_data()
+    {
+        QTest::addColumn<QString>("version");
+        QTest::addColumn<QString>("api");
+        QTest::addColumn<bool>("eventDriven");
+        QTest::newRow("4.3.0") << QString("4.3.0") << QString("2.6.0") << false;
+        QTest::newRow("4.6.0") << QString("4.6.0") << QString("2.9.2") << true;
+        QTest::newRow("5.3.1") << QString("5.3.1") << QString("2.16.2") << true;
+    }
+
+    void historicalSyncMembershipAndRollover()
+    {
+        QFETCH(QString, version);
+        QFETCH(QString, api);
+        QFETCH(bool, eventDriven);
+        DemoQbittorrentServer server(true);
+        server.setHistoricalConnectionProfile(version, api, version.startsWith("5."), false);
+        const QString a(40, QLatin1Char('a')), b(40, QLatin1Char('b'));
+        const QString url("https://tracker.example/announce");
+        const QString second("https://other.example/announce");
+        server.setCompletionSnapshot({
+            {"rid", 999999},
+            {"torrents", QJsonObject{
+                {a, QJsonObject{{"name", "First torrent"}, {"state", "uploading"}, {"progress", 1}}},
+                {b, QJsonObject{{"name", "Second torrent"}, {"state", "uploading"}, {"progress", 1}}}}},
+            {"tags", QJsonArray{"Unused tag"}},
+            {"trackers", QJsonObject{{url, QJsonArray{a,b}}, {second, QJsonArray{a}}}},
+            {"server_state", QJsonObject{{"free_space_on_disk", 1048576}, {"queueing", false}}}
+        });
+        QVERIFY(server.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath("historical-membership.ini"), QSettings::IniFormat);
+        settings.setValue("Preferences/Advanced/RefreshInterval", 100);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, server.url());
+        auto *tabs = window.findChild<QTabWidget *>("serverTabs");
+        QVERIFY(tabs);
+        QTRY_COMPARE_WITH_TIMEOUT(tabs->count(), 1, 6000);
+        auto *pane = qobject_cast<ServerPane *>(tabs->widget(0));
+        QVERIFY(pane);
+        auto *trackers = pane->findChild<QListWidget *>("trackerFilterList");
+        auto *tags = pane->findChild<QListWidget *>("tagFilterList");
+        QVERIFY(trackers && tags);
+        const auto row = [](QListWidget *list, const QString &key) -> QListWidgetItem * {
+            for (int i = 0; i < list->count(); ++i)
+                if (list->item(i)->data(Qt::UserRole).toString() == key) return list->item(i);
+            return nullptr;
+        };
+        QTRY_VERIFY_WITH_TIMEOUT(pane->hasFullSync(), 6000);
+        QCOMPARE(pane->table()->model()->rowCount(), 2);
+        QVERIFY(row(tags, "tag:Unused tag"));
+        QVERIFY(row(trackers, "tracker:other.example"));
+        auto *tracker = row(trackers, "tracker:tracker.example");
+        QVERIFY(tracker);
+        trackers->setCurrentItem(tracker);
+        QTRY_COMPARE(pane->table()->model()->rowCount(), 2);
+
+        // A changed tracker entry is the entire membership list in both
+        // the snapshot-diff and event-driven upstream implementations.
+        server.queueCompletionPatch({{"trackers", QJsonObject{{url, QJsonArray{b}}}},
+            {"trackers_removed", QJsonArray{second}}, {"tags_removed", QJsonArray{"Unused tag"}},
+            {"tags", QJsonArray{"New tag"}}});
+        QTRY_COMPARE_WITH_TIMEOUT(pane->table()->model()->rowCount(), 1, 6000);
+        QVERIFY(!row(trackers, "tracker:other.example"));
+        QVERIFY(!row(tags, "tag:Unused tag"));
+        QVERIFY(row(tags, "tag:New tag"));
+        QCOMPARE(pane->model()->torrents().size(), 2);
+        QCOMPARE(pane->serverState().value("free_space_on_disk").toInteger(), qint64(1048576));
+
+        // The server wraps its response ID from 1000000 to 1. The next
+        // acknowledged ID must be low again, and the client stays connected.
+        QTRY_VERIFY_WITH_TIMEOUT(server.lastCompletionRequestRid() > 0
+            && server.lastCompletionRequestRid() < 999999, 6000);
+        server.queueCompletionPatch({{"server_state", QJsonObject{{"free_space_on_disk", 0}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(pane->serverState().value("free_space_on_disk").toInteger(-1), qint64(0), 6000);
+        QVERIFY(pane->isEnabled());
+        // A full replacement with no tracker/tag keys clears old state.
+        // Older snapshot diff implementations reset to rid 1 when queried
+        // from rid 0; event-driven implementations also support replacement.
+        server.queueCompletionPatch({{"full_update", true}, {"rid", eventDriven ? 42 : 1},
+            {"torrents", QJsonObject{{a, QJsonObject{{"name", "Replacement"}, {"state", "uploading"}}}}}});
+        QTRY_VERIFY_WITH_TIMEOUT(!row(trackers, "tracker:tracker.example")
+            && !row(tags, "tag:New tag"), 6000);
+        QCOMPARE(pane->table()->model()->rowCount(), 1);
+        QVERIFY(!pane->serverState().contains("free_space_on_disk"));
+        QVERIFY(pane->isEnabled());
+    }
+
+    void malformedMainDataIsNotApplied_data()
+    {
+        QTest::addColumn<QJsonObject>("bad");
+        QTest::newRow("zero-rid") << QJsonObject{{"rid", 0}};
+        QTest::newRow("out-of-range-rid") << QJsonObject{{"rid", 1000001}};
+        QTest::newRow("wrong-full-update") << QJsonObject{{"full_update", "true"}};
+        QTest::newRow("wrong-state") << QJsonObject{{"server_state", QJsonArray{1}}};
+        QTest::newRow("wrong-torrent") << QJsonObject{{"torrents", QJsonObject{{QString(40, QLatin1Char('b')), 1}}}};
+        QTest::newRow("wrong-category") << QJsonObject{{"categories", QJsonObject{{"Music", 1}}}};
+        QTest::newRow("wrong-tag") << QJsonObject{{"tags", QJsonArray{false}}};
+        QTest::newRow("wrong-tracker") << QJsonObject{{"trackers", QJsonObject{{"https://tracker.example/announce", QJsonArray{false}}}}};
+        QTest::newRow("wrong-removal") << QJsonObject{{"torrents_removed", QJsonArray{false}}};
+    }
+
+    void malformedMainDataIsNotApplied()
+    {
+        QFETCH(QJsonObject, bad);
+        DemoQbittorrentServer server(true);
+        // Do not impose a fixture schema on deliberately malformed input.
+        server.setReportedVersions("v5.3.1", "2.16.2");
+        const QString hash(40, QLatin1Char('a'));
+        server.setCompletionSnapshot({
+            {"torrents", QJsonObject{{hash, QJsonObject{{"name", "Original"}, {"state", "uploading"}}}}},
+            {"categories", QJsonObject{{"Keep", QJsonObject{{"name", "Keep"}}}}},
+            {"server_state", QJsonObject{{"queueing", true}, {"free_space_on_disk", 1048576}}}
+        });
+        QVERIFY(server.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QSettings settings(temp.filePath("invalid-sync.ini"), QSettings::IniFormat);
+        settings.setValue("Preferences/Advanced/RefreshInterval", 100);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, server.url());
+        auto *tabs = window.findChild<QTabWidget *>("serverTabs");
+        QVERIFY(tabs);
+        QTRY_COMPARE_WITH_TIMEOUT(tabs->count(), 1, 6000);
+        auto *pane = qobject_cast<ServerPane *>(tabs->widget(0));
+        QVERIFY(pane);
+        QTRY_VERIFY_WITH_TIMEOUT(pane->hasFullSync(), 6000);
+        QVERIFY(pane->isEnabled());
+        QVERIFY(pane->serverState().value("queueing").toBool());
+        QCOMPARE(pane->serverState().value("free_space_on_disk").toInteger(-1), qint64(1048576));
+        // Include a valid-looking deletion alongside the malformed field.
+        // The entire patch must be rejected, not partially applied.
+        if (!bad.contains("torrents_removed"))
+            bad.insert("torrents_removed", QJsonArray{hash});
+        bad.insert("categories_removed", QJsonArray{"Keep"});
+        if (!bad.contains("server_state"))
+            bad.insert("server_state", QJsonObject{{"free_space_on_disk", 0}});
+        server.queueCompletionPatch(bad);
+        QTRY_VERIFY_WITH_TIMEOUT(!pane->isEnabled(), 6000);
+        QVERIFY(window.statusBar()->currentMessage().contains("Invalid or incomplete /sync/maindata"));
+        QVERIFY(window.statusBar()->currentMessage().contains("stale"));
+        QCOMPARE(pane->table()->model()->rowCount(), 1);
+        QCOMPARE(pane->model()->torrents().value(hash).value("name").toString(), QString("Original"));
+        QVERIFY(pane->categories().contains("Keep"));
+        // Disconnect deliberately invalidates queue capability, independently
+        // of the malformed patch. Retained telemetry must remain unchanged.
+        QVERIFY(!pane->serverState().contains("queueing"));
+        QCOMPARE(pane->serverState().value("free_space_on_disk").toInteger(-1), qint64(1048576));
+        auto *reconnect = window.findChild<QAction *>("reconnectServer");
+        QVERIFY(reconnect && reconnect->isEnabled());
     }
 
     void historicalLoginFailures()
