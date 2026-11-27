@@ -11,6 +11,10 @@ on:
       - master
   workflow_dispatch:
 
+concurrency:
+  group: windows-installer-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
@@ -66,6 +70,14 @@ jobs:
         env:
           CCACHE_DIR: ${{ github.workspace }}/.ccache
         run: ccache --show-stats
+
+      - name: Exercise real installer scopes and upgrades
+        timeout-minutes: 6
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem build/windows-ucrt/dist/*.exe
+          if (@($installer).Count -ne 1) { throw 'Expected one installer EXE' }
+          & packaging/windows/test-installer.ps1 -Installer $installer.FullName
 
       - name: Upload installer EXE
         uses: actions/upload-artifact@v4

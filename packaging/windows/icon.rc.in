@@ -1,0 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Generate an absolute path so windres finds the original icon regardless
+// of the CMake build directory, generator, or source checkout location.
+1 ICON "@QBT_WINDOWS_ICON_PATH@"
