@@ -45,9 +45,11 @@ public:
     void finishCommentEdit(const QString &hash);
     void finishPeerAction(const QString &hash, const QString &message);
     void finishWebSeedAction(const QString &hash);
+    void finishContentRename(const QString &hash, const QString &oldPath);
 
 signals:
     void filePriorityRequested(const QString &hash, const QList<int> &ids, int priority);
+    void contentRenameRequested(const QString &hash, const QString &oldPath, const QString &newPath, bool folder);
     void trackerTiersRequested(const QString &hash, const QJsonObject &tiers);
     void trackerDetailActionRequested(const QString &hash, Remote::TrackerDetailAction action,
                                       const QStringList &urls, const QString &replacement);
@@ -88,6 +90,8 @@ private:
     void removeWebSeeds();
     void copyWebSeeds();
     void displayFiles(const QJsonArray &files);
+    QString selectedContentPath() const;
+    void renameSelectedContent();
     void chooseFilePriorities(int priority, bool allFiles);
     void updateFileFolders();
     void resetPages();
@@ -100,6 +104,11 @@ private:
     QJsonValue m_peerPrivacy;
     QString m_pendingPeerHash;
     QString m_pendingWebSeedHash;
+    QString m_pendingContentHash;
+    QString m_pendingContentPath;
+    quint64 m_contentSelectionGeneration = 0;
+    bool m_contentKnown = false;
+    bool m_contentRenameDialogOpen = false;
     bool m_webSeedsKnown = false;
     SpeedGraphWidget *m_speedGraph = nullptr;
     RemotePiecesBar *m_progressBar = nullptr;

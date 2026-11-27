@@ -893,8 +893,10 @@ public:
                                 m_sidebarSnapshot.insert(QStringLiteral("trackers"), trackers);
                             }
                             if (m_statefulContentDemo && !m_rejectCommands
-                                && path == "/api/v2/torrents/renameFile")
+                                && (path == "/api/v2/torrents/renameFile"
+                                    || path == "/api/v2/torrents/renameFolder"))
                             {
+                                const bool folder = path == "/api/v2/torrents/renameFolder";
                                 const QString hash = form.queryItemValue(QStringLiteral("hash"));
                                 const QString before = form.queryItemValue(
                                     QStringLiteral("oldPath"), QUrl::FullyDecoded);
@@ -905,9 +907,11 @@ public:
                                 for (const QJsonValue &v : m_contentEntries.value(hash))
                                 {
                                     QJsonObject row = v.toObject();
-                                    if (row.value(QStringLiteral("name")).toString() == before)
+                                    const QString name = row.value(QStringLiteral("name")).toString();
+                                    if ((!folder && name == before)
+                                        || (folder && name.startsWith(before + QLatin1Char('/'))))
                                     {
-                                        row.insert(QStringLiteral("name"), after);
+                                        row.insert(QStringLiteral("name"), after + name.mid(before.size()));
                                         found = true;
                                     }
                                     updated.append(row);
@@ -8787,6 +8791,75 @@ private slots:
         QVERIFY(!root(album)->child(0)->isExpanded());
         QVERIFY(tree->selectedItems().isEmpty());
         QCOMPARE(server.commandsFor("/api/v2/torrents/filePrio"), 0);
+
+        // Exercise the real native Rename dialog on the second torrent.
+        // No local mount is configured; the rename belongs to the server.
+        const auto rename = [&](const QString &name, bool accept) {
+            bool menuFound = false, dialogFound = false;
+            QTimer watchdog;
+            watchdog.setSingleShot(true);
+            connect(&watchdog, &QTimer::timeout, &window, []() {
+                if (auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget()))
+                    dialog->reject();
+                if (auto *popup = QApplication::activePopupWidget()) popup->close();
+            });
+            watchdog.start(6000);
+            QTimer::singleShot(0, &window, [&]() {
+                auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+                if (!menu) return;
+                for (auto *action : menu->actions())
+                {
+                    if (action->objectName() != QLatin1String("contentRenameItem")) continue;
+                    menuFound = action->isEnabled();
+                    if (menuFound)
+                    {
+                        QTimer::singleShot(0, &window, [&]() {
+                            auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+                            if (!dialog || dialog->objectName() != QLatin1String("contentRenameDialog")) return;
+                            auto *editor = dialog->findChild<QLineEdit *>(QStringLiteral("contentRenameName"));
+                            auto *buttons = dialog->findChild<QDialogButtonBox *>(QStringLiteral("contentRenameButtons"));
+                            if (!editor || !buttons) { dialog->reject(); return; }
+                            dialogFound = true;
+                            QVERIFY(dialog->width() >= 500);
+                            QVERIFY(dialog->isSizeGripEnabled());
+                            const QString original = editor->text();
+                            const bool file = original.endsWith(QStringLiteral(".flac"));
+                            QCOMPARE(editor->selectedText(), file ? original.left(original.lastIndexOf(QLatin1Char('.'))) : original);
+                            editor->setText(name);
+                            buttons->button(accept ? QDialogButtonBox::Ok : QDialogButtonBox::Cancel)->click();
+                        });
+                        action->trigger();
+                    }
+                    break;
+                }
+                menu->close();
+            });
+            QVERIFY(QMetaObject::invokeMethod(tree, "customContextMenuRequested",
+                Qt::DirectConnection, Q_ARG(QPoint, QPoint(10, 10))));
+            QVERIFY(menuFound && dialogFound);
+        };
+        tree->expandItem(root(bonus)->child(0));
+        tree->setCurrentItem(root(bonus)->child(0)->child(0));
+        rename(QStringLiteral("cancelled.flac"), false);
+        QCOMPARE(server.commandsFor("/api/v2/torrents/renameFile"), 0);
+        QCOMPARE(server.contentEntries(second), files);
+        const QString renamed = QStringLiteral("new + 100%.flac");
+        rename(renamed, true);
+        QTRY_COMPARE_WITH_TIMEOUT(server.contentEntries(second).at(1).toObject()
+            .value(QStringLiteral("name")).toString(),
+            QStringLiteral("Bonus/Disc/") + renamed, 6000);
+        QTRY_COMPARE_WITH_TIMEOUT(root(bonus)->child(0)->child(0)->text(0), renamed, 6000);
+        tree->clearSelection();
+        tree->setCurrentItem(root(bonus));
+        const QString newFolder = QStringLiteral("Extras + 100%");
+        rename(newFolder, true);
+        QTRY_COMPARE_WITH_TIMEOUT(server.contentEntries(second).at(1).toObject()
+            .value(QStringLiteral("name")).toString(),
+            newFolder + QStringLiteral("/Disc/") + renamed, 6000);
+        QTRY_VERIFY_WITH_TIMEOUT(root(newFolder), 6000);
+        QCOMPARE(server.contentEntries(first), updated);
+        QCOMPARE(server.commandsFor("/api/v2/torrents/renameFile"), 1);
+        QCOMPARE(server.commandsFor("/api/v2/torrents/renameFolder"), 1);
     }
 
     void torrentCommentsUseSelectedServerAndRespectCapability()

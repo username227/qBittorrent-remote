@@ -2839,6 +2839,8 @@ void MainWindow::connectToProfile(const Remote::ServerProfile &profile,
             session, &Remote::RemoteSession::requestTorrentDetails);
     connect(connection->pane, &ServerPane::filePriorityRequested,
             session, &Remote::RemoteSession::setFilePriority);
+    connect(connection->pane, &ServerPane::contentRenameRequested, session, &Remote::RemoteSession::renameTorrentContentItem);
+    connect(session, &Remote::RemoteSession::torrentContentRenameFinished, connection->pane, &ServerPane::finishContentRename);
     connect(connection->pane, &ServerPane::addPeersRequested, session, &Remote::RemoteSession::addTorrentPeers);
     connect(connection->pane, &ServerPane::banPeersRequested, session, &Remote::RemoteSession::banTorrentPeers);
     connect(session, &Remote::RemoteSession::torrentPeerActionFinished, connection->pane, &ServerPane::finishPeerAction);

@@ -435,6 +435,7 @@ ServerPane::ServerPane(QWidget *parent) : QWidget(parent)
             [this](int) { requestSelectedDetails(); });
     connect(m_details, &TorrentDetailsWidget::filePriorityRequested,
             this, &ServerPane::filePriorityRequested);
+    connect(m_details, &TorrentDetailsWidget::contentRenameRequested, this, &ServerPane::contentRenameRequested);
     connect(m_details, &TorrentDetailsWidget::trackerDetailActionRequested, this, &ServerPane::trackerDetailActionRequested);
     connect(m_details, &TorrentDetailsWidget::trackerTiersRequested,
             this, &ServerPane::trackerTiersRequested);
@@ -1272,6 +1273,12 @@ void ServerPane::finishTrackerTierEdit(const QString &hash)
 {
     m_details->finishTrackerTierEdit(hash);
     requestSelectedDetails();
+}
+
+void ServerPane::finishContentRename(const QString &hash, const QString &oldPath, bool, const QString &)
+{
+    m_details->finishContentRename(hash, oldPath);
+    if (hash == m_selectedHash) requestSelectedDetails();
 }
 
 void ServerPane::refreshSelectedDetails()

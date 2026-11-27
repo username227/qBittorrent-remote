@@ -22,6 +22,8 @@
 #include <QMessageBox>
 #include <QInputDialog>
 #include <QFileInfo>
+#include <QFontMetrics>
+#include <QScreen>
 #include <QIcon>
 #include <QItemSelectionModel>
 #include <QLineEdit>
@@ -835,6 +837,11 @@ TorrentDetailsWidget::TorrentDetailsWidget(QWidget *parent)
         menu.setObjectName(QStringLiteral("torrentContentContextMenu"));
         menu.setToolTipsVisible(true);
         m_ui->filesList->addMappedOpenActions(menu);
+        auto *rename = menu.addAction(QIcon(QStringLiteral(":/icons/edit-rename.svg")), tr("Rename..."));
+        rename->setObjectName(QStringLiteral("contentRenameItem"));
+        rename->setIconVisibleInMenu(true);
+        rename->setEnabled(!selectedContentPath().isEmpty());
+        connect(rename, &QAction::triggered, this, &TorrentDetailsWidget::renameSelectedContent);
         menu.addSeparator();
         QMenu *priorityMenu = menu.addMenu(tr("Priority"));
         for (const auto option : {
@@ -849,6 +856,9 @@ TorrentDetailsWidget::TorrentDetailsWidget(QWidget *parent)
         }
         menu.exec(m_ui->filesList->viewport()->mapToGlobal(pos));
     });
+    auto *renameShortcut = new QShortcut(QKeySequence(Qt::Key_F2), tree);
+    renameShortcut->setContext(Qt::WidgetShortcut);
+    connect(renameShortcut, &QShortcut::activated, this, &TorrentDetailsWidget::renameSelectedContent);
     connect(m_ui->selectAllButton, &QPushButton::clicked, this,
             [this]() { chooseFilePriorities(1, true); });
     connect(m_ui->selectNoneButton, &QPushButton::clicked, this,
@@ -974,6 +984,8 @@ void TorrentDetailsWidget::showTab(int tab)
     {
         m_peerPrivacy = QJsonValue();
         m_webSeedsKnown = false;
+        m_contentKnown = false;
+        ++m_contentSelectionGeneration;
     }
     m_currentTab = tab;
     m_ui->stackedProperties->setCurrentIndex(tab);
@@ -1031,6 +1043,8 @@ void TorrentDetailsWidget::resetPages()
     m_webSeedsKnown = false;
     m_ui->listWebSeeds->clear();
     m_ui->filesList->clear();
+    m_contentKnown = false;
+    ++m_contentSelectionGeneration;
     m_error->hide();
     m_ui->selectAllButton->setEnabled(!m_hash.isEmpty());
     m_ui->selectNoneButton->setEnabled(!m_hash.isEmpty());
@@ -1766,6 +1780,100 @@ void TorrentDetailsWidget::setContentDragEnabled(bool enabled)
     m_ui->filesList->setContentDragEnabled(enabled);
 }
 
+QString TorrentDetailsWidget::selectedContentPath() const
+{
+    if (m_hash.isEmpty() || m_currentTab != 4 || !isVisible() || !m_contentKnown
+        || !m_pendingContentHash.isEmpty() || m_contentRenameDialogOpen)
+        return {};
+    const auto selected = m_ui->filesList->selectedItems();
+    if (selected.size() != 1) return {};
+    QStringList parts;
+    for (auto *item = selected.first(); item; item = item->parent())
+    {
+        const QString part = item->text(0);
+        if (part.isEmpty() || part == QLatin1String(".") || part == QLatin1String("..")
+            || part.contains(QLatin1Char('/')) || part.contains(QLatin1Char('\\'))
+            || part.contains(QLatin1Char('\r')) || part.contains(QLatin1Char('\n'))
+            || part.contains(QChar(0)))
+            return {};
+        parts.prepend(part);
+    }
+    return parts.join(QLatin1Char('/'));
+}
+
+void TorrentDetailsWidget::renameSelectedContent()
+{
+    const QString oldPath = selectedContentPath();
+    if (oldPath.isEmpty()) return;
+    const QString hash = m_hash;
+    const quint64 generation = m_contentSelectionGeneration;
+    const bool folder = !m_ui->filesList->selectedItems().first()->data(0, Qt::UserRole).isValid();
+    const int separator = oldPath.lastIndexOf(QLatin1Char('/'));
+    const QString oldName = oldPath.mid(separator + 1);
+    // QInputDialog can reset its minimum size when its internal layout
+    // initializes. Own the layout so long filenames have room on first show.
+    QDialog dialog(this);
+    dialog.setObjectName(QStringLiteral("contentRenameDialog"));
+    dialog.setWindowTitle(folder ? tr("Rename folder") : tr("Rename file"));
+    dialog.setSizeGripEnabled(true);
+    auto *layout = new QVBoxLayout(&dialog);
+    auto *label = new QLabel(tr("New name:"), &dialog);
+    auto *editor = new QLineEdit(oldName, &dialog);
+    editor->setObjectName(QStringLiteral("contentRenameName"));
+    label->setBuddy(editor);
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    buttons->setObjectName(QStringLiteral("contentRenameButtons"));
+    layout->addWidget(label);
+    layout->addWidget(editor);
+    layout->addWidget(buttons);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    // Use logical pixels and the actual font, leaving space for decorations
+    // on small displays. Longer names remain horizontally editable.
+    const int available = screen() ? qMax(1, screen()->availableGeometry().width() - 64) : 1000;
+    const int minimum = qMin(500, available);
+    const int preferred = qBound(minimum,
+        editor->fontMetrics().horizontalAdvance(oldName) + 80, available);
+    dialog.setMinimumWidth(minimum);
+    dialog.resize(preferred, dialog.sizeHint().height());
+    editor->setFocus();
+    const auto extension = oldName.lastIndexOf(QLatin1Char('.'));
+    const auto selectedLength = !folder && extension > 0 ? extension : oldName.size();
+    editor->setSelection(0, selectedLength);
+    m_contentRenameDialogOpen = true;
+    const int result = dialog.exec();
+    m_contentRenameDialogOpen = false;
+    if (result != QDialog::Accepted || generation != m_contentSelectionGeneration
+        || hash != m_hash || selectedContentPath() != oldPath
+        || folder != !m_ui->filesList->selectedItems().first()->data(0, Qt::UserRole).isValid())
+        return;
+    const QString name = editor->text();
+    if (name == oldName) return;
+    if (name.trimmed().isEmpty() || name == QLatin1String(".") || name == QLatin1String("..")
+        || name.contains(QLatin1Char('/')) || name.contains(QLatin1Char('\\'))
+        || name.contains(QLatin1Char('\r')) || name.contains(QLatin1Char('\n'))
+        || name.contains(QChar(0)))
+    {
+        QMessageBox::warning(this, tr("Invalid name"),
+            tr("Enter a single file or folder name, not a path."));
+        return;
+    }
+    m_pendingContentHash = hash;
+    m_pendingContentPath = oldPath;
+    emit contentRenameRequested(hash, oldPath, oldPath.left(separator + 1) + name, folder);
+}
+
+void TorrentDetailsWidget::finishContentRename(const QString &hash, const QString &oldPath)
+{
+    if (hash == m_pendingContentHash && oldPath == m_pendingContentPath)
+    {
+        m_pendingContentHash.clear();
+        m_pendingContentPath.clear();
+        if (hash == m_hash) m_contentKnown = false;
+    }
+}
+
 void TorrentDetailsWidget::displayFiles(const QJsonArray &files)
 {
     auto *tree = m_ui->filesList;
@@ -2124,7 +2232,7 @@ void TorrentDetailsWidget::displayDetails(const QString &hash, int tab,
     case 1: displayTrackers(data.toArray()); break;
     case 2: displayPeers(data.toObject()); break;
     case 3: displayWebSeeds(data.toArray()); break;
-    case 4: displayFiles(data.toArray()); break;
+    case 4: m_contentKnown = data.isArray(); displayFiles(data.toArray()); break;
     default: break;
     }
 }
@@ -2162,6 +2270,7 @@ void TorrentDetailsWidget::displayError(const QString &hash, int tab, const QStr
         updateTrackerTierButtons();
     }
     if (tab == 3) m_webSeedsKnown = false;
+    if (tab == 4) m_contentKnown = false;
     if (tab == 2)
     {
         m_peerRecords = {};
