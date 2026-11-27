@@ -11550,6 +11550,135 @@ private slots:
         QCOMPARE(server.commandsFor("/api/v2/torrents/setLocation"), 0);
     }
 
+    void incompletePreviewUsesActualMappedStorage()
+    {
+        DemoQbittorrentServer server(true);
+        server.enableDetailsDemo();
+        server.enableRemoteContentAndOptionsDemo();
+        const QString hash(40, QLatin1Char('a'));
+        server.setSidebarSnapshot(QJsonObject{{"torrents", QJsonObject{
+            {hash, QJsonObject{{"name", "Preview demo"}, {"size", 4096},
+                {"progress", 0.5}, {"state", "downloading"},
+                {"save_path", "/share/NAS/Finished"},
+                {"download_path", "/share/NAS/Incomplete"},
+                {"content_path", "/share/NAS/Incomplete/Album"}}}}},
+            {"server_state", QJsonObject{}}});
+        server.setContentEntries(hash, QJsonArray{
+            QJsonObject{{"index", 0}, {"name", "Album/track.flac"}, {"size", 2048},
+                {"progress", 0.5}, {"priority", 1}},
+            QJsonObject{{"index", 1}, {"name", "Album/complete.mp4"}, {"size", 1024},
+                {"progress", 1.0}, {"priority", 1}},
+            QJsonObject{{"index", 2}, {"name", "Album/notes.txt"}, {"size", 1024},
+                {"progress", 0.5}, {"priority", 1}}});
+        QVERIFY(server.start());
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        const QString mount = temp.filePath("NAS");
+        const QString unfinished = mount + "/Incomplete/Album";
+        const QString finished = mount + "/Finished/Album";
+        QVERIFY(QDir().mkpath(unfinished));
+        QVERIFY(QDir().mkpath(finished));
+        const QString plain = unfinished + "/track.flac";
+        const QString partial = plain + ".!qB";
+        const auto create = [](const QString &path) {
+            QFile file(path);
+            return file.open(QIODevice::WriteOnly) && file.write("fixture", 7) == 7;
+        };
+        QVERIFY(create(partial));
+        QVERIFY(create(finished + "/track.flac")); // Never open a stale destination copy.
+        QVERIFY(create(unfinished + "/complete.mp4"));
+        QVERIFY(create(unfinished + "/notes.txt"));
+        QSettings settings(temp.filePath("profiles.ini"), QSettings::IniFormat);
+        DemoCredentialVault vault;
+        MainWindow window(nullptr, &settings, &vault);
+        window.show();
+        openConnectDialog(window, server.url());
+        auto *table = window.findChild<QTableView *>("torrentList");
+        auto *tabs = window.findChild<PropTabBar *>();
+        auto *tree = window.findChild<MappedContentTreeWidget *>("torrentContent");
+        auto *preferences = window.findChild<QAction *>("actionOptions");
+        QVERIFY(table && tabs && tree && preferences);
+        QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 1, 6000);
+        const auto profiles = Remote::ProfileStore(settings).profiles();
+        QCOMPARE(profiles.size(), 1);
+        QVERIFY(Remote::PathMappingStore(settings).replace(profiles.first().id,
+            {{mount, QStringLiteral("/share/NAS")}}));
+        QTimer::singleShot(0, &window, []() {
+            if (auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget()))
+                dialog->reject();
+        });
+        preferences->trigger();
+        table->selectRow(0);
+        tabs->setCurrentIndex(4);
+        QTRY_COMPARE_WITH_TIMEOUT(tree->topLevelItemCount(), 1, 6000);
+        QTRY_COMPARE_WITH_TIMEOUT(tree->topLevelItem(0)->childCount(), 3, 6000);
+        auto *album = tree->topLevelItem(0);
+        const auto find = [&](const QString &name) {
+            for (int i = 0; i < album->childCount(); ++i)
+                if (album->child(i)->text(0) == name) return album->child(i);
+            return static_cast<QTreeWidgetItem *>(nullptr);
+        };
+        auto *track = find("track.flac");
+        auto *complete = find("complete.mp4");
+        auto *notes = find("notes.txt");
+        QVERIFY(track && complete && notes);
+        struct RestorePreviewOpen {
+            ~RestorePreviewOpen() { QDesktopServices::unsetUrlHandler(QStringLiteral("file")); }
+        } restoreHandler;
+        m_fileOpenRequests.clear();
+        QDesktopServices::setUrlHandler(QStringLiteral("file"), this, "recordFileOpenRequest");
+        const auto preview = [&](bool enabled, bool trigger = true) {
+            bool found = false, actualEnabled = false;
+            QTimer::singleShot(0, &window, [&]() {
+                auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+                if (!menu) return;
+                for (auto *action : menu->actions())
+                {
+                    if (action->objectName() != QLatin1String("contentPreviewIncomplete")) continue;
+                    found = true;
+                    actualEnabled = action->isEnabled();
+                    if (actualEnabled && trigger) action->trigger();
+                    break;
+                }
+                menu->close();
+            });
+            QVERIFY(QMetaObject::invokeMethod(tree, "customContextMenuRequested",
+                Qt::DirectConnection, Q_ARG(QPoint, QPoint(10, 10))));
+            QVERIFY(found);
+            QCOMPARE(actualEnabled, enabled);
+        };
+        tree->setCurrentItem(track);
+        preview(true);
+        QCOMPARE(m_fileOpenRequests.size(), 1);
+        QCOMPARE(m_fileOpenRequests.last(), QUrl::fromLocalFile(QFileInfo(partial).canonicalFilePath()));
+        QVERIFY(create(plain));
+        preview(false); // Two plausible names, neither can be chosen safely.
+        QCOMPARE(m_fileOpenRequests.size(), 1);
+        QVERIFY(QFile::remove(partial));
+        preview(true);
+        QCOMPARE(m_fileOpenRequests.size(), 2);
+        QCOMPARE(m_fileOpenRequests.last(), QUrl::fromLocalFile(QFileInfo(plain).canonicalFilePath()));
+        QVERIFY(QFile::remove(plain));
+        preview(false); // The finished-directory copy is not the actual file.
+        QVERIFY(create(partial));
+        tree->setCurrentItem(complete);
+        preview(false);
+        tree->setCurrentItem(notes);
+        preview(false);
+        tree->setCurrentItem(album);
+        preview(false);
+        tree->clearSelection();
+        track->setSelected(true);
+        complete->setSelected(true);
+        preview(false);
+        tree->setCurrentItem(track);
+        tree->setPathMappings({});
+        preview(false);
+        QCOMPARE(m_fileOpenRequests.size(), 2);
+        QCOMPARE(server.commandsFor("/api/v2/torrents/filePrio"), 0);
+        QCOMPARE(server.commandsFor("/api/v2/torrents/renameFile"), 0);
+    }
+
     void userCanSelectSevenTorrentFilesAndUploadOneAuthenticatedBatch()
     {
         DemoQbittorrentServer server(true);

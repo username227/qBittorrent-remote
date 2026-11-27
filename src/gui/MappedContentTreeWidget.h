@@ -34,6 +34,8 @@ protected:
 
 private:
     QString mappedSinglePath() const;
+    QString mappedIncompletePreviewPath() const;
+    QString mappedExistingPath(const QString &remote, bool folder) const;
     QString mappedParentPath(const QString &path) const;
     void openMappedPath(const QString &path);
     QList<Remote::PathMapping> m_mappings;
