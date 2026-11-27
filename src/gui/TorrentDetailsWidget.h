@@ -97,6 +97,8 @@ private:
     QList<int> selectedContentFileIds() const;
     void batchRenameSelectedContent();
     void chooseFilePriorities(int priority, bool allFiles);
+    QList<QList<int>> selectedContentPriorityGroups() const;
+    void chooseFilePrioritiesByOrder(const QList<QList<int>> &groups);
     void updateFileFolders();
     void resetPages();
     void setValue(const char *labelObjectName, const QString &text);
