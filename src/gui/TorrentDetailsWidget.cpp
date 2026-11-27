@@ -1682,6 +1682,22 @@ void TorrentDetailsWidget::displayPeers(const QJsonObject &reply)
         m_peerRecords.insert(it.key(), record);
     }
 
+    // Before 5.2, disabling country resolution omits country fields from
+    // the serialized peers. The historical delta engine does not emit
+    // field removals, so show_flags=false is the authoritative signal
+    // to clear country information even if there are no peer patches.
+    const auto flags = reply.value(QStringLiteral("show_flags"));
+    if (flags.isBool() && !flags.toBool())
+    {
+        for (auto it = m_peerRecords.begin(); it != m_peerRecords.end(); ++it)
+        {
+            auto record = it.value().toObject();
+            record.remove(QStringLiteral("country"));
+            record.remove(QStringLiteral("country_code"));
+            it.value() = record;
+        }
+    }
+
     // Keep surviving table items and their selection; update fields in place.
     // Sorting is suspended so inserts/updates cannot change row identity.
     m_peers->setUpdatesEnabled(false);

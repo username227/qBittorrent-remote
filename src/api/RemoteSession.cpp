@@ -1138,15 +1138,19 @@ void RemoteSession::pumpOperations()
                     const int rid = peers.value(QStringLiteral("rid")).toInt(-1);
                     const auto updates = peers.value(QStringLiteral("peers"));
                     const auto removed = peers.value(QStringLiteral("peers_removed"));
+                    const auto full = peers.value(QStringLiteral("full_update"));
+                    const auto flags = peers.value(QStringLiteral("show_flags"));
                     bool valid = rid > 0 && rid <= 1000000
-                        && (m_peerRid != 0 || peers.value(QStringLiteral("full_update")).toBool())
+                        && (full.isUndefined() || full.isBool())
+                        && (flags.isUndefined() || flags.isBool())
+                        && (m_peerRid != 0 || full.toBool())
                         && (updates.isUndefined() || updates.isObject())
                         && (removed.isUndefined() || removed.isArray());
                     const auto changes = updates.toObject();
                     for (auto it = changes.constBegin(); it != changes.constEnd(); ++it)
                         valid = valid && !it.key().isEmpty() && it.value().isObject();
                     for (const auto &key : removed.toArray())
-                        valid = valid && key.isString();
+                        valid = valid && key.isString() && !key.toString().isEmpty();
                     if (!valid)
                     {
                         m_peerRid = 0;
