@@ -5,6 +5,7 @@
 
 #include "api/ServerAddress.h"
 #include "api/ServerProfile.h"
+#include "api/ServerCapabilities.h"
 
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
@@ -89,9 +90,11 @@ public:
     void connectToServer(const ServerProfile &profile, const QString &password);
     void disconnectFromServer();
     bool isConnected() const noexcept;
-    bool supportsTrackerTierEditing() const noexcept { return m_connected && m_trackerTierEditing; }
-    bool supportsCommentEditing() const noexcept { return m_connected && m_commentEditing; }
-    bool supportsSelectedTrackerReannounce() const noexcept { return m_connected && m_selectedTrackerReannounce; }
+    const ServerCapabilities &capabilities() const noexcept { return m_capabilities; }
+    bool supportsTrackerUrlEditing() const noexcept { return m_connected && m_capabilities.trackerUrlEditing(); }
+    bool supportsTrackerTierEditing() const noexcept { return m_connected && m_capabilities.trackerTierEditing(); }
+    bool supportsCommentEditing() const noexcept { return m_connected && m_capabilities.commentEditing(); }
+    bool supportsSelectedTrackerReannounce() const noexcept { return m_connected && m_capabilities.selectedTrackerReannounce(); }
 
     void commandTorrents(TorrentCommand command, const QStringList &hashes,
                          bool deleteFiles = false);
@@ -128,7 +131,7 @@ public:
     using ArrayResult = std::function<void(const QJsonArray &)>;
     void requestLog(bool peers, int lastKnownId, ArrayResult received, PreferencesError failed);
     void requestDirectoryContent(const QString &path, bool directories, ArrayResult received, PreferencesError failed);
-    bool supportsPathFreeSpace() const noexcept { return m_connected && m_pathFreeSpace; }
+    bool supportsPathFreeSpace() const noexcept { return m_connected && m_capabilities.pathFreeSpace(); }
     void requestPathFreeSpace(const QString &path, std::function<void(qint64)> received, PreferencesError failed);
     void requestCookies(ArrayResult received, PreferencesError failed);
     void setCookies(const QJsonArray &cookies, std::function<void()> accepted, PreferencesError failed);
@@ -263,11 +266,7 @@ private:
     QString m_tlsFailure;
     CertificateConfirmation m_confirmation;
     bool m_connected = false;
-    bool m_trackerTierEditing = false;
-    bool m_pathFreeSpace = false;
-    bool m_pieceAvailability = false;
-    bool m_commentEditing = false;
-    bool m_selectedTrackerReannounce = false;
+    ServerCapabilities m_capabilities;
     bool m_detailTrackersKnown = false;
     QStringList m_detailTrackerUrls;
     QString m_detailHash;

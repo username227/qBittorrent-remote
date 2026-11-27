@@ -115,6 +115,112 @@
         }
       ],
       "live_status": "unverified"
+    },
+    {
+      "id": "capability-tracker-edit",
+      "scope": "torrents/editTracker",
+      "status": "source-reviewed-partial",
+      "findings": "Absent in 4.1.4 controller; 4.1.5 requires hash, origUrl, newUrl. 5.1.4 uses the same names. 5.2.0 replaces origUrl with url and permits newUrl and/or tier. The client separates tracker URL syntax, tier editing, and selected reannounce. Intermediate backend/helper and exact response contracts remain pending.",
+      "evidence": [
+        {
+          "release": "4.1.4",
+          "commit": "0061b752001e2d5c60b88f736e46685a64ea6bb9",
+          "path": "src/webui/api/torrentscontroller.cpp",
+          "blob": "660bcab8cb05b718eb4663c74d900b6b21af0680",
+          "lines": "whole controller (action absent)"
+        },
+        {
+          "release": "4.1.5",
+          "commit": "3f0e0a319a6f4833b238842744ed1f37104fcd4c",
+          "path": "src/webui/api/torrentscontroller.cpp",
+          "blob": "6edbe1d310a66057c0440a1522dd7ee9e16a35c0",
+          "lines": "616-638"
+        },
+        {
+          "release": "5.1.4",
+          "commit": "33e5e772200b5e2f9d23af8870ce7436ec216faa",
+          "path": "src/webui/api/torrentscontroller.cpp",
+          "blob": "39e536867fd72613fe2ee502294cca770ad4ffee",
+          "lines": "921-975"
+        },
+        {
+          "release": "5.2.0",
+          "commit": "b2270f7f6fec1b10117564f642b961621ae0058a",
+          "path": "src/webui/api/torrentscontroller.cpp",
+          "blob": "5a529eb6691696149d6c777fb226a23d6630c0cc",
+          "lines": "1293-1375"
+        }
+      ],
+      "live_status": "not yet verified",
+      "regression_tests": [
+        "lockedReleaseCapabilityPolicy",
+        "mixedHistoricalCapabilityDispatch",
+        "trackerTabActionsRespectServerVersionAndPrivateMetadata",
+        "nativeTrackerTierArrowsFollowServerCapability"
+      ]
+    },
+    {
+      "id": "capability-5.2-properties",
+      "scope": "torrents/pieceAvailability, setComment, selected reannounce",
+      "status": "source-reviewed-partial",
+      "findings": "5.1.4 lacks pieceAvailability and setComment; reannounce accepts hashes without using urls. 5.2.0 introduces both actions and optional percent-decoded selected tracker urls. Do not substitute all-tracker reannounce for a selected operation. Backend/build restrictions and exact responses remain pending.",
+      "evidence": [
+        {
+          "release": "5.1.4",
+          "commit": "33e5e772200b5e2f9d23af8870ce7436ec216faa",
+          "path": "src/webui/api/torrentscontroller.cpp",
+          "blob": "39e536867fd72613fe2ee502294cca770ad4ffee",
+          "lines": "1386-1393; whole controller (other actions absent)"
+        },
+        {
+          "release": "5.2.0",
+          "commit": "b2270f7f6fec1b10117564f642b961621ae0058a",
+          "path": "src/webui/api/torrentscontroller.cpp",
+          "blob": "5a529eb6691696149d6c777fb226a23d6630c0cc",
+          "lines": "1055-1070,1788-1800,1826-1855"
+        },
+        {
+          "release": "5.2.4",
+          "commit": "a1e4649cb8ae581925acc161dbab5cbc6584c542",
+          "path": "src/webui/api/torrentscontroller.cpp",
+          "blob": "752053b43c45e3039291eec2bf8ae0c278712f81",
+          "lines": "1055,1788,1826 (action definitions)"
+        }
+      ],
+      "live_status": "not yet verified",
+      "regression_tests": [
+        "lockedReleaseCapabilityPolicy",
+        "mixedHistoricalCapabilityDispatch",
+        "torrentCommentsUseSelectedServerAndRespectCapability",
+        "trackerTabActionsRespectServerVersionAndPrivateMetadata"
+      ]
+    },
+    {
+      "id": "capability-path-space",
+      "scope": "app/getFreeSpaceAtPath",
+      "status": "source-reviewed-partial",
+      "findings": "5.2.4 controller lacks action; 5.3.0 requires path and returns decimal qint64 text. Backend path/error semantics remain pending. Existing API 2.16.0 gate retained with stable daemon corroboration; declared 5.3.0 API version is 2.16.2.",
+      "evidence": [
+        {
+          "release": "5.2.4",
+          "commit": "a1e4649cb8ae581925acc161dbab5cbc6584c542",
+          "path": "src/webui/api/appcontroller.cpp",
+          "blob": "aadd9afbe9dc6d878a2d65c14b448b21db80b432",
+          "lines": "whole controller (action absent)"
+        },
+        {
+          "release": "5.3.0",
+          "commit": "9213075dd5f7b352208361c6a84c1c115efc898e",
+          "path": "src/webui/api/appcontroller.cpp",
+          "blob": "3df8c2d57f8a6186573da02652506d966aa380b1",
+          "lines": "1357-1363"
+        }
+      ],
+      "live_status": "not yet verified",
+      "regression_tests": [
+        "lockedReleaseCapabilityPolicy",
+        "mixedHistoricalCapabilityDispatch"
+      ]
     }
   ],
   "adjacent_status": [

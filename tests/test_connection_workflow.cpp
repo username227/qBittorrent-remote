@@ -109,6 +109,23 @@
 class DemoQbittorrentServer final : public QObject
 {
 public:
+    // Independent, deliberately scoped historical contracts. Other
+    // fixture responses remain synthetic until their subsystem audit.
+    enum class CapabilityProfile { Synthetic, V410, V514, V520, V530 };
+    void setCapabilityProfile(CapabilityProfile profile)
+    {
+        m_capabilityProfile = profile;
+        switch (profile)
+        {
+        case CapabilityProfile::V410: setReportedVersions("v4.1.0", "2.0"); break;
+        case CapabilityProfile::V514: setReportedVersions("v5.1.4", "2.11.4"); break;
+        case CapabilityProfile::V520: setReportedVersions("v5.2.0", "2.15.1"); break;
+        case CapabilityProfile::V530: setReportedVersions("v5.3.0", "2.16.2"); break;
+        case CapabilityProfile::Synthetic: break;
+        }
+    }
+    int prohibitedCapabilityRequests() const noexcept { return m_prohibitedCapabilityRequests; }
+
     explicit DemoQbittorrentServer(bool acceptPassword, QObject *parent = nullptr,
                                    bool acceptBlank = false)
         : QObject(parent)
@@ -146,7 +163,12 @@ public:
                         int code = 200;
                         QByteArray response;
                         QByteArray cookieHeader;
-                        if (path == "/api/v2/auth/login")
+                        if (hasCookie && rejectsCapabilityRequest(path, fields.value(0), body, code))
+                        {
+                            ++m_prohibitedCapabilityRequests;
+                            response = "Outside historical fixture contract";
+                        }
+                        else if (path == "/api/v2/auth/login")
                         {
                             const QUrlQuery data(QString::fromUtf8(body));
                             // Upstream creates a bypass session before loginAction,
@@ -1332,6 +1354,62 @@ public:
     }
 
 private:
+    bool rejectsCapabilityRequest(const QByteArray &path, const QByteArray &method,
+                                  const QByteArray &body, int &status) const
+    {
+        if (m_capabilityProfile == CapabilityProfile::Synthetic) return false;
+        // Independent upstream-derived oracle. Old reannounce ignores urls;
+        // the fixture deliberately flags that prohibited client request
+        // rather than modelling a broader reannounce as a success.
+        const bool earliest = m_capabilityProfile == CapabilityProfile::V410;
+        const bool modernTracker = m_capabilityProfile == CapabilityProfile::V520
+            || m_capabilityProfile == CapabilityProfile::V530;
+        const bool pathSpace = m_capabilityProfile == CapabilityProfile::V530;
+        const QUrlQuery form(QString::fromUtf8(body));
+        const auto reject = [&status](int code) { status = code; return true; };
+        if (path == "/api/v2/torrents/editTracker")
+        {
+            if (earliest) return reject(404);
+            if (method != "POST" || !form.hasQueryItem("hash")) return reject(400);
+            if (modernTracker)
+            {
+                if (!form.hasQueryItem("url") || form.hasQueryItem("origUrl")
+                    || (!form.hasQueryItem("newUrl") && !form.hasQueryItem("tier")))
+                    return reject(400);
+            }
+            else if (!form.hasQueryItem("origUrl") || !form.hasQueryItem("newUrl")
+                     || form.hasQueryItem("url") || form.hasQueryItem("tier"))
+                return reject(400);
+        }
+        else if (path == "/api/v2/torrents/setComment")
+        {
+            if (!modernTracker) return reject(404);
+            if (method != "POST" || !form.hasQueryItem("hashes") || !form.hasQueryItem("comment"))
+                return reject(400);
+        }
+        else if (path == "/api/v2/torrents/reannounce")
+        {
+            if (earliest) return reject(404);
+            if (method != "POST" || !form.hasQueryItem("hashes")
+                || (!modernTracker && form.hasQueryItem("urls"))) return reject(400);
+        }
+        else if (path.startsWith("/api/v2/torrents/pieceAvailability?"))
+        {
+            if (!modernTracker) return reject(404);
+            const QUrlQuery query(QString::fromUtf8(path.mid(path.indexOf('?') + 1)));
+            if (method != "GET" || !query.hasQueryItem("hash")) return reject(400);
+        }
+        else if (path.startsWith("/api/v2/app/getFreeSpaceAtPath?"))
+        {
+            if (!pathSpace) return reject(404);
+            const QUrlQuery query(QString::fromUtf8(path.mid(path.indexOf('?') + 1)));
+            if (method != "GET" || !query.hasQueryItem("path")) return reject(400);
+        }
+        return false;
+    }
+
+    CapabilityProfile m_capabilityProfile = CapabilityProfile::Synthetic;
+    int m_prohibitedCapabilityRequests = 0;
     QTcpServer m_server;
     bool m_acceptPassword;
     bool m_acceptBlank;
@@ -1763,6 +1841,174 @@ private:
     }
 
 private slots:
+    void lockedReleaseCapabilityPolicy()
+    {
+        using Caps = Remote::ServerCapabilities;
+        using Feature = Caps::Feature;
+        using Status = Caps::Status;
+        using Syntax = Caps::TrackerEditSyntax;
+        QFile file(QString::fromUtf8(QBT_COMPATIBILITY_RELEASE_LOCK));
+        QVERIFY2(file.open(QIODevice::ReadOnly), qPrintable(file.errorString()));
+        const auto releases = QJsonDocument::fromJson(file.readAll()).object().value("releases").toArray();
+        QCOMPARE(releases.size(), qsizetype(68));
+        // Independent expected stable-release boundaries, not resolver output.
+        QSet<QString> seen;
+        for (const auto &entry : releases)
+        {
+            const auto release = entry.toObject();
+            const QString version = release.value("version").toString();
+            QVERIFY(!seen.contains(version));
+            seen.insert(version);
+            QString api = release.value("declared_api_version").toString();
+            if (version == "4.1.0") api = "2.0"; // observed live wire value
+            const auto caps = Caps::fromVersions("v" + version, api);
+            QVERIFY2(caps.hasKnownRelease() && caps.hasWebApiV2(), qPrintable(version));
+            QVERIFY2(caps.versionWarning().isEmpty(), qPrintable(version));
+            const bool modern = version.startsWith("5.2.") || version.startsWith("5.3.");
+            const bool newest = version.startsWith("5.3.");
+            const bool beforeTrackerEdit = version == "4.1.0" || version == "4.1.1"
+                || version == "4.1.2" || version == "4.1.3" || version == "4.1.4";
+            QCOMPARE(caps.trackerEditSyntax(), beforeTrackerEdit ? Syntax::Unsupported
+                : modern ? Syntax::ModernUrl : Syntax::LegacyOrigUrl);
+            QCOMPARE(caps.status(Feature::TrackerUrlEditing), beforeTrackerEdit ? Status::Unsupported : Status::Supported);
+            for (auto feature : {Feature::TrackerTierEditing, Feature::SelectedTrackerReannounce,
+                                 Feature::PieceAvailability, Feature::CommentEditing})
+                QCOMPARE(caps.status(feature), modern ? Status::Supported : Status::Unsupported);
+            // Preferences are regression policy, not yet audited per-setting contracts.
+            for (auto feature : {Feature::PathFreeSpace, Feature::AdvancedModernPreferences, Feature::BanRanges})
+                QCOMPARE(caps.status(feature), newest ? Status::Supported : Status::Unsupported);
+        }
+        QCOMPARE(seen.size(), qsizetype(68));
+
+        for (const auto *daemon : {"v5.3.0-beta1", "v5.3.0junk", "v5.3.2", "v5.2.99", "v4.0.4", "v5.3", ""})
+        {
+            const auto caps = Caps::fromVersions(QString::fromLatin1(daemon), "2.16.2");
+            QCOMPARE(caps.status(Feature::CommentEditing), Status::Unknown);
+            QCOMPARE(caps.trackerEditSyntax(), Syntax::Unknown);
+            QVERIFY(!caps.versionWarning().isEmpty());
+        }
+        for (const auto *api : {"2.16.2junk", "2.16.2.1", "3.0.0", "2", "", "2.16.99999999999999999999999999"})
+        {
+            const auto caps = Caps::fromVersions("v5.3.0", QString::fromLatin1(api));
+            QCOMPARE(caps.status(Feature::TrackerTierEditing), Status::Unknown);
+            QCOMPARE(caps.status(Feature::PathFreeSpace), Status::Unknown);
+            QCOMPARE(caps.trackerEditSyntax(), Syntax::Unknown);
+        }
+        const auto contradictory = Caps::fromVersions("v5.1.4", "2.16.2");
+        QCOMPARE(contradictory.status(Feature::TrackerTierEditing), Status::Unknown);
+        QCOMPARE(contradictory.trackerEditSyntax(), Syntax::Unknown);
+        QVERIFY(!contradictory.versionWarning().isEmpty());
+        const auto shortApi = Caps::fromVersions("v5.3.0", "2.16");
+        QCOMPARE(shortApi.apiVersion(), QStringLiteral("2.16"));
+        QCOMPARE(shortApi.status(Feature::PathFreeSpace), Status::Supported);
+        const auto empty = Caps{};
+        QCOMPARE(empty.status(Feature::CommentEditing), Status::Unknown);
+        QVERIFY(!empty.unavailableReason(Feature::CommentEditing).isEmpty());
+    }
+
+    void mixedHistoricalCapabilityDispatch()
+    {
+        using Caps = Remote::ServerCapabilities;
+        using Feature = Caps::Feature;
+        using Status = Caps::Status;
+        using Profile = DemoQbittorrentServer::CapabilityProfile;
+        DemoQbittorrentServer oldest(true), older(true), boundary(true), current(true), unknown(true);
+        oldest.setCapabilityProfile(Profile::V410);
+        older.setCapabilityProfile(Profile::V514);
+        boundary.setCapabilityProfile(Profile::V520);
+        current.setCapabilityProfile(Profile::V530);
+        unknown.setReportedVersions("v5.3.0-beta1", "2.16.2");
+        const QString hash(40, QLatin1Char('a'));
+        const QString original = "https://tracker.example/announce?token=a%2Bb";
+        const QString replacement = "https://replacement.example/announce?x=+";
+        const QJsonArray initial{QJsonObject{{"url", original}, {"tier", 0}}};
+        QObject lifetime;
+        auto connectServer = [&](DemoQbittorrentServer &server) -> Remote::RemoteSession * {
+            server.enableStatefulTrackerEditingDemo();
+            server.setTrackerEntries(hash, initial);
+            if (!server.start()) return nullptr;
+            auto *session = new Remote::RemoteSession(&lifetime);
+            Remote::ServerProfile profile;
+            profile.url = server.url();
+            profile.username = "demo";
+            profile.name = "Compatibility";
+            session->connectToServer(profile, "demo-password");
+            return session;
+        };
+        auto *old = connectServer(oldest);
+        auto *legacy = connectServer(older);
+        auto *modern = connectServer(boundary);
+        auto *latest = connectServer(current);
+        auto *unrecognized = connectServer(unknown);
+        QVERIFY(old && legacy && modern && latest && unrecognized);
+        QTRY_VERIFY_WITH_TIMEOUT(old->isConnected() && legacy->isConnected()
+            && modern->isConnected() && latest->isConnected() && unrecognized->isConnected(), 10000);
+
+        QCOMPARE(old->capabilities().apiVersion(), QStringLiteral("2.0"));
+        QCOMPARE(old->capabilities().status(Feature::TrackerUrlEditing), Status::Unsupported);
+        QCOMPARE(legacy->capabilities().status(Feature::TrackerTierEditing), Status::Unsupported);
+        QCOMPARE(modern->capabilities().status(Feature::TrackerTierEditing), Status::Supported);
+        QCOMPARE(modern->capabilities().status(Feature::PathFreeSpace), Status::Unsupported);
+        QCOMPARE(latest->capabilities().status(Feature::PathFreeSpace), Status::Supported);
+        QCOMPARE(unrecognized->capabilities().status(Feature::TrackerUrlEditing), Status::Unknown);
+
+        QSignalSpy oldErrors(old, &Remote::RemoteSession::operationFailed);
+        QSignalSpy legacyErrors(legacy, &Remote::RemoteSession::operationFailed);
+        QSignalSpy unknownErrors(unrecognized, &Remote::RemoteSession::operationFailed);
+        old->editTorrentTracker(hash, original, replacement);
+        old->setTorrentComment(hash, "blocked");
+        legacy->setTrackerTiers(hash, QJsonObject{{original, 1}});
+        legacy->setTorrentComment(hash, "blocked");
+        unrecognized->editTorrentTracker(hash, original, replacement);
+        unrecognized->setTorrentComment(hash, "blocked");
+        unrecognized->replaceTorrentTrackers(hash, original, replacement, true);
+        QCOMPARE(oldErrors.size(), 2);
+        QCOMPARE(legacyErrors.size(), 2);
+        QCOMPARE(unknownErrors.size(), 3);
+        QVERIFY(oldErrors.first().at(1).toString().contains("not supported"));
+        QVERIFY(unknownErrors.first().at(1).toString().contains("unknown"));
+
+        const QByteArray editRoute("/api/v2/torrents/editTracker");
+        const QByteArray commentRoute("/api/v2/torrents/setComment");
+        legacy->editTorrentTracker(hash, original, replacement);
+        modern->editTorrentTracker(hash, original, replacement);
+        modern->setTorrentComment(hash, "Modern only");
+        QTRY_COMPARE_WITH_TIMEOUT(older.commandsFor(editRoute), 1, 6000);
+        QTRY_COMPARE_WITH_TIMEOUT(boundary.commandsFor(editRoute), 1, 6000);
+        QTRY_COMPARE_WITH_TIMEOUT(boundary.commandsFor(commentRoute), 1, 6000);
+        const QUrlQuery legacyForm(QString::fromUtf8(older.lastCommandBody(editRoute)));
+        const QUrlQuery modernForm(QString::fromUtf8(boundary.lastCommandBody(editRoute)));
+        QCOMPARE(legacyForm.queryItemValue("origUrl", QUrl::FullyDecoded), original);
+        QCOMPARE(modernForm.queryItemValue("url", QUrl::FullyDecoded), original);
+        QVERIFY(!legacyForm.hasQueryItem("url") && !modernForm.hasQueryItem("origUrl"));
+        QTRY_COMPARE_WITH_TIMEOUT(older.trackerEntries(hash).first().toObject().value("url").toString(), replacement, 6000);
+        QTRY_COMPARE_WITH_TIMEOUT(boundary.trackerEntries(hash).first().toObject().value("url").toString(), replacement, 6000);
+
+        bool refused = false;
+        modern->requestPathFreeSpace("/browse", {}, [&](const QString &) { refused = true; });
+        QVERIFY(refused);
+        qint64 freeBytes = -1;
+        latest->requestPathFreeSpace("/browse", [&](qint64 bytes) { freeBytes = bytes; }, {});
+        QTRY_COMPARE_WITH_TIMEOUT(freeBytes, qint64(1073741824), 6000);
+        QCOMPARE(oldest.commandsFor(editRoute), 0);
+        QCOMPARE(oldest.commandsFor(commentRoute), 0);
+        QCOMPARE(older.commandsFor(commentRoute), 0);
+        QCOMPARE(unknown.commandsFor(editRoute), 0);
+        QCOMPARE(unknown.commandsFor(commentRoute), 0);
+        QCOMPARE(unknown.commandsFor("/api/v2/torrents/removeTrackers"), 0);
+        QCOMPARE(unknown.commandsFor("/api/v2/torrents/addTrackers"), 0);
+        for (auto *server : {&oldest, &older, &boundary, &current})
+            QCOMPARE(server->prohibitedCapabilityRequests(), 0);
+
+        QPointer<Remote::RemoteSession> oldGuard(old);
+        old->disconnectFromServer();
+        if (oldGuard)
+            QCOMPARE(oldGuard->capabilities().status(Feature::TrackerUrlEditing), Status::Unknown);
+        QTRY_VERIFY_WITH_TIMEOUT(oldGuard.isNull(), 6000);
+        QVERIFY(modern->isConnected() && latest->isConnected());
+        QCOMPARE(modern->capabilities().status(Feature::TrackerTierEditing), Status::Supported);
+    }
+
     void nativeTrayMenuControlsRemoteSessionAndSpeedLimitsWhileHidden()
     {
         DemoQbittorrentServer server(true);
@@ -9021,8 +9267,9 @@ private slots:
     {
         DemoQbittorrentServer legacy(true);
         DemoQbittorrentServer modern(true);
-        legacy.setReportedVersions(QStringLiteral("v5.1.4"), QStringLiteral("2.11.4"));
+        legacy.setCapabilityProfile(DemoQbittorrentServer::CapabilityProfile::V514);
         modern.enableModernResponses();
+        modern.setCapabilityProfile(DemoQbittorrentServer::CapabilityProfile::V520);
         for (auto *server : {&legacy, &modern})
         {
             server->enableNativePresentationDemo();
@@ -9118,6 +9365,8 @@ private slots:
         {
             DemoQbittorrentServer server(true);
             if (modern) server.enableModernResponses();
+            server.setCapabilityProfile(modern ? DemoQbittorrentServer::CapabilityProfile::V520
+                : DemoQbittorrentServer::CapabilityProfile::V514);
             server.enableNativePresentationDemo();
             server.enableDetailsDemo();
             server.enableStatefulTrackerEditingDemo();
@@ -9245,6 +9494,7 @@ private slots:
             QTRY_COMPARE_WITH_TIMEOUT(trackers->topLevelItemCount(), 1, 6000);
             QCOMPARE(server.commandsFor("/api/v2/torrents/addTrackers"), 2);
             QCOMPARE(server.trackerEntries(privateHash).first().toObject().value("url").toString(), original);
+            QCOMPARE(server.prohibitedCapabilityRequests(), 0);
         }
     }
 
@@ -9863,6 +10113,7 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(count->text(), QStringLiteral("Torrents: 1 / 1"), 6000);
         QVERIFY(window.statusBar()->currentMessage().contains(first.reportedQbtVersion()));
         QVERIFY(window.statusBar()->currentMessage().contains(first.reportedApiVersion()));
+        QVERIFY(window.statusBar()->currentMessage().contains("Unrecognized stable release"));
 
         openConnectDialog(window, second.url(), false, true, true,
                           QStringLiteral("Red seedbox"));
@@ -12990,7 +13241,8 @@ private slots:
     {
         DemoQbittorrentServer modern(true), legacy(true);
         modern.enableModernResponses();
-        modern.setReportedVersions(QStringLiteral("v5.3.0"), QStringLiteral("2.13.0"));
+        modern.setCapabilityProfile(DemoQbittorrentServer::CapabilityProfile::V520);
+        legacy.setCapabilityProfile(DemoQbittorrentServer::CapabilityProfile::V514);
         const QString hash = QStringLiteral("0000000000000000000000000000000000000001");
         const QString first = QStringLiteral("https://tracker.example/announce?key=a+b%2Fc");
         const QString second = QStringLiteral("udp://backup.example:6969/announce");

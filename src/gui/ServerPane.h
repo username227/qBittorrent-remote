@@ -84,10 +84,11 @@ public:
     void refreshSelectedDetails();
     void finishContentRename(const QString &hash, const QString &oldPath, bool success, const QString &reason);
     bool contentBatchSelectionValid(const QString &hash, quint64 generation) const;
-    void setTrackerTierEditingSupported(bool supported);
-    void setSelectedTrackerReannounceSupported(bool supported);
+    void setTrackerUrlEditingSupported(bool supported, const QString &reason = {});
+    void setTrackerTierEditingSupported(bool supported, const QString &reason = {});
+    void setSelectedTrackerReannounceSupported(bool supported, const QString &reason = {});
     void finishTrackerTierEdit(const QString &hash);
-    void setCommentEditingSupported(bool supported);
+    void setCommentEditingSupported(bool supported, const QString &reason = {});
     void finishCommentEdit(const QString &hash);
     void finishPeerAction(const QString &hash, const QString &message);
     void finishWebSeedAction(const QString &hash);

@@ -63,6 +63,32 @@ else()
     message(STATUS "Secure QtKeychain target unavailable: Remember password disabled")
 endif()
 
+# Compile stable identities from the pinned release lock, not a second
+# hand-maintained list. No runtime JSON dependency.
+set(compatibility_release_lock "${PROJECT_SOURCE_DIR}/docs/compatibility/releases.lock.json")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${compatibility_release_lock}")
+file(READ "${compatibility_release_lock}" compatibility_release_json)
+string(JSON compatibility_release_count LENGTH "${compatibility_release_json}" releases)
+if(compatibility_release_count LESS 1)
+    message(FATAL_ERROR "Empty compatibility release lock")
+endif()
+math(EXPR compatibility_release_last "${compatibility_release_count} - 1")
+set(compatibility_release_rows "")
+set(compatibility_release_versions "")
+foreach(i RANGE 0 ${compatibility_release_last})
+    string(JSON version GET "${compatibility_release_json}" releases ${i} version)
+    if(NOT version MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+(\\.[0-9]+)?$"
+            OR version IN_LIST compatibility_release_versions)
+        message(FATAL_ERROR "Invalid or duplicate stable release in lock: ${version}")
+    endif()
+    list(APPEND compatibility_release_versions "${version}")
+    string(APPEND compatibility_release_rows "    \"${version}\",\n")
+endforeach()
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
+file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/KnownServerReleases.h"
+    CONTENT "#pragma once\nnamespace Remote {\ninline constexpr const char *KnownServerReleases[] = {\n@compatibility_release_rows@};\n}\n"
+    @ONLY)
+
 add_library(qbittorrent_remote_core STATIC
     src/app/SingleInstance.cpp
     src/app/SingleInstance.h
@@ -74,6 +100,8 @@ add_library(qbittorrent_remote_core STATIC
     src/api/PathMappingStore.h
     src/api/TorrentMetadataReader.cpp
     src/api/TorrentMetadataReader.h
+    src/api/ServerCapabilities.cpp
+    src/api/ServerCapabilities.h
     src/api/RemoteSession.cpp
     src/api/RemoteSession.h
     src/api/CredentialVault.cpp
@@ -81,6 +109,7 @@ add_library(qbittorrent_remote_core STATIC
 )
 target_include_directories(qbittorrent_remote_core PUBLIC
     "${PROJECT_SOURCE_DIR}/src"
+    PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated"
 )
 target_link_libraries(qbittorrent_remote_core PUBLIC Qt6::Core Qt6::Network)
 if(QBT_REMOTE_KEYCHAIN_TARGET)
@@ -238,6 +267,8 @@ if(BUILD_TESTING)
         tests/test_connection_workflow.cpp
         tests/test_tls_trust_workflow.cpp
     )
+    target_compile_definitions(qbittorrent_remote_tests PRIVATE
+        QBT_COMPATIBILITY_RELEASE_LOCK="${compatibility_release_lock}")
     target_link_libraries(qbittorrent_remote_tests PRIVATE
         qbittorrent_remote_gui
         Qt6::Test
@@ -280,6 +311,11 @@ if(BUILD_TESTING)
         startupConnectsOnlyOptedInProfilesUsingProtectedCredentials
         userSeesAuthenticationFailure
         modernServerLoginAndPreferencesAcceptNoContent
+    )
+
+    add_remote_workflow_group(remote_compatibility_capabilities_workflow 90
+        lockedReleaseCapabilityPolicy
+        mixedHistoricalCapabilityDispatch
     )
 
     add_remote_workflow_group(remote_server_isolation_workflow 120

@@ -634,8 +634,12 @@ TorrentDetailsWidget::TorrentDetailsWidget(QWidget *parent)
         auto *add = action("addDetailTrackers", tr("Add trackers..."), "list-add", canAddTrackers(),
             [this]() { addTrackers(); });
         if (!canAddTrackers()) add->setToolTip(tr("Additional trackers are blocked on private or unknown torrents."));
-        action("editDetailTracker", tr("Edit tracker URL..."), "edit-rename",
-            canChangeTrackers() && selected.size() == 1, [this]() { editTracker(); });
+        auto *edit = action("editDetailTracker", tr("Edit tracker URL..."), "edit-rename",
+            m_trackerUrlEditingSupported && canChangeTrackers() && selected.size() == 1,
+            [this]() { editTracker(); });
+        if (!m_trackerUrlEditingSupported)
+            edit->setToolTip(m_trackerUrlEditingReason.isEmpty()
+                ? tr("Tracker URL editing is unavailable.") : m_trackerUrlEditingReason);
         action("removeDetailTrackers", tr("Remove tracker"), "list-remove",
             canChangeTrackers() && !selected.isEmpty(), [this]() { removeTrackers(); });
         action("copyDetailTrackers", tr("Copy tracker URL"), "edit-copy",
@@ -644,7 +648,8 @@ TorrentDetailsWidget::TorrentDetailsWidget(QWidget *parent)
             canReannounceTrackers() && m_selectedTrackerReannounceSupported && !selected.isEmpty(),
             [this]() { reannounceTrackers(true); });
         if (!m_selectedTrackerReannounceSupported)
-            announce->setToolTip(tr("Requires qBittorrent 5.2 or newer."));
+            announce->setToolTip(m_selectedTrackerReannounceReason.isEmpty()
+                ? tr("Requires qBittorrent 5.2 or newer.") : m_selectedTrackerReannounceReason);
         menu.addSeparator();
         action("reannounceAllTrackers", tr("Force reannounce to all trackers"), "reannounce",
             canReannounceTrackers(), [this]() { reannounceTrackers(false); });
@@ -1252,9 +1257,10 @@ void TorrentDetailsWidget::displayGeneral(const QJsonObject &p)
         : QStringLiteral("—"));
 }
 
-void TorrentDetailsWidget::setCommentEditingSupported(bool supported)
+void TorrentDetailsWidget::setCommentEditingSupported(bool supported, const QString &reason)
 {
     m_commentEditingSupported = supported;
+    m_commentEditingReason = reason;
     updateCommentEditor();
 }
 
@@ -1264,7 +1270,8 @@ void TorrentDetailsWidget::updateCommentEditor()
         && m_commentKnown && !m_hash.isEmpty() && m_pendingCommentHash.isEmpty()
         && m_currentTab == 0);
     m_ui->editCommentButton->setToolTip(!m_commentEditingSupported
-        ? tr("Comment editing requires qBittorrent 5.2 or newer.")
+        ? (m_commentEditingReason.isEmpty()
+            ? tr("Comment editing requires qBittorrent 5.2 or newer.") : m_commentEditingReason)
         : tr("Edit the selected torrent's comment on this server."));
 }
 
@@ -1324,9 +1331,16 @@ void TorrentDetailsWidget::finishCommentEdit(const QString &hash)
     updateCommentEditor();
 }
 
-void TorrentDetailsWidget::setTrackerTierEditingSupported(bool supported)
+void TorrentDetailsWidget::setTrackerUrlEditingSupported(bool supported, const QString &reason)
+{
+    m_trackerUrlEditingSupported = supported;
+    m_trackerUrlEditingReason = reason;
+}
+
+void TorrentDetailsWidget::setTrackerTierEditingSupported(bool supported, const QString &reason)
 {
     m_trackerTierSupported = supported;
+    m_trackerTierReason = reason;
     updateTrackerTierButtons();
 }
 
@@ -1355,7 +1369,8 @@ void TorrentDetailsWidget::updateTrackerTierButtons()
 {
     m_ui->trackerUpButton->setEnabled(!adjustedTrackerTiers(-1).isEmpty());
     m_ui->trackerDownButton->setEnabled(!adjustedTrackerTiers(1).isEmpty());
-    const QString unavailable = tr("Changing tracker tiers requires remote Web API 2.13.0 or later.");
+    const QString unavailable = m_trackerTierReason.isEmpty()
+        ? tr("Changing tracker tiers requires remote Web API 2.13.0 or later.") : m_trackerTierReason;
     m_ui->trackerUpButton->setToolTip(m_trackerTierSupported
         ? tr("Decrease selected tracker tiers") : unavailable);
     m_ui->trackerDownButton->setToolTip(m_trackerTierSupported
@@ -1379,9 +1394,10 @@ void TorrentDetailsWidget::finishTrackerTierEdit(const QString &hash)
     updateTrackerTierButtons();
 }
 
-void TorrentDetailsWidget::setSelectedTrackerReannounceSupported(bool supported)
+void TorrentDetailsWidget::setSelectedTrackerReannounceSupported(bool supported, const QString &reason)
 {
     m_selectedTrackerReannounceSupported = supported;
+    m_selectedTrackerReannounceReason = reason;
 }
 
 QStringList TorrentDetailsWidget::trackerUrls(bool selectedOnly) const
@@ -1446,12 +1462,12 @@ void TorrentDetailsWidget::addTrackers()
 void TorrentDetailsWidget::editTracker()
 {
     const auto selected = trackerUrls(true);
-    if (!canChangeTrackers() || selected.size() != 1) return;
+    if (!m_trackerUrlEditingSupported || !canChangeTrackers() || selected.size() != 1) return;
     const QString hash = m_hash, original = selected.first();
     bool ok = false;
     const auto replacement = QInputDialog::getText(this, tr("Tracker editing"), tr("Tracker URL:"),
         QLineEdit::Normal, original, &ok).trimmed();
-    if (!ok || hash != m_hash || !canChangeTrackers() || replacement == original
+    if (!ok || hash != m_hash || !m_trackerUrlEditingSupported || !canChangeTrackers() || replacement == original
         || !trackerUrls(false).contains(original)) return;
     m_pendingTrackerTierHash = hash;
     updateTrackerTierButtons();

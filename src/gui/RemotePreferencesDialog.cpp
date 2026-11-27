@@ -386,12 +386,11 @@ RemotePreferencesDialog::RemotePreferencesDialog(QSettings &settings,
     bindProxyControls();
     // The range API was introduced in 5.3.0; 5.1/5.2 silently discard
     // ranges. Use the authenticated daemon's version, not the GUI version.
-    QString numeric = serverVersion;
-    if (numeric.startsWith(QLatin1Char('v'))) numeric.remove(0, 1);
-    const auto version = QVersionNumber::fromString(numeric);
-    m_advancedModernServer = version.segmentCount() >= 3 && version >= QVersionNumber(5, 3, 0);
-    m_banRangesSupported = version.segmentCount() >= 3
-        && version >= QVersionNumber(5, 3, 0);
+    const auto capabilities = session && session->isConnected()
+        ? session->capabilities()
+        : Remote::ServerCapabilities::fromVersions(serverVersion, {});
+    m_advancedModernServer = capabilities.advancedModernPreferences();
+    m_banRangesSupported = capabilities.banRanges();
     bindIPFilterControls();
     bindRSSControls();
     bindWebUIControls();
